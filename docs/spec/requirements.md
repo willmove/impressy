@@ -1,10 +1,34 @@
 # Requirements Document - Rastery 图像工具箱
 
+> **本文档与 [`design.md`](./design.md) 是本项目的唯一真相源。** 领域词汇见 [`CONTEXT.md`](../../CONTEXT.md)，范围与顺序决策见 [`docs/adr/`](../adr/)。
+> 早期的 `rastery-spec.md` 已冻结至 [`archive/rastery-spec-v0.3.md`](./archive/rastery-spec-v0.3.md)，仅作历史参考，**不要据此写代码**。
+
 ## Introduction
 
-Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处理工具，基于 Rust + GPUI 框架构建。该系统将屏幕截图与图片处理功能整合为一体，围绕四大功能板块组织：基础图片处理、AI 生成与改图、行业定制 AI 工具、创作输出。系统采用本地优先架构，基础功能完全离线可用，AI 功能通过用户自备 API Key（BYOK）实现，确保隐私安全与零成本运营。
+### 为什么存在
+
+现有截图工具（如 QQ 截图）体验好，但**输出文件过大且无法设置压缩**；现有图片处理软件（如美图秀秀）**启动慢、功能臃肿**，常用功能缺失、不需要的功能冗余。Rastery 的目标是用一款轻量、快启动的原生工具，覆盖个人用户的全部截图与图片处理需求。
+
+这段问题陈述是 [ADR-0001](../adr/0001-v1-scope-local-only.md) 的基石——它解释了为什么本地功能是产品的本体，而 AI 功能是后加的一层。
+
+### 是什么
+
+Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处理工具，基于 Rust + GPUI 框架构建。该系统将屏幕截图与图片处理功能整合为一体，围绕四大**板块**组织：基础图片处理、AI 生成与改图、行业定制 AI 工具、创作输出。系统采用本地优先架构，基础功能完全离线可用，AI 功能通过用户自备 API Key（BYOK）实现，确保隐私安全与零成本运营。
+
+### v1 范围（重要）
+
+**v1 只交付本地功能**——完全离线、不需要 API Key 的功能集合。每条需求的标题都标了 `[v1]` 或 `[v2]`：
+
+- **`[v1]` 39 条**：本地功能（FR-01~FR-10）及其支撑需求（架构、导航、i18n、格式、质量、剪贴板、性能、property test 等）。
+- **`[v2]` 21 条**：AI 功能——Requirement 4、5、16、17、18、19–31、33、50、59。**v1 阶段不要实现它们**，也不要为它们建 `rastery-ai` / `rastery-presets` crate。
+
+注意「本地功能 / AI 功能」与「板块」是**正交的两根轴**：v1 交付的不是「四大板块的前两个」，而是横切所有板块的本地功能集合。因此 v1 的主界面上，「AI 生成与改图」与「行业定制 AI 工具」两个板块是空的（与三个视频功能一样做「开发中」占位）。详见 [CONTEXT.md](../../CONTEXT.md) 与 [ADR-0001](../adr/0001-v1-scope-local-only.md)。
+
+**建设顺序**：先 `rastery-core` 到全绿，GPUI 骨架推后（与已冻结 spec 的 M1→M7 顺序相反）。原因见 [ADR-0002](../adr/0002-core-before-ui.md)。
 
 ## Glossary
+
+> 这是**组件清单**（crate 与技术构件的命名），不是领域词汇表。领域词汇（板块、档位、保持不变项、本地功能 / AI 功能）见 [`CONTEXT.md`](../../CONTEXT.md)。
 
 - **Rastery_System**: Rastery 图像工具箱应用程序整体
 - **UI_Layer**: 基于 GPUI 的用户界面层，负责所有可视化交互
@@ -12,7 +36,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 - **AI_Engine**: AI 服务提供商抽象层（rastery-ai crate），统一管理多个 AI 服务商接口
 - **Capture_Module**: 系统集成模块（rastery-capture crate），处理屏幕截图、全局热键、取色
 - **Preset_Library**: 行业工具锁定提示词模板库（rastery-presets crate）
-- **Provider**: AI 服务提供商，包括 Seedream、Google Nano Banana、OpenAI GPT-Image、Agnes
+- **Provider**: AI 服务提供商，包括 Seedream（默认）、Google Nano Banana、OpenAI GPT-Image。〔v2〕Agnes 暂不实现，仅预留接口扩展能力。
 - **API_Key**: 用户自备的 AI 服务商访问密钥
 - **Credential_Store**: 操作系统凭据管理器（Windows Credential Manager / macOS Keychain）
 - **Background_Executor**: GPUI 异步执行器，用于处理耗时任务而不阻塞 UI
@@ -24,12 +48,13 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 - **Canvas_Element**: GPUI 自定义 UI 元素，用于交互式画布功能
 - **Text_Layer**: 海报设计中的本地渲染文字图层
 - **Batch_Queue**: 批量处理任务队列
-- **Archive_Mode**: 行业工具档位，用户可选的预设参数组合
+- **Tier**: 行业工具的**档位**——用户唯一需要做的选择，一组预置的、语义化的参数选项（如证件照的「一寸/二寸」、头像工坊的「日漫风/赛博朋克」）。档位背后的提示词对用户不可见。定义见 [`CONTEXT.md`](../../CONTEXT.md)。
+  _注：本条此前误作 `Archive_Mode` —— 「档位」的「档」被当成了「档案 archive」，实为 gear/tier 之意。请勿在代码中使用 `ArchiveMode` 一名。_
 
 
 ## Requirements
 
-### Requirement 1: 平台支持与运行环境
+### [v1] Requirement 1: 平台支持与运行环境
 
 **User Story:** 作为用户，我希望在 Windows、macOS、Linux 平台上运行 Rastery，以便在不同操作系统环境下使用图像处理功能。
 
@@ -44,41 +69,41 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 7. WHEN the system starts from a cold state, THE Rastery_System SHALL display the main interface within 1500 milliseconds
 8. THE Rastery_System SHALL have an installation package size not exceeding 30 megabytes
 
-### Requirement 2: 隐私与安全
+### [v1] Requirement 2: 隐私与安全
 
 **User Story:** 作为隐私关注的用户,我希望我的 API Key 和图像数据完全本地化存储和处理,以确保数据不被泄露。
 
 #### Acceptance Criteria
 
-1. WHEN a user configures an API_Key for a Provider, THE Rastery_System SHALL store the API_Key in the Credential_Store
-2. THE Rastery_System SHALL NOT include any API_Key in the installation package
-3. THE Rastery_System SHALL NOT upload any API_Key to any remote server
-4. IF a user initiates an AI request, THEN THE AI_Engine SHALL send image data to the configured Provider endpoint
+1. 〔v2〕WHEN a user configures an API_Key for a Provider, THE Rastery_System SHALL store the API_Key in the Credential_Store
+2. 〔v2〕THE Rastery_System SHALL NOT include any API_Key in the installation package
+3. 〔v2〕THE Rastery_System SHALL NOT upload any API_Key to any remote server
+4. 〔v2〕IF a user initiates an AI request, THEN THE AI_Engine SHALL send image data to the configured Provider endpoint
 5. THE Rastery_System SHALL NOT send user image data to any server without explicit user-initiated AI requests
 6. THE Rastery_System SHALL NOT send telemetry data to any remote server
 7. WHEN EXIF_Cleaner exports an image file, THE Core_Engine SHALL remove all GPS metadata fields
 8. WHEN EXIF_Cleaner exports an image file, THE Core_Engine SHALL remove all device identification metadata fields
-9. THE Rastery_System SHALL use Windows Credential Manager for API_Key storage on Windows platform
-10. THE Rastery_System SHALL use macOS Keychain for API_Key storage on macOS platform
+9. 〔v2〕THE Rastery_System SHALL use Windows Credential Manager for API_Key storage on Windows platform
+10. 〔v2〕THE Rastery_System SHALL use macOS Keychain for API_Key storage on macOS platform
 
 
-### Requirement 3: 架构与并发处理
+### [v1] Requirement 3: 架构与并发处理
 
 **User Story:** 作为用户,我希望在批量处理大量图片时界面仍保持流畅响应,以便同时进行其他操作。
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL organize code into five Cargo workspace crates: rastery-app, rastery-core, rastery-ai, rastery-capture, rastery-presets
-2. THE AI_Engine SHALL implement a unified Provider trait for all AI service providers
-3. WHEN a new Provider is added, THE AI_Engine SHALL integrate it without modifying upper-layer business logic
+1. THE Rastery_System SHALL organize code into a Cargo workspace. 〔v1 只建三个 crate：**rastery-app、rastery-core、rastery-capture**。`rastery-ai` 与 `rastery-presets` 属 AI 功能，v1 不建 —— 见 ADR-0001。〕
+2. 〔v2〕THE AI_Engine SHALL implement a unified Provider trait for all AI service providers
+3. 〔v2〕WHEN a new Provider is added, THE AI_Engine SHALL integrate it without modifying upper-layer business logic
 4. THE Core_Engine SHALL execute all image encoding operations in Background_Executor
 5. THE Core_Engine SHALL execute all image decoding operations in Background_Executor
-6. THE AI_Engine SHALL execute all network requests in Background_Executor
+6. 〔v2〕THE AI_Engine SHALL execute all network requests in Background_Executor
 7. WHEN processing 100 images in batch mode, THE UI_Layer SHALL remain responsive to user interactions
 8. THE UI_Layer SHALL update only rendering and state on the main thread
 9. THE Batch_Queue SHALL execute batch processing tasks asynchronously
 
-### Requirement 4: AI 服务商管理
+### [v2] Requirement 4: AI 服务商管理
 
 **User Story:** 作为用户,我希望配置和切换不同的 AI 服务商,以便根据需求和成本选择合适的服务。
 
@@ -87,7 +112,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 1. THE Rastery_System SHALL support Seedream as a Provider
 2. THE Rastery_System SHALL support Google Nano Banana as a Provider
 3. THE Rastery_System SHALL support OpenAI GPT-Image as a Provider
-4. THE Rastery_System SHALL support Agnes as a Provider
+4. 〔v2・暂缓〕Agnes **暂不实现**（spec v0.3 已确认），仅要求 Provider trait 预留扩展能力，不得为其编写适配器。
 5. WHEN a user opens settings, THE UI_Layer SHALL display API_Key configuration fields for all supported Providers
 6. WHEN a user selects a default Provider, THE Rastery_System SHALL save the selection in local configuration
 7. WHEN a user switches Provider, THE UI_Layer SHALL adjust available generation parameters according to the Provider capabilities
@@ -96,7 +121,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 10. THE AI_Engine SHALL declare capability constraints for each Provider including maximum generation count per request
 
 
-### Requirement 5: AI 生成体验
+### [v2] Requirement 5: AI 生成体验
 
 **User Story:** 作为用户,我希望在 AI 生成过程中看到进度反馈和清晰的错误信息,以便了解生成状态和问题原因。
 
@@ -111,7 +136,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 7. WHEN an AI generation completes with multiple results, THE UI_Layer SHALL display all generated images
 8. WHEN multiple generated images are displayed, THE UI_Layer SHALL allow the user to select any subset for download
 
-### Requirement 6: 图片编辑
+### [v1] Requirement 6: 图片编辑
 
 **User Story:** 作为用户,我希望打开图片并进行裁剪、格式转换和质量调整,以便获得符合需求的输出文件。
 
@@ -129,7 +154,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 10. WHEN a user exports an image, THE Core_Engine SHALL apply the selected format and quality settings
 
 
-### Requirement 7: 拼图拼接
+### [v1] Requirement 7: 拼图拼接
 
 **User Story:** 作为用户,我希望将多张图片拼接成一张长图或网格图,以便创建图片集合展示。
 
@@ -147,7 +172,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 10. THE Core_Engine SHALL support JPEG format export for collages
 11. THE Core_Engine SHALL support WebP format export for collages
 
-### Requirement 8: 批量处理
+### [v1] Requirement 8: 批量处理
 
 **User Story:** 作为用户,我希望一次性处理几十到上百张图片,包括格式转换、压缩、调整尺寸和加水印,以提高工作效率。
 
@@ -165,7 +190,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 10. WHILE batch processing executes, THE UI_Layer SHALL remain responsive to user interactions
 
 
-### Requirement 9: 切图
+### [v1] Requirement 9: 切图
 
 **User Story:** 作为用户,我希望将长图或整图按网格切分成多个小图,以便用于社交媒体九宫格发布。
 
@@ -178,7 +203,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. WHEN a user exports sliced images, THE Core_Engine SHALL divide the source image according to the grid configuration
 6. WHEN a user exports sliced images, THE Core_Engine SHALL produce sequentially numbered output files for each grid cell
 
-### Requirement 10: 二维码生成与识别
+### [v1] Requirement 10: 二维码生成与识别
 
 **User Story:** 作为用户,我希望生成自定义样式的二维码并识别图片中的二维码内容,以便进行信息编码和解码。
 
@@ -196,7 +221,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 10. WHEN a screenshot-quality QR code image is provided, THE Core_Engine SHALL successfully decode it
 
 
-### Requirement 11: EXIF 信息查看与清除
+### [v1] Requirement 11: EXIF 信息查看与清除
 
 **User Story:** 作为用户,我希望查看照片的拍摄参数并一键清除隐私元数据,以保护位置和设备信息。
 
@@ -213,7 +238,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 9. FOR ALL images exported by EXIF_Cleaner, inspection with third-party EXIF tools SHALL reveal no GPS fields
 10. FOR ALL images exported by EXIF_Cleaner, inspection with third-party EXIF tools SHALL reveal no device identification fields
 
-### Requirement 12: 截图美化
+### [v1] Requirement 12: 截图美化
 
 **User Story:** 作为用户,我希望为现有截图添加圆角、边距、背景和阴影效果,以美化演示图片。
 
@@ -231,7 +256,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 10. WHEN a user exports with transparent background selected, THE Core_Engine SHALL produce a PNG file with true transparency outside rounded corners
 
 
-### Requirement 13: 屏幕截图
+### [v1] Requirement 13: 屏幕截图
 
 **User Story:** 作为用户,我希望通过全局快捷键快速截取屏幕任意区域,并使用标注工具添加说明,同时控制输出文件大小。
 
@@ -250,7 +275,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 11. WHEN a user configures compression quality settings, THE Core_Engine SHALL apply the quality setting to saved screenshot files
 12. THE Capture_Module SHALL calculate screen coordinates in Physical_Pixel units to ensure DPI-independent accuracy
 
-### Requirement 14: 屏幕取色
+### [v1] Requirement 14: 屏幕取色
 
 **User Story:** 作为设计师或开发者,我希望点击屏幕任意位置快速获取像素颜色值,以便在设计和开发中使用。
 
@@ -262,7 +287,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 4. THE Capture_Module SHALL calculate color sampling coordinates in Physical_Pixel units
 
 
-### Requirement 15: GIF 制作
+### [v1] Requirement 15: GIF 制作
 
 **User Story:** 作为内容创作者,我希望将连续图片合成为动图并控制播放效果,以创作动态内容。
 
@@ -277,7 +302,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 7. FOR ALL GIFs exported by the Core_Engine, playback in system image viewers SHALL display correctly
 8. FOR ALL GIFs exported by the Core_Engine, playback in messaging applications SHALL display correctly
 
-### Requirement 16: 海报设计
+### [v2] Requirement 16: 海报设计
 
 **User Story:** 作为营销人员,我希望使用 AI 生成的背景结合本地文字排版创作海报,确保文字清晰无误。
 
@@ -298,7 +323,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 13. FOR ALL exported posters, text SHALL be rendered clearly without character errors
 
 
-### Requirement 17: AI 文生图与图生图
+### [v2] Requirement 17: AI 文生图与图生图
 
 **User Story:** 作为创意工作者,我希望通过文字描述或参考图片生成新图像,以快速获得创意素材。
 
@@ -314,7 +339,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 8. WHEN generation completes with multiple results, THE UI_Layer SHALL display all generated images
 9. THE UI_Layer SHALL allow the user to select any subset of generated images for download
 
-### Requirement 18: AI 改图 - 12 个场景预设
+### [v2] Requirement 18: AI 改图 - 12 个场景预设
 
 **User Story:** 作为普通用户,我希望无需编写提示词即可使用 AI 改图功能,通过选择预设场景快速完成图像修改。
 
@@ -338,7 +363,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 16. FOR ALL AI editing tools except freeform editing, THE Preset_Library SHALL provide locked prompts invisible to users
 
 
-### Requirement 19: 行业工具 - 老照片修复
+### [v2] Requirement 19: 行业工具 - 老照片修复
 
 **User Story:** 作为用户,我希望修复老旧照片的破损、上色并增强清晰度,同时保持人物特征不变。
 
@@ -353,7 +378,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 7. THE UI_Layer SHALL provide a before-after comparison view with press-and-hold interaction
 8. THE Preset_Library SHALL store the locked restoration prompt invisible to users
 
-### Requirement 20: 行业工具 - AI 证件照
+### [v2] Requirement 20: 行业工具 - AI 证件照
 
 **User Story:** 作为用户,我希望将生活照转换为符合标准规格的证件照,包括指定背景色和着装。
 
@@ -368,7 +393,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 7. THE Preset_Library SHALL store the locked ID photo prompt invisible to users
 
 
-### Requirement 21: 行业工具 - 头像工坊
+### [v2] Requirement 21: 行业工具 - 头像工坊
 
 **User Story:** 作为社交媒体用户,我希望将自拍照转换为多种风格的 1:1 头像,以丰富个人形象展示。
 
@@ -384,7 +409,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 8. WHEN generation completes, THE AI_Engine SHALL return one 1:1 avatar image for each selected style
 9. THE Preset_Library SHALL store locked prompts for all 9 avatar styles invisible to users
 
-### Requirement 22: 行业工具 - 表情包生成器
+### [v2] Requirement 22: 行业工具 - 表情包生成器
 
 **User Story:** 作为聊天爱好者,我希望将照片批量转换为 Q 版表情包,包含多种情绪表情。
 
@@ -400,7 +425,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 8. THE Preset_Library SHALL store locked prompts for all emotion variations invisible to users
 
 
-### Requirement 23: 行业工具 - AI 写真
+### [v2] Requirement 23: 行业工具 - AI 写真
 
 **User Story:** 作为用户,我希望将人像照转换为不同主题的写真照片,保持人物相貌特征的同时更换场景和服装。
 
@@ -412,7 +437,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 4. WHEN generation completes, THE AI_Engine SHALL return a themed portrait photo
 5. THE Preset_Library SHALL store locked prompts for all 8 portrait themes invisible to users
 
-### Requirement 24: 行业工具 - 模特试穿
+### [v2] Requirement 24: 行业工具 - 模特试穿
 
 **User Story:** 作为服装商家,我希望将平铺或挂拍的服装图生成模特上身效果,保持服装细节的准确性。
 
@@ -425,7 +450,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. WHEN generation completes, THE AI_Engine SHALL return a model wearing photo
 6. THE Preset_Library SHALL store locked model try-on prompts invisible to users
 
-### Requirement 25: 行业工具 - 商品改色
+### [v2] Requirement 25: 行业工具 - 商品改色
 
 **User Story:** 作为电商卖家,我希望批量生成商品的不同配色版本,保持商品外形和材质不变。
 
@@ -440,7 +465,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 7. THE Preset_Library SHALL store locked color variation prompts invisible to users
 
 
-### Requirement 26: 行业工具 - 促销海报
+### [v2] Requirement 26: 行业工具 - 促销海报
 
 **User Story:** 作为商家,我希望基于商品图快速生成促销海报,包含活动信息和吸引人的视觉设计。
 
@@ -454,7 +479,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 6. WHEN generation completes, THE AI_Engine SHALL return a vertical 3:4 promotional poster
 7. THE Preset_Library SHALL store locked promotional poster prompts invisible to users
 
-### Requirement 27: 行业工具 - 平台尺寸适配
+### [v2] Requirement 27: 行业工具 - 平台尺寸适配
 
 **User Story:** 作为多平台运营者,我希望将一张图片适配到不同平台的规格要求,避免变形和裁切主体。
 
@@ -470,7 +495,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 8. THE Preset_Library SHALL store locked platform adaptation prompts invisible to users
 
 
-### Requirement 28: 行业工具 - 封面图工厂
+### [v2] Requirement 28: 行业工具 - 封面图工厂
 
 **User Story:** 作为内容创作者,我希望基于标题文本生成适配不同平台的封面图,包含合适的排版和视觉风格。
 
@@ -483,7 +508,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. WHEN generation completes, THE AI_Engine SHALL return a cover image with title layout
 6. THE Preset_Library SHALL store locked cover image prompts invisible to users
 
-### Requirement 29: 行业工具 - 文章配图
+### [v2] Requirement 29: 行业工具 - 文章配图
 
 **User Story:** 作为文章作者,我希望根据主题描述生成系列风格一致的插图,用于文章配图和演示。
 
@@ -497,7 +522,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 6. THE UI_Layer SHALL allow the user to repeatedly generate while maintaining consistent series style
 7. THE Preset_Library SHALL store locked article illustration prompts invisible to users
 
-### Requirement 30: 行业工具 - 菜品图美化
+### [v2] Requirement 30: 行业工具 - 菜品图美化
 
 **User Story:** 作为餐饮商家,我希望将手机拍摄的菜品照提升为专业美食图,保持菜品真实性的同时优化光影和色泽。
 
@@ -510,7 +535,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. THE Preset_Library SHALL store locked food enhancement prompts invisible to users
 
 
-### Requirement 31: 行业工具 - 房间软装预览
+### [v2] Requirement 31: 行业工具 - 房间软装预览
 
 **User Story:** 作为装修用户,我希望预览房间在不同软装风格下的效果,保持房间结构不变的同时更换装饰风格。
 
@@ -523,7 +548,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. WHEN generation completes, THE AI_Engine SHALL return style comparison renderings
 6. THE Preset_Library SHALL store locked interior design prompts invisible to users
 
-### Requirement 32: 配置管理
+### [v1] Requirement 32: 配置管理
 
 **User Story:** 作为用户,我希望自定义默认导出设置和快捷键,以提高工作效率。
 
@@ -531,18 +556,18 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 1. THE Rastery_System SHALL store configuration in TOML format
 2. THE Rastery_System SHALL store configuration file in the standard application data directory defined by the directories crate
-3. THE Rastery_System SHALL store default Provider selection in configuration
+3. 〔v2〕THE Rastery_System SHALL store default Provider selection in configuration
 4. THE Rastery_System SHALL store default export format in configuration
 5. THE Rastery_System SHALL store default export quality in configuration
 6. THE Rastery_System SHALL store screenshot hotkey binding in configuration
 7. THE Rastery_System SHALL store screenshot compression settings in configuration
-8. THE Rastery_System SHALL NOT store API_Key in the configuration file
+8. 〔v2〕THE Rastery_System SHALL NOT store API_Key in the configuration file
 9. THE Rastery_System SHALL store generation history records locally only
 10. THE Rastery_System SHALL store recent output directory paths locally only
 11. THE UI_Layer SHALL provide a clear all history function
 
 
-### Requirement 33: 提示词模板管理
+### [v2] Requirement 33: 提示词模板管理
 
 **User Story:** 作为开发者,我希望以可维护的方式管理所有行业工具的锁定提示词,便于版本迭代和优化。
 
@@ -554,7 +579,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 4. THE Preset_Library SHALL organize prompts as separate template files in the rastery-presets crate within the code repository
 5. THE Preset_Library SHALL allow prompt iteration and optimization through code repository updates
 
-### Requirement 34: 主界面导航
+### [v1] Requirement 34: 主界面导航
 
 **User Story:** 作为用户,我希望通过清晰的界面导航访问所有功能模块,包括开发中的功能预留。
 
@@ -572,7 +597,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 10. WHEN a user clicks on video clarity enhancement entry, THE UI_Layer SHALL display an under development placeholder
 
 
-### Requirement 35: 多语言支持
+### [v1] Requirement 35: 多语言支持
 
 **User Story:** 作为国际用户,我希望使用中文或英文界面,以便更好地理解和使用软件功能。
 
@@ -582,7 +607,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 2. THE UI_Layer SHALL support English language
 3. THE UI_Layer SHALL allow the user to switch between supported languages in settings
 
-### Requirement 36: 错误处理与用户反馈
+### [v1] Requirement 36: 错误处理与用户反馈
 
 **User Story:** 作为用户,我希望在操作失败时获得清晰的错误信息和恢复建议,以便解决问题继续工作。
 
@@ -596,7 +621,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 6. THE UI_Layer SHALL provide user-friendly error messages in the selected interface language
 7. THE UI_Layer SHALL categorize errors to help users understand the root cause
 
-### Requirement 37: 性能与响应式
+### [v1] Requirement 37: 性能与响应式
 
 **User Story:** 作为用户,我希望软件启动快速、操作流畅,即使在处理大量图片时界面也保持响应。
 
@@ -609,7 +634,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. WHEN applying real-time preview effects, THE UI_Layer SHALL update the preview within 200 milliseconds of parameter adjustment
 
 
-### Requirement 38: 图像格式支持
+### [v1] Requirement 38: 图像格式支持
 
 **User Story:** 作为用户,我希望打开和导出多种常见图像格式,以满足不同场景需求。
 
@@ -627,7 +652,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 10. THE Core_Engine SHALL preserve transparency when writing PNG format images
 11. THE Core_Engine SHALL preserve transparency when writing WebP format images in lossless mode
 
-### Requirement 39: 图像质量控制
+### [v1] Requirement 39: 图像质量控制
 
 **User Story:** 作为注重文件大小的用户,我希望精确控制输出图像的质量和压缩率,平衡文件大小与视觉效果。
 
@@ -641,7 +666,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 6. FOR ALL quality settings, THE Core_Engine SHALL apply the exact specified quality value to the encoder
 
 
-### Requirement 40: 剪贴板集成
+### [v1] Requirement 40: 剪贴板集成
 
 **User Story:** 作为高效用户,我希望通过剪贴板快速粘贴图像进行编辑和复制输出结果。
 
@@ -653,7 +678,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 4. WHEN a user copies a color value from the color picker, THE Capture_Module SHALL place the color code in the system clipboard as text
 5. THE Rastery_System SHALL support pasting images from clipboard across different applications
 
-### Requirement 41: 文件输出与命名
+### [v1] Requirement 41: 文件输出与命名
 
 **User Story:** 作为用户,我希望输出文件具有清晰的命名规则和可选的保存位置,便于文件管理。
 
@@ -668,21 +693,21 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 7. THE UI_Layer SHALL provide an option to open the output directory after export completes
 
 
-### Requirement 42: 输入验证与用户引导
+### [v1] Requirement 42: 输入验证与用户引导
 
 **User Story:** 作为新用户,我希望软件能够验证我的输入并提供清晰的提示,避免无效操作。
 
 #### Acceptance Criteria
 
 1. IF a user attempts to export without selecting an image, THEN THE UI_Layer SHALL display a no image selected warning
-2. IF a user attempts to generate AI image without configuring API_Key, THEN THE UI_Layer SHALL display an API key required message with link to settings
+2. 〔v2〕IF a user attempts to generate AI image without configuring API_Key, THEN THE UI_Layer SHALL display an API key required message with link to settings
 3. IF a user uploads an image exceeding size limits for AI processing, THEN THE UI_Layer SHALL display an image too large warning
 4. IF a user enters invalid text in a numeric field, THEN THE UI_Layer SHALL highlight the field and display an invalid input message
 5. WHERE a field has specific format requirements, THE UI_Layer SHALL display format hints below the input field
 6. WHEN a user hovers over an unfamiliar option, THE UI_Layer SHALL display a tooltip explanation
 7. IF a user attempts batch processing with no files selected, THEN THE UI_Layer SHALL display a no files selected warning
 
-### Requirement 43: 版本锁定与依赖管理
+### [v1] Requirement 43: 版本锁定与依赖管理
 
 **User Story:** 作为开发者,我希望项目依赖版本精确锁定,确保构建稳定性和可重现性。
 
@@ -696,7 +721,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 6. THE Cargo workspace configuration SHALL specify exact versions for all critical dependencies
 
 
-### Requirement 44: 代码质量与测试
+### [v1] Requirement 44: 代码质量与测试
 
 **User Story:** 作为开发团队成员,我希望代码通过自动化质量检查,确保代码库的稳定性和可维护性。
 
@@ -709,7 +734,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. THE project repository SHALL include automated quality check scripts
 6. THE project documentation SHALL define quality gates as part of Definition of Done
 
-### Requirement 45: 参考文档与代码生成约束
+### [v1] Requirement 45: 参考文档与代码生成约束
 
 **User Story:** 作为 AI 辅助开发项目,我希望代码生成基于准确的 API 参考而非过时的模型记忆。
 
@@ -724,7 +749,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 7. THE CLAUDE.md file SHALL declare quality gate commands
 
 
-### Requirement 46: 安装与分发
+### [v1] Requirement 46: 安装与分发
 
 **User Story:** 作为最终用户,我希望通过简单的安装包快速安装软件,并在未来获得更新通知。
 
@@ -738,7 +763,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 6. THE installer SHALL register file type associations for common image formats
 7. THE installer SHALL set up global hotkey bindings during installation
 
-### Requirement 47: 自定义 UI 元素
+### [v1] Requirement 47: 自定义 UI 元素
 
 **User Story:** 作为用户,我希望使用流畅的交互式画布进行裁剪、标注和图层操作。
 
@@ -757,7 +782,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 11. FOR ALL Canvas_Element implementations, THE UI_Layer SHALL follow GPUI three-phase rendering pipeline: request_layout, prepaint, and paint
 
 
-### Requirement 48: 多显示器与 DPI 支持
+### [v1] Requirement 48: 多显示器与 DPI 支持
 
 **User Story:** 作为多显示器用户,我希望在不同 DPI 缩放比例的屏幕上精确截图和取色。
 
@@ -774,7 +799,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 9. WHEN color picking on a high-DPI display, THE Capture_Module SHALL sample the pixel at the exact visual position
 10. FOR ALL DPI configurations, pixel coordinates used for capture and color sampling SHALL be in Physical_Pixel units to ensure DPI-independent accuracy
 
-### Requirement 49: 热键冲突处理
+### [v1] Requirement 49: 热键冲突处理
 
 **User Story:** 作为用户,我希望自定义截图热键,避免与其他应用冲突。
 
@@ -787,7 +812,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. THE Capture_Module SHALL persist the hotkey configuration across application restarts
 
 
-### Requirement 50: AI 提供商能力声明
+### [v2] Requirement 50: AI 提供商能力声明
 
 **User Story:** 作为系统架构师,我希望每个 AI 提供商明确声明其能力限制,使上层业务逻辑能够动态适配。
 
@@ -803,7 +828,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 8. WHEN the user switches Provider in UI, THE UI_Layer SHALL disable options not supported by the selected Provider
 9. WHEN the user switches Provider in UI, THE UI_Layer SHALL adjust input field constraints according to Provider capability declarations
 
-### Requirement 51: 离线功能隔离
+### [v1] Requirement 51: 离线功能隔离
 
 **User Story:** 作为用户,我希望在没有网络连接时仍能使用所有基础图像处理功能。
 
@@ -825,7 +850,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 14. WHEN network connectivity is unavailable, THE UI_Layer SHALL allow full access to all Core_Engine and Capture_Module features
 
 
-### Requirement 52: 图像解析与打印的往返一致性
+### [v1] Requirement 52: 图像解析与打印的往返一致性
 
 **User Story:** 作为开发者,我希望确保图像编解码的正确性,验证编码后解码能恢复原始数据。
 
@@ -844,7 +869,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 11. FOR ALL text strings encoded as QR codes in PNG format, parsing the generated QR code image SHALL decode to the original text string
 12. FOR ALL URLs encoded as QR codes, the round-trip property (generate → save as PNG → parse) SHALL preserve the original URL exactly
 
-### Requirement 53: 配置解析器往返一致性
+### [v1] Requirement 53: 配置解析器往返一致性
 
 **User Story:** 作为开发者,我希望配置文件的读写保持一致性,避免配置数据丢失或损坏。
 
@@ -857,7 +882,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. IF configuration file is corrupted, THEN THE Rastery_System SHALL load default configuration and display a configuration reset warning
 
 
-### Requirement 54: 批量处理不变性属性
+### [v1] Requirement 54: 批量处理不变性属性
 
 **User Story:** 作为质量保证工程师,我希望验证批量处理操作保持关键属性不变。
 
@@ -870,7 +895,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 5. FOR ALL batch operations, THE Core_Engine SHALL preserve the processing order matching input order
 6. FOR ALL batch operations where individual items fail, THE number of successful outputs plus failed items SHALL equal the total input count
 
-### Requirement 55: 图像变换不变性属性
+### [v1] Requirement 55: 图像变换不变性属性
 
 **User Story:** 作为质量保证工程师,我希望验证图像变换操作保持应有的不变性。
 
@@ -884,7 +909,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 6. WHEN screenshot beautification applies rounded corners with radius R, THE output image dimensions SHALL increase by at most 2R pixels per dimension when padding is applied
 
 
-### Requirement 56: 幂等性属性验证
+### [v1] Requirement 56: 幂等性属性验证
 
 **User Story:** 作为质量保证工程师,我希望验证某些操作具有幂等性,重复执行不会产生额外效果。
 
@@ -895,7 +920,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 3. WHEN a QR code recognition result is re-encoded and re-decoded, THE decoded text SHALL remain identical
 4. WHEN configuration is saved and immediately reloaded, THE loaded configuration SHALL equal the saved configuration
 
-### Requirement 57: 错误条件属性验证
+### [v1] Requirement 57: 错误条件属性验证
 
 **User Story:** 作为质量保证工程师,我希望验证系统对无效输入正确报错而不崩溃。
 
@@ -903,15 +928,15 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 1. WHEN an invalid image file is opened, THE Core_Engine SHALL return an error without crashing
 2. WHEN a corrupted QR code image is parsed, THE Core_Engine SHALL return a decoding error without crashing
-3. WHEN an API request fails with HTTP 401, THE AI_Engine SHALL return an invalid credentials error without crashing
-4. WHEN an API request fails with HTTP 429, THE AI_Engine SHALL return a rate limit error without crashing
+3. 〔v2〕WHEN an API request fails with HTTP 401, THE AI_Engine SHALL return an invalid credentials error without crashing
+4. 〔v2〕WHEN an API request fails with HTTP 429, THE AI_Engine SHALL return a rate limit error without crashing
 5. WHEN disk space is insufficient for export, THE Core_Engine SHALL return a disk space error without crashing
 6. WHEN invalid TOML syntax is encountered, THE configuration parser SHALL return a parse error without crashing
 7. FOR ALL error conditions, THE Rastery_System SHALL log the error details
 8. FOR ALL error conditions, THE Rastery_System SHALL remain in a valid state allowing continued operation
 
 
-### Requirement 58: 性能不变性属性
+### [v1] Requirement 58: 性能不变性属性
 
 **User Story:** 作为性能工程师,我希望验证性能关键操作满足时间约束。
 
@@ -923,7 +948,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 4. FOR ALL image file open operations with files up to 50 megapixels, THE display time SHALL NOT exceed 2000 milliseconds
 5. WHEN batch processing 100 images, THE progress indicator update frequency SHALL be at least 1 update per second
 
-### Requirement 59: AI 生成输出验证
+### [v2] Requirement 59: AI 生成输出验证
 
 **User Story:** 作为产品经理,我希望 AI 生成的输出符合业务约束和格式要求。
 
@@ -937,20 +962,20 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 6. FOR ALL AI generation requests, IF content policy violation occurs, THEN THE AI_Engine SHALL return zero images with a content blocked error
 
 
-### Requirement 60: 安全属性验证
+### [v1] Requirement 60: 安全属性验证
 
 **User Story:** 作为安全工程师,我希望验证系统正确保护敏感数据。
 
 #### Acceptance Criteria
 
-1. FOR ALL API_Key storage operations, THE Rastery_System SHALL use the Credential_Store
-2. FOR ALL API_Key storage operations, THE Rastery_System SHALL NOT write API_Key to plain text configuration files
-3. FOR ALL API_Key storage operations, THE Rastery_System SHALL NOT write API_Key to log files
-4. WHEN the configuration file is inspected, THE file SHALL NOT contain any API_Key values
+1. 〔v2〕FOR ALL API_Key storage operations, THE Rastery_System SHALL use the Credential_Store
+2. 〔v2〕FOR ALL API_Key storage operations, THE Rastery_System SHALL NOT write API_Key to plain text configuration files
+3. 〔v2〕FOR ALL API_Key storage operations, THE Rastery_System SHALL NOT write API_Key to log files
+4. 〔v2〕WHEN the configuration file is inspected, THE file SHALL NOT contain any API_Key values
 5. WHEN EXIF cleaning completes, THE output file SHALL contain zero GPS-related EXIF tags
 6. WHEN EXIF cleaning completes, THE output file SHALL contain zero device identification EXIF tags
-7. FOR ALL network requests to AI providers, THE AI_Engine SHALL use HTTPS protocol
-8. FOR ALL network requests to AI providers, THE AI_Engine SHALL validate TLS certificates
+7. 〔v2〕FOR ALL network requests to AI providers, THE AI_Engine SHALL use HTTPS protocol
+8. 〔v2〕FOR ALL network requests to AI providers, THE AI_Engine SHALL validate TLS certificates
 
 ---
 
@@ -958,10 +983,9 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 - **Feature Name**: rastery
 - **Spec Type**: Feature
-- **Workflow Type**: Requirements-First
 - **Document Version**: 1.0
-- **Total Requirements**: 60
-- **Total Acceptance Criteria**: 449
-- **Last Updated**: 2025年
+- **Total Requirements**: 60（v1: 39 / v2: 21，见各条标题的 [v1]/[v2] 标记与 ADR-0001）
+- **Total Acceptance Criteria**: 475
+- **Last Updated**: 2026-07-15
 - **Language**: 简体中文 + English
-- **Status**: Initial Draft - Pending User Review
+- **Status**: 真相源（Source of Truth）。范围与顺序决策见 docs/adr/。

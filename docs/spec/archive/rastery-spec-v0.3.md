@@ -1,7 +1,21 @@
-# Rastery 图像工具箱 — 产品规格文档（Spec）
+# Rastery 图像工具箱 — 产品规格文档（Spec）v0.3〔已冻结・历史存档〕
 
-> **文档用途**：本文档为 Spec-driven Development (SDD) 的核心规格文件，供 Claude Code 等 AI 编码工具消费。
-> **文档版本**：v0.3
+> # ⛔ 本文档已冻结，不是真相源，**不要据此写代码**
+>
+> **真相源是 [`docs/spec/requirements.md`](../requirements.md) 与 [`docs/spec/design.md`](../design.md)**；范围与顺序决策见 [`docs/adr/`](../../adr/)；领域词汇见 [`CONTEXT.md`](../../../CONTEXT.md)。
+>
+> 本文档保留作为历史记录与产品动机的出处（§1.2 的问题陈述是 [ADR-0001](../../adr/0001-v1-scope-local-only.md) 的基石，已迁入 `requirements.md` 的 Introduction）。冻结原因：它与 Kiro 三件套重叠约八成，重叠即漂移之源，且漂移已经发生。
+>
+> **已知与现状不符之处**（保留原样，不再修正）：
+> - **范围**：本文档描述的是 v1+v2 全量。实际 v1 只做本地功能（FR-01~FR-10）；FR-11 海报、FR-20~FR-23、FR-30~FR-42 全部推后至 v2。见 ADR-0001。
+> - **§8 里程碑顺序**：M1 骨架 → M2 core 的顺序已被推翻，实际先做 core。见 ADR-0002。
+> - **NFR 编号**：§3.1 与 §3.2 各有一个 **NFR-04**（多语言 / API Key 存储），编号撞车。二者分别对应 requirements.md 的 Requirement 35 与 Requirement 2，内容无丢失。
+> - **路径**：附录 1 称本文件位于 `specs/rastery-spec.md`、Kiro 文档位于 `.kiro/specs/rastery/` — 均已失效，见上方真相源链接。
+> - **Kiro 工作流**：附录 3 要求按 Requirements → Design → Tasks → Implement 推进并生成 `tasks.md`。项目已决定不使用 Kiro 工具，该工作流不适用，`tasks.md` 不会存在。
+> - **§9.1 称「已生成 …449 条验收标准」**：实际为 475 条。
+> - **附录 3 称「下一步生成 Design 文档」**：`design.md` 早已存在（1387 行）。
+>
+> **文档版本**：v0.3（冻结于此版本）
 > **v0.3 变更记录**：① 确认**三平台同时支持**（Windows + macOS + Linux）；② 明确**多语言支持**（中文 + 英文）；③ 明确 **Agnes 暂不实现**，优先支持 Seedream、Nano Banana、GPT-Image；④ 已生成标准 Kiro Requirements 文档（`.kiro/specs/rastery/requirements.md`），包含 60 个需求模块和 449 条验收标准。
 > **v0.2 变更记录**：① 产品定名 **Rastery**；② 技术栈定稿为 **Rust + GPUI**，§3.4 全面重写；③ §3.3 架构、§8 里程碑 M1、附录随技术栈同步更新；④ 原开放问题「技术栈选型」已关闭。
 > **状态标记说明**：`[NEEDS CLARIFICATION]` 表示尚未明确、需产品负责人决策后才能进入实现的条目。

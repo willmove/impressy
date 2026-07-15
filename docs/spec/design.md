@@ -1,12 +1,19 @@
 # Technical Design Document - Rastery 图像工具箱
 
+> **本文档与 [`requirements.md`](./requirements.md) 是本项目的唯一真相源。** 领域词汇见 [`CONTEXT.md`](../../CONTEXT.md)，范围与顺序决策见 [`docs/adr/`](../adr/)。
+> 早期的 `rastery-spec.md` 已冻结至 [`archive/rastery-spec-v0.3.md`](./archive/rastery-spec-v0.3.md)，**不要据此写代码**。
+>
+> **v1 范围**：只做本地功能。`## Implementation Approach` 的每个 Phase / 混合 Sprint 都标了 `[v1]` / `[v2]`。**Phase 4（AI Integration）整体跳过**，`rastery-ai` 与 `rastery-presets` 两个 crate v1 不建。理由见 [ADR-0001](../adr/0001-v1-scope-local-only.md)。
+>
+> **本文档的分期是对的，请照它执行。** 已冻结的 spec §8 主张 M1 骨架 → M2 core（UI 优先），与本文档 Phase 1–2（core）→ Phase 5（UI）相反。经 [ADR-0002](../adr/0002-core-before-ui.md) 裁定：**core 优先，本文档胜出**。原因是主开发机为 headless 云 VM，跑不了 GPUI，core 能在其上全自动收敛而 UI 每次迭代都需人工介入。
+
 ## Overview
 
 Rastery is a cross-platform desktop image processing application built with Rust and GPUI framework, targeting Windows, macOS, and Linux. The system integrates screenshot capabilities with comprehensive image processing features, organized around four major functional modules:
 
 1. **Basic Image Processing**: Offline-first operations including editing, collage, batch processing, slicing, QR codes, EXIF management, and screenshot beautification
 2. **AI Generation and Editing**: Text-to-image, image-to-image, and 12 preset AI editing scenarios
-3. **Industry-Specific AI Tools**: 12 specialized tools including photo restoration, ID photos, avatars, meme generation, portrait photography, model try-on, product recoloring, promotional posters, platform adaptation, cover images, article illustrations, food photography, and interior design preview
+3. **Industry-Specific AI Tools**: 13 specialized tools including photo restoration, ID photos, avatars, meme generation, portrait photography, model try-on, product recoloring, promotional posters, platform adaptation, cover images, article illustrations, food photography, and interior design preview
 4. **Creative Output**: GIF creation and poster design with local text rendering
 
 ### Core Design Principles
@@ -14,7 +21,7 @@ Rastery is a cross-platform desktop image processing application built with Rust
 - **Local-First Architecture**: All basic features work offline; AI features use BYOK (Bring Your Own Key) model
 - **Privacy by Design**: No telemetry, no embedded API keys, credentials stored in OS-native secure storage
 - **Async-First Processing**: Heavy operations run in background executors to maintain UI responsiveness
-- **Provider Abstraction**: Unified AI provider interface supporting multiple services (Seedream, Google Nano Banana, OpenAI GPT-Image, Agnes)
+- **Provider Abstraction**: Unified AI provider interface supporting multiple services (Seedream, Google Nano Banana, OpenAI GPT-Image). Agnes is deferred — the trait reserves extensibility only.
 - **Multi-Crate Workspace**: Modular architecture separating concerns (app, core, ai, capture, presets)
 
 ### Technology Stack
@@ -106,7 +113,7 @@ The system is organized as a Cargo workspace with five crates:
 - HTTP client with retry logic
 - Error mapping from provider-specific to app-level errors
 - Capability declaration system
-- Provider implementations: Seedream, Google Nano Banana, OpenAI GPT-Image, Agnes
+- Provider implementations: Seedream, Google Nano Banana, OpenAI GPT-Image（Agnes 暂不实现）
 - **Key Trait**: `Provider` with capability declarations
 
 #### 4. **rastery-capture** (System Integration)
@@ -400,11 +407,9 @@ pub struct OpenAIGPTImageProvider {
     client: reqwest::Client,
 }
 
-pub struct AgnesProvider {
-    client: reqwest::Client,
-}
-
-// Each implements the Provider trait
+// Each implements the Provider trait.
+// Agnes 暂不实现（spec v0.3 已确认）：Provider trait 只需保证「新增服务商不改动上层业务代码」
+// 这一扩展性，不得为 Agnes 编写适配器。
 ```
 
 ### Capture Module (rastery-capture)
@@ -530,7 +535,7 @@ pub fn get_photo_restoration_prompt() -> &'static str;
 pub fn get_id_photo_prompt(spec: IdPhotoSpec, background: Color, attire: Attire) -> &'static str;
 pub fn get_avatar_prompt(style: AvatarStyle) -> &'static str;
 pub fn get_meme_prompt(emotion: Emotion) -> &'static str;
-// ... similar functions for all 12 industry tools
+// ... similar functions for all 13 industry tools
 ```
 
 ### UI Layer Components (rastery-app)
@@ -1124,7 +1129,7 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 
 ## Implementation Approach
 
-### Phase 1: Foundation (Core Infrastructure)
+### [v1] Phase 1: Foundation (Core Infrastructure)
 
 **Sprint 1-2: Workspace Setup and Core Engine Basics**
 - Set up Cargo workspace with 5 crates
@@ -1140,7 +1145,7 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 - Write property tests for EXIF cleaning (Property 4, 20)
 - Quality gate: All tests pass, clippy clean
 
-**Sprint 4: Configuration and Credential Management**
+**[v1/v2 混合] Sprint 4: Configuration and Credential Management** —— TOML 配置属 v1；Credential Manager / Keychain 是为存 API Key 服务的，属 v2
 - Implement TOML config serialization/deserialization
 - Write property tests for config round-trip (Properties 3, 23)
 - Implement Windows Credential Manager integration
@@ -1148,7 +1153,7 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 - Write property test for credential storage security (Property 29)
 - Quality gate: All tests pass, clippy clean
 
-### Phase 2: Advanced Processing (Core Features)
+### [v1] Phase 2: Advanced Processing (Core Features)
 
 **Sprint 5: Batch Processing**
 - Implement BatchProcessor with async execution
@@ -1178,7 +1183,7 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 - Implement watermarking (text and image)
 - Quality gate: All tests pass, clippy clean
 
-### Phase 3: System Integration (Capture Module)
+### [v1] Phase 3: System Integration (Capture Module)
 
 **Sprint 9: Display Detection and DPI**
 - Implement multi-display detection
@@ -1201,7 +1206,7 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 - Implement clipboard integration
 - Quality gate: Integration tests pass
 
-### Phase 4: AI Integration (AI Engine)
+### [v2] Phase 4: AI Integration (AI Engine) — v1 整体跳过，见 ADR-0001
 
 **Sprint 12: AI Provider Abstraction**
 - Define Provider trait with capability declarations
@@ -1214,19 +1219,18 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 - Implement SeedreamProvider
 - Implement GoogleNanoBananaProvider
 - Implement OpenAIGPTImageProvider
-- Implement AgnesProvider
 - Write mock-based unit tests for each provider
 - Write property test for HTTPS usage (Property 30)
 - Quality gate: All tests pass, clippy clean
 
 **Sprint 15: Preset Library**
 - Organize locked prompts in rastery-presets crate
-- Implement prompt template files for 12 industry tools
+- Implement prompt template files for 13 industry tools
 - Implement compile-time embedding
 - Write smoke tests for preset accessibility
 - Quality gate: All tests pass, clippy clean
 
-### Phase 5: User Interface (GPUI App)
+### [v1/v2 混合] Phase 5: User Interface (GPUI App)
 
 **Sprint 16-17: Main App Structure**
 - Initialize GPUI application
@@ -1250,33 +1254,33 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 - Follow GPUI three-phase rendering (request_layout, prepaint, paint)
 - Quality gate: Interactive canvas features working
 
-**Sprint 21-22: AI Features UI**
+**[v2] Sprint 21-22: AI Features UI**
 - Implement AI generation page (text-to-image, image-to-image)
 - Implement AI editing page with 12 presets
 - Implement provider selection and settings integration
 - Implement progress indicators and error displays
 - Quality gate: AI features accessible (with mock providers)
 
-**Sprint 23-24: Industry Tools UI**
-- Implement 12 industry tool pages with parameter controls
+**[v2] Sprint 23-24: Industry Tools UI**
+- Implement 13 industry tool pages with parameter controls
 - Integrate with Preset_Library for locked prompts
 - Implement multi-style selection for applicable tools
 - Quality gate: All industry tools accessible
 
-**Sprint 25: Creative Output UI**
+**[v1/v2 混合] Sprint 25: Creative Output UI** —— GIF 制作（FR-10）属 v1；海报设计（FR-11）依赖 AI 底图，属 v2
 - Implement GIF creation page with frame management
 - Implement poster design page with AI background + text layers
 - Integrate TextSystem rendering for poster text
 - Quality gate: Creative features working end-to-end
 
-**Sprint 26: Settings and Localization**
+**[v1/v2 混合] Sprint 26: Settings and Localization** —— 设置页、语言切换、热键配置属 v1；API key management 属 v2
 - Implement settings page with all config options
 - Integrate API key management with credential store
 - Implement language switching (Chinese/English)
 - Implement hotkey configuration with conflict detection
 - Quality gate: All settings functional
 
-### Phase 6: Polish and Release
+### [v1] Phase 6: Polish and Release
 
 **Sprint 27: Error Handling and Validation**
 - Implement user-friendly error messages (localized)
