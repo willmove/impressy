@@ -112,25 +112,5 @@ fn path_suffix(path: &Option<PathBuf>) -> String {
     }
 }
 
-impl CoreError {
-    /// 从 `std::io::Error` 构造，并把「磁盘空间不足」识别为专门的变体。
-    ///
-    /// Requirement 57.5 要求磁盘空间不足时返回可辨识的错误而非泛化 I/O 错误。
-    pub(crate) fn from_io(path: impl Into<PathBuf>, source: std::io::Error) -> Self {
-        let path = path.into();
-        // ErrorKind::StorageFull 在 Rust 1.83+ 稳定；部分平台仍报 ENOSPC 的 Uncategorized。
-        let is_full = source.kind() == std::io::ErrorKind::StorageFull
-            || source.raw_os_error() == Some(28);
-        if is_full {
-            Self::InsufficientDiskSpace { path }
-        } else {
-            Self::Io {
-                path: Some(path),
-                source,
-            }
-        }
-    }
-}
-
 /// `rastery-core` 的 `Result` 别名。
 pub type Result<T> = std::result::Result<T, CoreError>;

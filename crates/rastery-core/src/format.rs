@@ -160,6 +160,11 @@ impl EncodeSettings {
 ///
 /// 无效或损坏的输入返回 [`CoreError::ImageDecode`] 而非 panic（Requirement 57.1）。
 pub fn decode(bytes: &[u8]) -> Result<RgbaImage> {
+    // WebP 走 libwebp（与编码端同库），保证无损往返逐像素一致（Requirement 52.8）；
+    // 跨库（image crate 的 WebP 解码器）对 alpha 不保证无损。其余格式用 image crate。
+    if matches!(image::guess_format(bytes), Ok(image::ImageFormat::WebP)) {
+        return decode_webp(bytes);
+    }
     let reader = image::ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .map_err(|e| CoreError::Io {
@@ -171,6 +176,31 @@ pub fn decode(bytes: &[u8]) -> Result<RgbaImage> {
         source: e,
     })?;
     Ok(img.to_rgba8())
+}
+
+/// 用 libwebp 解码 WebP。
+fn decode_webp(bytes: &[u8]) -> Result<RgbaImage> {
+    let img = webp::Decoder::new(bytes)
+        .decode()
+        .ok_or_else(|| CoreError::Webp {
+            operation: "解码",
+            detail: "无法解码 WebP".to_string(),
+        })?;
+    let (w, h) = (img.width(), img.height());
+    if img.is_alpha() {
+        RgbaImage::from_raw(w, h, img.to_vec()).ok_or_else(|| CoreError::Webp {
+            operation: "解码",
+            detail: format!("{w}×{h} RGBA 缓冲区与尺寸不符"),
+        })
+    } else {
+        // 无 alpha 的 WebP：补全不透明 alpha 后转为 RGBA。
+        let rgb = image::RgbImage::from_raw(w, h, img.to_vec())
+            .ok_or_else(|| CoreError::Webp {
+                operation: "解码",
+                detail: format!("{w}×{h} RGB 缓冲区与尺寸不符"),
+            })?;
+        Ok(image::DynamicImage::ImageRgb8(rgb).to_rgba8())
+    }
 }
 
 /// 把图像编码为字节。

@@ -30,13 +30,18 @@
 
 #![deny(missing_docs)]
 
+pub mod animation;
+pub mod batch;
+pub mod beautify;
 pub mod collage;
+pub mod config;
 pub mod error;
 pub mod exif;
 pub mod format;
 pub mod qr;
 pub mod slice;
 pub mod transform;
+pub mod watermark;
 
 pub use error::{CoreError, Result};
 
