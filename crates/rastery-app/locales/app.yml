@@ -1,0 +1,25 @@
+_version: 2
+app:
+  title:
+    en: Rastery
+    zh-CN: Rastery
+nav:
+  basic_image:
+    en: Basic Image Processing
+    zh-CN: 基础图片处理
+  ai_generation:
+    en: AI Generation & Editing
+    zh-CN: AI 生成与改图
+  industry_tools:
+    en: Industry AI Tools
+    zh-CN: 行业定制 AI 工具
+  creative_output:
+    en: Creative Output
+    zh-CN: 创作输出
+placeholder:
+  dev:
+    en: Under development (v2)
+    zh-CN: 开发中（v2）
+  coming:
+    en: Coming soon
+    zh-CN: 即将实现
