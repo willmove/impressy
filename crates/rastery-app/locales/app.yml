@@ -3,6 +3,9 @@ app:
   title:
     en: Rastery
     zh-CN: Rastery
+  subtitle:
+    en: Screenshot & image toolbox
+    zh-CN: 截图与图片工具箱
 nav:
   basic_image:
     en: Basic Image Processing
@@ -16,10 +19,169 @@ nav:
   creative_output:
     en: Creative Output
     zh-CN: 创作输出
+lang:
+  toggle:
+    en: 中文
+    zh-CN: English
+  label:
+    en: Language
+    zh-CN: 语言
+action:
+  open:
+    en: Open image
+    zh-CN: 打开图片
+  open_multi:
+    en: Open images
+    zh-CN: 打开多张
+  save:
+    en: Save result
+    zh-CN: 保存结果
+  rotate90:
+    en: Rotate 90°
+    zh-CN: 旋转 90°
+  crop_square:
+    en: Crop 1:1
+    zh-CN: 裁剪 1:1
+  strip_exif:
+    en: Strip EXIF
+    zh-CN: 清除 EXIF
+  beautify:
+    en: Beautify
+    zh-CN: 一键美化
+  slice_3x3:
+    en: Slice 3×3 → folder
+    zh-CN: 九宫格切图 → 目录
+  decode_qr:
+    en: Recognize QR
+    zh-CN: 识别二维码
+  collage_v:
+    en: Stack vertically
+    zh-CN: 纵向拼接
+  gif:
+    en: Make GIF
+    zh-CN: 合成 GIF
+  batch_png:
+    en: Batch → PNG folder
+    zh-CN: 批量转 PNG → 目录
 placeholder:
   dev:
-    en: Under development (v2)
-    zh-CN: 开发中（v2）
-  coming:
-    en: Coming soon
-    zh-CN: 即将实现
+    en: Under development (v2). This feature ships in a later release.
+    zh-CN: 开发中（v2）。该功能将在后续版本提供。
+  section_dev:
+    en: This section is under development and will be available in v2.
+    zh-CN: 本板块正在开发中，将于 v2 版本提供。
+  back:
+    en: Back
+    zh-CN: 返回
+  local_badge:
+    en: Local · Offline
+    zh-CN: 本地 · 离线
+  open_image:
+    en: Choose an image to begin (wired to rastery-core on the desktop build).
+    zh-CN: 选择一张图片开始（桌面构建中接入 rastery-core）。
+feature:
+  edit:
+    name:
+      en: Crop / Resize / Rotate
+      zh-CN: 裁剪 / 缩放 / 旋转
+    desc:
+      en: Aspect-ratio presets, lossless rotation, high-quality resampling.
+      zh-CN: 比例预设、无损旋转、高质量重采样。
+  collage:
+    name:
+      en: Collage
+      zh-CN: 拼图拼接
+    desc:
+      en: Combine images vertically, horizontally, or in a grid.
+      zh-CN: 纵向、横向或网格拼接多张图片。
+  batch:
+    name:
+      en: Batch Processing
+      zh-CN: 批量处理
+    desc:
+      en: Convert, compress, resize, or watermark many images at once.
+      zh-CN: 批量转换、压缩、缩放或加水印，失败项单独标记。
+  slice:
+    name:
+      en: Slicing
+      zh-CN: 切图
+    desc:
+      en: Split an image into an N×M grid of tiles.
+      zh-CN: 把图片按 N×M 网格切成多块。
+  qrcode:
+    name:
+      en: QR Code
+      zh-CN: 二维码
+    desc:
+      en: Generate and recognize QR codes with custom colors.
+      zh-CN: 生成与识别二维码，支持自定义颜色与纠错级别。
+  exif:
+    name:
+      en: EXIF Manager
+      zh-CN: EXIF 管理
+    desc:
+      en: View and strip camera/GPS metadata without touching pixels.
+      zh-CN: 查看并清除相机 / GPS 元数据，像素不变。
+  beautify:
+    name:
+      en: Screenshot Beautify
+      zh-CN: 截图美化
+    desc:
+      en: Rounded corners, padding, gradients, borders, and shadows.
+      zh-CN: 圆角、内边距、渐变背景、描边与阴影。
+  gif:
+    name:
+      en: GIF Maker
+      zh-CN: GIF 制作
+    desc:
+      en: Turn frames into a GIF with delay and playback modes.
+      zh-CN: 把多帧合成 GIF，可设延迟与播放模式。
+  poster:
+    name:
+      en: Poster Design
+      zh-CN: 海报设计
+    desc:
+      en: Layered poster design over AI backdrops.
+      zh-CN: 基于 AI 底图的图层化海报设计。
+  text_to_image:
+    name:
+      en: Text to Image
+      zh-CN: 文生图
+    desc:
+      en: Generate images from prompts via BYOK providers.
+      zh-CN: 通过自备 API Key 的服务商从提示词生成图像。
+  image_edit:
+    name:
+      en: AI Image Editing
+      zh-CN: AI 改图
+    desc:
+      en: Preset AI editing scenarios.
+      zh-CN: 预置 AI 改图场景。
+  video_watermark:
+    name:
+      en: Video Watermark Removal
+      zh-CN: 视频去水印
+    desc:
+      en: Remove watermarks from video.
+      zh-CN: 去除视频中的水印。
+  video_subtitle:
+    name:
+      en: Video Subtitle Removal
+      zh-CN: 视频去字幕
+    desc:
+      en: Remove burned-in subtitles from video.
+      zh-CN: 去除视频中的硬字幕。
+  video_clarity:
+    name:
+      en: Video Clarity Enhancement
+      zh-CN: 视频清晰度增强
+    desc:
+      en: Upscale and sharpen video.
+      zh-CN: 提升视频清晰度。
+  industry:
+    name:
+      en: Specialized AI Tools
+      zh-CN: 行业专用 AI 工具
+    desc:
+      en: "13 industry tools: ID photos, avatars, product shots, and more."
+      zh-CN: 13 项行业工具：证件照、头像、商品图等。
