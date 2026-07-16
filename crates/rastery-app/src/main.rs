@@ -11,9 +11,12 @@
 // 之前声明，否则子模块里的 `t!` 找不到 `crate::_rust_i18n_t`。
 rust_i18n::i18n!("locales");
 
-mod section;
-mod shell;
-mod workspace;
+mod annotate_canvas;
+mod capture;
+mod crop_frame;
+ mod section;
+ mod shell;
+ mod workspace;
 
 use gpui::{App, AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size};
 use gpui_component::Root;

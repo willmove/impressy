@@ -196,7 +196,22 @@ impl AppShell {
                 cx.notify();
             }));
 
-        let body = if feature.is_v1() {
+        let body = if feature == Feature::Screenshot {
+            // FR-08：打开截图覆盖层。默认构建用占位图（无头回退）；`system` feature 抓真屏。
+            let note = tr("capture.start_hint");
+            v_flex()
+                .gap_3()
+                .child(
+                    Button::new("start-screenshot")
+                        .label(tr("capture.start"))
+                        .primary()
+                        .on_click(cx.listener(|_this, _, _, cx| {
+                            crate::capture::start_capture(cx);
+                        })),
+                )
+                .child(div().text_xs().text_color(muted).child(note))
+                .into_any_element()
+        } else if feature.is_v1() {
             self.v1_page(feature, cx).into_any_element()
         } else {
             // Requirement 34.8–34.10：v2 功能点开显示「开发中」占位。

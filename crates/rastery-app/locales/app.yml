@@ -185,3 +185,51 @@ feature:
     desc:
       en: "13 industry tools: ID photos, avatars, product shots, and more."
       zh-CN: 13 项行业工具：证件照、头像、商品图等。
+  screenshot:
+    name:
+      en: Screenshot
+      zh-CN: 屏幕截图
+    desc:
+      en: Capture a screen region with annotation tools (global hotkey in real build).
+      zh-CN: 截取屏幕区域并标注（真机构建支持全局热键）。
+capture:
+  start:
+    en: Start screenshot
+    zh-CN: 开始截图
+  start_hint:
+    en: Opens a fullscreen overlay. On the headless build it shows a placeholder; build with --features system to capture the real screen.
+    zh-CN: 打开全屏覆盖层。无头构建显示占位图；用 --features system 构建可截取真实屏幕。
+  annotate:
+    en: Annotate
+    zh-CN: 标注
+  back_select:
+    en: Back to select
+    zh-CN: 返回选区
+  confirm:
+    en: Confirm
+    zh-CN: 确认
+  cancel:
+    en: Cancel
+    zh-CN: 取消
+  saved_copied:
+    en: Saved and copied to clipboard.
+    zh-CN: 已保存并复制到剪贴板。
+  saved_only:
+    en: Saved (clipboard copy unavailable).
+    zh-CN: 已保存（剪贴板复制不可用）。
+  copied:
+    en: Copied to clipboard.
+    zh-CN: 已复制到剪贴板。
+  nothing:
+    en: Nothing saved.
+    zh-CN: 未保存。
+annotate:
+  brush:
+    en: Brush
+    zh-CN: 画笔
+  mosaic:
+    en: Mosaic
+    zh-CN: 马赛克
+  count:
+    en: "%{count} annotation(s)"
+    zh-CN: "%{count} 个标注"

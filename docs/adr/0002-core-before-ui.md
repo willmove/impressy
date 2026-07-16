@@ -40,14 +40,14 @@ spec §8 的里程碑顺序是 M1 骨架与语料（GPUI 脚手架 + 主界面�
 - **`cargo check` 通过 ≠ 可以声称「已验证」**。渲染、截图、DPI、手感、冷启动全部需要真机。涉及这些的改动，如实说明「本机只做了类型检查」。
 - `rastery-core` 的三平台回归由 GitHub Actions（`windows-latest` / `macos-latest` / `ubuntu-latest`）承担，零人工成本。CI 也可编译 `rastery-app` 以捕获 API 误用与平台条件编译错误，但无法验证渲染正确性、DPI 精度或冷启动耗时——CI runner 同样是无真实多显示器的虚拟机。
 
-## 进度快照（2026-07-16）
+## 进度快照（2026-07-16，更新）
 
 按本 ADR 的「core 优先、按可验证性分层」原则，v1 三个 crate 的当前状态：
 
 | crate | 已完成且**本机可验证** | 已写但**只类型检查**（待真机） |
 | --- | --- | --- |
-| `rastery-core` | 全部本地引擎（format/transform/collage/slice/qr/exif/beautify/animation/watermark/batch/config）+ 25 个测试（含 Req 52–58 property test）全绿 | —— |
-| `rastery-capture` | `annotate` 画笔/马赛克纯合成 + 6 个 property test 全绿 | `device`（截图/热键/取色/多屏 DPI）、`clipboard` 仅有 trait 与无头占位 `Null*`；真实平台后端未写 |
-| `rastery-app` | 编译干净（gpui 0.2.2 + gpui-component 0.5.1）；四板块导航（Req 34，含三个视频 v2 占位）、中英切换（Req 35）、功能目录卡片引用 core 真实数据 | 交互式功能页（文件选择、预览画布、裁剪框/标注等自定义 Element）未实现——本机无法验证渲染与手感 |
+| `rastery-core` | 全部本地引擎 + 31 个测试（含 Req 52–58 property test）全绿 | —— |
+| `rastery-capture` | `annotate` 画笔/马赛克纯合成 + 6 个 property test 全绿 | `device`（截图/热键/取色/多屏 DPI）、`clipboard` 真实平台后端已写，`cargo check --features system` 在本机编译通过——但行为须真机验收 |
+| `rastery-app` | 编译干净（含 `--features system`）；四板块导航（Req 34，新增「屏幕截图」入口）、中英切换（Req 35） | **自定义 Element 已实现**：`crop_frame`（选区拖拽/缩放/比例锁，Req 47.1–3）、`annotate_canvas`（画笔/马赛克标注，Req 47.4–7）、`capture::overlay` 截图覆盖层（区域选择 + 取色读数 + 标注 + 保存/复制，Req 13/14/48）。渲染、手感、DPI 精度须真机验收 |
 
-**尚未完成的 v1（均因环境不可验证而非代码障碍）**：`rastery-app` 各功能页的实际交互实现，`rastery-capture` 的真实屏幕捕获 / 全局热键 / 系统剪贴板 / 取色后端。这些须在真机（Win/macOS/Linux 桌面 + 多屏混合 DPI）上实现并验收。不得在本机声称其「已验证」。
+**已实现但须真机验收的 v1**：自定义 Canvas_Element（Req 47）、截图覆盖层与区域捕获（Req 13/14/48）。真实屏幕抓取走 `system` feature（`xcap`），全局热键的事件泵→GPUI 主循环桥接（Req 13.1/49）尚未接通——须真机调试。不得在本机声称其「已验证」。

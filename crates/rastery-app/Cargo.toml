@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "Rastery 桌面应用：GPUI 主窗口与四板块导航。"
 
+[features]
+# 启用后转发到 rastery-capture 的真实平台后端（xcap / arboard / global-hotkey）。
+# 无头 VM 与 CI 基础 check 不启用——见 ADR-0002。
+system = ["rastery-capture/system"]
+
 [lints]
 workspace = true
 

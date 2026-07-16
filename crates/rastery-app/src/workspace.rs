@@ -308,7 +308,7 @@ impl Workspace {
 }
 
 /// 把 `rastery-core` 的 RGBA 图转成 GPUI 的 [`RenderImage`]（BGRA 序）。
-fn to_render_image(img: &RgbaImage) -> Arc<RenderImage> {
+pub(crate) fn to_render_image(img: &RgbaImage) -> Arc<RenderImage> {
     let mut bgra = img.clone();
     for px in bgra.pixels_mut() {
         px.0.swap(0, 2); // RGBA → BGRA
