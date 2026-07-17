@@ -3,6 +3,8 @@
 [![CI](https://github.com/willmove/rastery/actions/workflows/ci.yml/badge.svg)](https://github.com/willmove/rastery/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](#license)
 
+**English** | [简体中文](README.zh-CN.md)
+
 **Rastery** is a cross-platform native desktop image toolbox (Rust + [GPUI](https://www.gpui.rs/)) that folds **screen capture** and **image processing** into one app. It is **local-first**: every feature in v1 works fully offline, with no account and no API key.
 
 > Windows 10/11 · macOS · Linux (X11 / Wayland)
