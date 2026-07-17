@@ -15,6 +15,10 @@
     <MajorUpgrade
       DowngradeErrorMessage="A newer version of Rastery is already installed." />
     <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
+    <Icon
+      Id="RasteryIcon"
+      SourceFile="crates\rastery-app\assets\icons\rastery.ico" />
+    <Property Id="ARPPRODUCTICON" Value="RasteryIcon" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">
       <Directory Id="ProgramFiles64Folder">
@@ -33,10 +37,11 @@
                 Directory="RasteryProgramMenu"
                 Name="Rastery"
                 Description="Native image toolbox"
+                Icon="RasteryIcon"
                 WorkingDirectory="INSTALLFOLDER"
                 Advertise="yes" />
             </File>
-            <ProgId Id="Rastery.Image" Description="Image file" Icon="RasteryExe">
+            <ProgId Id="Rastery.Image" Description="Image file" Icon="RasteryIcon">
               <Extension Id="png" ContentType="image/png">
                 <Verb
                   Id="open_png"

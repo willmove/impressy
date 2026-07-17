@@ -11,6 +11,55 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  icons:
+    name: generated icon assets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 生成器按项目约定保留在外部工具仓库；CI 对已提交产物做独立格式检查。
+      - name: Validate generated icon formats and source sync
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import struct
+          import xml.etree.ElementTree as ET
+
+          root = Path("crates/rastery-app/assets")
+          icons = root / "icons"
+          app_id = "app.rastery.Rastery"
+          sizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024]
+
+          def png_size(path):
+              data = path.read_bytes()
+              assert data[:8] == b"\x89PNG\r\n\x1a\n", f"invalid PNG: {path}"
+              return struct.unpack(">II", data[16:24])
+
+          ET.parse(root / "rastery-logo.svg")
+          scalable = icons / "hicolor/scalable/apps" / f"{app_id}.svg"
+          ET.parse(scalable)
+          assert scalable.read_bytes() == (root / "rastery-logo.svg").read_bytes(), \
+              "Linux scalable icon is stale"
+
+          assert png_size(icons / "rastery.png") == (512, 512)
+          for size in sizes:
+              assert png_size(icons / "png" / f"{size}x{size}.png") == (size, size)
+              if size <= 512:
+                  path = icons / "hicolor" / f"{size}x{size}" / "apps" / f"{app_id}.png"
+                  assert png_size(path) == (size, size)
+
+          ico = (icons / "rastery.ico").read_bytes()
+          reserved, kind, count = struct.unpack_from("<HHH", ico)
+          assert (reserved, kind) == (0, 1) and len(ico) >= 6 + count * 16
+          ico_sizes = sorted((ico[6 + index * 16] or 256) for index in range(count))
+          assert ico_sizes == [16, 24, 32, 48, 64, 72, 96, 128, 256]
+
+          icns = (icons / "rastery.icns").read_bytes()
+          assert icns[:4] == b"icns" and struct.unpack_from(">I", icns, 4)[0] == len(icns)
+          print("verified 21 generated icon assets")
+          PY
+
   quality:
     name: check + clippy + test (${{ matrix.os }})
     strategy:

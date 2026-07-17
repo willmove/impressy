@@ -27,6 +27,17 @@ jobs:
       - name: Build release executable
         run: cargo build --release -p rastery-app
 
+      - name: Verify executable resources
+        shell: pwsh
+        run: |
+          $version = (Get-Item "target\release\rastery.exe").VersionInfo
+          if ($version.ProductName -ne "Rastery") {
+            throw "rastery.exe does not contain the expected Windows resources."
+          }
+          if (-not (Test-Path "crates\rastery-app\assets\icons\rastery.ico")) {
+            throw "The generated Windows icon is missing."
+          }
+
       - name: Decode signing certificate and locate SignTool
         id: signing
         shell: pwsh
@@ -103,8 +114,8 @@ jobs:
           path: target/wix/*.msi
           if-no-files-found: error
 
-  binary-archive:
-    name: Binary archive for ${{ matrix.name }}
+  desktop-package:
+    name: Desktop package for ${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
@@ -130,10 +141,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
 
-      - name: Build release binary
+      - name: Install pinned cargo-bundle
+        if: runner.os == 'macOS'
+        run: cargo install cargo-bundle --version 0.11.0 --locked
+
+      - name: Build Linux release binary
+        if: runner.os == 'Linux'
         run: cargo build --release -p rastery-app
 
-      - name: Enforce 30 MB binary limit
+      - name: Enforce Linux 30 MB binary limit
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           size=$(wc -c < target/release/rastery)
@@ -143,11 +160,38 @@ jobs:
           fi
           echo "rastery: $size bytes"
 
-      - name: Create binary archive
+      - name: Create Linux desktop archive
+        if: runner.os == 'Linux'
         shell: bash
-        run: tar -C target/release -czf "target/rastery-${{ matrix.name }}.tar.gz" rastery
+        run: |
+          stage="target/linux-package"
+          install -Dm755 target/release/rastery "$stage/usr/bin/rastery"
+          install -Dm644 packaging/linux/app.rastery.Rastery.desktop \
+            "$stage/usr/share/applications/app.rastery.Rastery.desktop"
+          mkdir -p "$stage/usr/share/icons"
+          cp -R crates/rastery-app/assets/icons/hicolor "$stage/usr/share/icons/"
+          tar -C "$stage" -czf "target/rastery-${{ matrix.name }}.tar.gz" .
 
-      - name: Upload binary archive
+      - name: Build macOS application bundle
+        if: runner.os == 'macOS'
+        run: cargo bundle --release --package rastery-app
+
+      - name: Verify and archive macOS application bundle
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          app="target/release/bundle/osx/Rastery.app"
+          test -x "$app/Contents/MacOS/rastery"
+          test -s "$app/Contents/Resources/Rastery.icns"
+          size=$(wc -c < "$app/Contents/MacOS/rastery")
+          if [ "$size" -gt $((30 * 1024 * 1024)) ]; then
+            echo "rastery is $size bytes, above the 30 MB limit" >&2
+            exit 1
+          fi
+          tar -C target/release/bundle/osx -czf \
+            "target/rastery-${{ matrix.name }}.tar.gz" Rastery.app
+
+      - name: Upload desktop package
         uses: actions/upload-artifact@v4
         with:
           name: rastery-${{ matrix.name }}

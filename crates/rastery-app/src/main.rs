@@ -15,6 +15,7 @@ rust_i18n::i18n!("locales");
 mod config_store;
 mod crop_frame;
 mod feature_params;
+mod logging;
 mod section;
 mod shell;
 mod text_watermark;
@@ -30,9 +31,11 @@ use config_store::{ConfigLoad, ConfigStore};
 use rastery_core::config::AppConfig;
 use shell::AppShell;
 
+/// Native desktop identity shared by the Linux desktop file and macOS bundle.
+const APP_ID: &str = "app.rastery.Rastery";
+
 fn main() {
-    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .try_init();
+    logging::init();
 
     let (config_store, loaded) = match ConfigStore::for_current_user() {
         Ok(store) => {
@@ -72,7 +75,7 @@ fn main() {
                     ..Default::default()
                 }),
                 // Linux（Wayland）下的应用标识：影响 dock / 任务栏归类与 .desktop 匹配。
-                app_id: Some("rastery".into()),
+                app_id: Some(APP_ID.into()),
                 ..Default::default()
             },
             move |window, cx| {
@@ -89,4 +92,14 @@ fn main() {
         .unwrap();
         cx.activate(true);
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::APP_ID;
+
+    #[test]
+    fn desktop_identity_matches_packaging_assets() {
+        assert_eq!(APP_ID, "app.rastery.Rastery");
+    }
 }

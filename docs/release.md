@@ -14,14 +14,38 @@ cargo bench -p rastery-core --bench v1_local
 随后完成 [`testing/v1-desktop-acceptance.md`](./testing/v1-desktop-acceptance.md) 的真机验收。
 Core 探针只用于发现相对性能回退，不能代替 UI 响应与冷启动测量。
 
+## 应用图标
+
+唯一源文件是 `crates/rastery-app/assets/rastery-logo.svg`。图标生成器继续放在外部 Termior
+工具仓库，不复制到 Rastery。修改 SVG 后，在 PowerShell 中生成并校验全部平台资源：
+
+```powershell
+$generator = 'D:\Coding\ToolsProjects\termior\scripts\generate-icons.mjs'
+$iconArgs = @(
+  '--root', 'D:\Coding\DesignProjects\rastery\crates\rastery-app',
+  '--source', 'assets\rastery-logo.svg',
+  '--output', 'assets\icons',
+  '--name', 'rastery',
+  '--app-id', 'app.rastery.Rastery'
+)
+node $generator --write @iconArgs
+node $generator --check @iconArgs
+```
+
+生成结果包括 Windows ICO、macOS ICNS、16–1024 px PNG，以及 Linux hicolor PNG/SVG。
+这些产物需要随源码提交；CI 不依赖本机外部脚本，而是独立检查格式、尺寸和 SVG 源同步状态。
+
 ## GitHub Actions 产物
 
 `.github/workflows/release.yml` 可手动运行，也会在推送 `v*` 标签时运行：
 
 - Windows 2022：构建并签名 `rastery.exe`，使用固定版本 `cargo-wix 0.3.9` 生成 MSI，
-  再签名和验证 MSI；EXE 或 MSI 超过 30 MiB 时失败。
-- Ubuntu 22.04、macOS 15 arm64：生成 release 模式的二进制 `tar.gz` 测试产物；二进制超过
-  30 MiB 时失败。
+  再签名和验证 MSI；EXE 内嵌应用图标，快捷方式、文件关联与“应用和功能”使用同一 ICO；
+  EXE 或 MSI 超过 30 MiB 时失败。
+- Ubuntu 22.04：生成包含 `usr/bin`、`.desktop` 与 hicolor 图标树的 `tar.gz` 安装布局；
+  二进制超过 30 MiB 时失败。
+- macOS 15 arm64：用固定版本 `cargo-bundle 0.11.0` 生成包含 ICNS 的 `Rastery.app`，再归档为
+  `tar.gz`；bundle 内二进制超过 30 MiB 时失败。
 
 Windows job 需要仓库 Actions secrets：
 
@@ -37,8 +61,9 @@ Windows job 需要仓库 Actions secrets：
 
 WiX 定义位于 `crates/rastery-app/wix/main.wxs`，安装范围包括：
 
-- `rastery.exe` 与开始菜单快捷方式；
+- 内嵌 ICO 的 `rastery.exe` 与带图标的开始菜单快捷方式；
 - PNG、JPEG、WebP、BMP、GIF 的「Open with Rastery」文件关联；
+- “应用和功能”与文件关联使用 `assets/icons/rastery.ico`；
 - Major Upgrade 与卸载清理。
 
 本地生成 MSI 需要 Windows、WiX Toolset v3 和 `cargo-wix 0.3.9`：
@@ -54,7 +79,7 @@ cargo wix --package rastery-app --no-build
 
 ## 尚未自动化的正式分发
 
-macOS job 当前只产出裸二进制，不包含 `.app` bundle、Developer ID 签名或 Apple 公证；
-Linux job 也只产出裸二进制，未制作 AppImage、Flatpak 或发行版包，且仍依赖目标系统运行
-库。因此这些 tar 包只是构建测试产物，不应称为 portable 正式发布包。平台分发应在运行库
-和发布渠道确定后独立完成，不能用二进制 CI 成功替代平台发布验收。
+macOS job 已产出 `.app`，但尚未接入 Developer ID 签名与 Apple 公证；Linux job 已包含桌面文件
+和图标安装树，但未制作 AppImage、Flatpak 或发行版原生包，且仍依赖目标系统运行库。因此这些
+tar 包仍是构建测试产物，不应称为 portable 正式发布包。平台分发应在运行库和发布渠道确定后
+独立完成，不能用 CI 成功替代平台发布验收。
