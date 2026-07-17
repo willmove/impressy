@@ -5,11 +5,13 @@
 >
 > **v1 范围**：只做本地功能。`## Implementation Approach` 的每个 Phase / 混合 Sprint 都标了 `[v1]` / `[v2]`。**Phase 4（AI Integration）整体跳过**，`rastery-ai` 与 `rastery-presets` 两个 crate v1 不建。理由见 [ADR-0001](../adr/0001-v1-scope-local-only.md)。
 >
+> **截图能力已剥离**：`rastery-capture`、屏幕截图、全局热键、屏幕取色、覆盖层与截图标注不属于当前范围。截图美化仍是导入现有图片后的纯处理能力。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
+>
 > **本文档的分期是对的，请照它执行。** 已冻结的 spec §8 主张 M1 骨架 → M2 core（UI 优先），与本文档 Phase 1–2（core）→ Phase 5（UI）相反。经 [ADR-0002](../adr/0002-core-before-ui.md) 裁定：**core 优先，本文档胜出**。原因是主开发机为 headless 云 VM，跑不了 GPUI，core 能在其上全自动收敛而 UI 每次迭代都需人工介入。
 
 ## Overview
 
-Rastery is a cross-platform desktop image processing application built with Rust and GPUI framework, targeting Windows, macOS, and Linux. The system integrates screenshot capabilities with comprehensive image processing features, organized around four major functional modules:
+Rastery is a cross-platform desktop image processing application built with Rust and GPUI framework, targeting Windows, macOS, and Linux. The system focuses on lightweight local image processing and is organized around four major functional modules:
 
 1. **Basic Image Processing**: Offline-first operations including editing, collage, batch processing, slicing, QR codes, EXIF management, and screenshot beautification
 2. **AI Generation and Editing**: Text-to-image, image-to-image, and 12 preset AI editing scenarios
@@ -22,7 +24,7 @@ Rastery is a cross-platform desktop image processing application built with Rust
 - **Privacy by Design**: No telemetry, no embedded API keys, credentials stored in OS-native secure storage
 - **Async-First Processing**: Heavy operations run in background executors to maintain UI responsiveness
 - **Provider Abstraction**: Unified AI provider interface supporting multiple services (Seedream, Google Nano Banana, OpenAI GPT-Image). Agnes is deferred — the trait reserves extensibility only.
-- **Multi-Crate Workspace**: Modular architecture separating concerns (app, core, ai, capture, presets)
+- **Multi-Crate Workspace**: Modular architecture separating concerns (app and core in v1; ai and presets planned for v2)
 
 ### Technology Stack
 
@@ -32,7 +34,7 @@ Rastery is a cross-platform desktop image processing application built with Rust
 - **Image Processing**: Rust image processing libraries (offline)
 - **Credential Storage**: Windows Credential Manager, macOS Keychain
 - **Configuration**: TOML format in standard app data directory
-- **Build**: Cargo workspace with 5 crates
+- **Build**: Cargo workspace with 2 crates in v1; 4 planned when v2 is implemented
 
 ## Architecture
 
@@ -56,7 +58,6 @@ graph TB
     subgraph "Core Services"
         H[Core Engine<br/>rastery-core]
         I[AI Engine<br/>rastery-ai]
-        J[Capture Module<br/>rastery-capture]
         K[Preset Library<br/>rastery-presets]
     end
     
@@ -73,22 +74,19 @@ graph TB
     E --> F
     E --> H
     E --> I
-    E --> J
     E --> K
     G --> L
     I --> M
     H --> N
-    J --> N
     
     style H fill:#e1f5ff
     style I fill:#fff4e1
-    style J fill:#e8f5e9
     style K fill:#f3e5f5
 ```
 
 ### Crate Organization
 
-The system is organized as a Cargo workspace with five crates:
+The v1 system is organized as a Cargo workspace with two crates. Two additional crates are planned for v2:
 
 #### 1. **rastery-app** (Main Application)
 - GPUI application initialization and window management
@@ -116,16 +114,7 @@ The system is organized as a Cargo workspace with five crates:
 - Provider implementations: Seedream, Google Nano Banana, OpenAI GPT-Image（Agnes 暂不实现）
 - **Key Trait**: `Provider` with capability declarations
 
-#### 4. **rastery-capture** (System Integration)
-- Global hotkey registration
-- Multi-display detection and Physical_Pixel coordinate calculation
-- Overlay window creation for screenshot selection
-- Screen capture with DPI awareness (100%, 125%, 150%, 200%)
-- Color picker with pixel-perfect sampling
-- Clipboard integration
-- **Key Trait**: `CaptureDevice` for platform-specific implementations
-
-#### 5. **rastery-presets** (Industry Tool Templates)
+#### 4. **rastery-presets** (Industry Tool Templates, v2)
 - Locked prompt template storage
 - Compile-time embedding of prompts into binary
 - Template organization by industry tool category
@@ -175,15 +164,6 @@ User Input + API Key → UI Layer → App State → Background Executor → AI E
                           Credential Store ← Config Manager        Error Mapping
                                                                           ↓
                           UI Refresh ← State Update ← Progress/Result Callback
-```
-
-#### Pattern 3: Screenshot Capture
-```
-Global Hotkey → Capture Module → Overlay Windows (per display) → User Selection
-                                                                       ↓
-                Physical Pixel Calculation → Screen Capture → Annotation Tools
-                                                                       ↓
-                File + Clipboard ← Core Engine (compression) ← Captured Image
 ```
 
 ## Components and Interfaces
@@ -412,85 +392,6 @@ pub struct OpenAIGPTImageProvider {
 // 这一扩展性，不得为 Agnes 编写适配器。
 ```
 
-### Capture Module (rastery-capture)
-
-#### CaptureDevice Trait
-```rust
-#[async_trait]
-pub trait CaptureDevice: Send + Sync {
-    fn register_hotkey(&self, hotkey: Hotkey) -> Result<()>;
-    fn unregister_hotkey(&self) -> Result<()>;
-    fn detect_displays(&self) -> Vec<DisplayInfo>;
-    async fn capture_region(&self, display: DisplayId, region: PhysicalRegion) -> Result<RgbaImage>;
-    async fn sample_pixel(&self, display: DisplayId, position: PhysicalPoint) -> Result<Rgba<u8>>;
-}
-
-pub struct DisplayInfo {
-    pub id: DisplayId,
-    pub physical_resolution: (u32, u32),
-    pub logical_resolution: (u32, u32),
-    pub dpi_scale: f32,  // 1.0, 1.25, 1.5, 2.0
-    pub position: (i32, i32),
-}
-
-pub struct PhysicalRegion {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-}
-
-pub struct PhysicalPoint {
-    pub x: u32,
-    pub y: u32,
-}
-```
-
-#### Overlay Window Manager
-```rust
-pub struct OverlayManager;
-
-impl OverlayManager {
-    pub fn create_overlays(&self, displays: &[DisplayInfo]) -> Vec<OverlayWindow>;
-}
-
-pub struct OverlayWindow {
-    pub display_id: DisplayId,
-    pub handle: WindowHandle,
-}
-```
-
-#### Annotation Tools
-```rust
-pub enum AnnotationTool {
-    Brush { width: u32, color: Rgba<u8> },
-    Mosaic { block_size: u32 },
-    Text { font: Font, size: u32, color: Rgba<u8> },
-}
-
-pub struct AnnotationLayer {
-    annotations: Vec<Annotation>,
-}
-
-impl AnnotationLayer {
-    pub fn add_brush_stroke(&mut self, points: Vec<Point>, params: BrushParams);
-    pub fn add_mosaic_region(&mut self, region: Region, block_size: u32);
-    pub fn add_text(&mut self, position: Point, text: String, params: TextParams);
-    pub fn render(&self, base_image: &mut RgbaImage);
-}
-```
-
-#### Clipboard Integration
-```rust
-pub struct ClipboardManager;
-
-impl ClipboardManager {
-    pub fn copy_image(&self, image: &RgbaImage) -> Result<()>;
-    pub fn copy_text(&self, text: &str) -> Result<()>;
-    pub fn get_image(&self) -> Result<Option<RgbaImage>>;
-}
-```
-
 ### Preset Library Module (rastery-presets)
 
 #### Preset API
@@ -548,7 +449,6 @@ pub struct AppState {
     pub providers: HashMap<ProviderId, Box<dyn Provider>>,
     pub selected_provider: Option<ProviderId>,
     pub core_engine: CoreEngine,
-    pub capture_device: Box<dyn CaptureDevice>,
     pub background_executor: BackgroundExecutor,
 }
 
@@ -573,13 +473,6 @@ pub struct CropFrame {
 impl CropFrame {
     // Implements GPUI three-phase rendering: request_layout, prepaint, paint
     // Supports drag gestures for position and corner handles for resize
-}
-
-// Annotation Canvas Element
-pub struct AnnotationCanvas {
-    base_image: RgbaImage,
-    layer: AnnotationLayer,
-    current_tool: AnnotationTool,
 }
 
 // Text Layer Canvas Element (for Poster Design)
@@ -616,8 +509,6 @@ pub struct AppConfig {
     pub default_provider: Option<ProviderId>,
     pub default_export_format: OutputFormat,
     pub default_export_quality: Quality,
-    pub screenshot_hotkey: Hotkey,
-    pub screenshot_compression: Quality,
     pub language: Language,
     pub last_output_dir: Option<PathBuf>,
 }
@@ -730,10 +621,6 @@ last_output_dir = "/Users/john/Pictures/Rastery"
 default_format = "PNG"
 default_quality = 85
 
-[screenshot]
-hotkey = "Ctrl+Shift+A"
-compression_quality = 90
-
 [providers]
 # API keys are NOT stored here - they're in OS credential store
 # This section only stores non-sensitive provider preferences
@@ -782,7 +669,6 @@ pub enum Operation {
 pub enum RasteryError {
     Core(CoreError),
     AI(AIError),
-    Capture(CaptureError),
     Config(ConfigError),
     IO(std::io::Error),
 }
@@ -806,13 +692,6 @@ pub enum AIError {
     UnsupportedOperation,
     ImageTooLarge,
     ProviderError(String),
-}
-
-pub enum CaptureError {
-    HotkeyConflict,
-    DisplayNotFound,
-    CaptureAccessDenied,
-    ClipboardAccessFailed,
 }
 
 pub enum ConfigError {
@@ -865,8 +744,6 @@ Each error type maps to a user-friendly localized message:
 - GPUI UI rendering and canvas elements
 - AI provider API integration (mock-based tests better)
 - OS credential store integration (integration tests)
-- Screenshot capture and overlay windows (system-level integration)
-- Hotkey registration (system-level integration)
 
 Given this analysis, **Property-Based Testing WILL be included** for the core image processing engine and data transformation logic. UI components, AI integration, and OS integration will use unit tests with mocks and integration tests.
 
@@ -884,11 +761,6 @@ Given this analysis, **Property-Based Testing WILL be included** for the core im
 - Capability declaration validation
 - Request serialization tests
 
-**Capture Module (rastery-capture)**:
-- Mock display detection
-- Physical pixel coordinate calculation tests with different DPI scales
-- Region boundary tests
-
 **Preset Library (rastery-presets)**:
 - Ensure all prompts are accessible
 - No runtime errors when loading embedded templates
@@ -900,11 +772,9 @@ Given this analysis, **Property-Based Testing WILL be included** for the core im
 
 ### Integration Testing Strategy
 
-- **End-to-End Screenshot Flow**: Hotkey → overlay → selection → capture → file + clipboard
 - **Batch Processing Flow**: Load images → apply operation → verify output files
 - **AI Generation Flow**: Mock provider → request → response → display
 - **Config Persistence**: Save config → restart app (simulation) → load config → verify
-- **Multi-Display Capture**: Simulate multiple displays with different DPI → capture → verify correct region
 
 ### Performance Testing
 
@@ -928,7 +798,7 @@ All code must pass before task completion:
 
 ### Property Reflection
 
-After analyzing the 449 acceptance criteria, I identified properties suitable for property-based testing in the core image processing engine. The following reflection eliminates redundancy:
+After analyzing the 433 acceptance criteria, I identified properties suitable for property-based testing in the core image processing engine. The following reflection eliminates redundancy:
 
 **Redundancy Analysis:**
 1. **EXIF Cleaning Properties**: Requirements 2.7-2.8, 11.7-11.10, and 60.5-60.6 all specify EXIF GPS/device removal. These can be combined into a single comprehensive property.
@@ -1035,13 +905,9 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 
 **Validates: Requirements 55.2**
 
-### Property 16: Physical Pixel Calculation Respects DPI Scale
+### Property 16: Removed with Screen Capture
 
-*For any* logical coordinate (x, y) with DPI scale factor S, the physical pixel coordinate SHALL be (x × S, y × S).
-
-*For any* capture region on a display with DPI scale S, the captured pixel dimensions SHALL match the visual selection exactly when accounting for S.
-
-**Validates: Requirements 13.10, 13.12, 48.3, 48.8**
+The DPI/capture property is no longer part of the current scope (ADR-0003).
 
 ### Property 17: GIF Frame Count Matches Input
 
@@ -1132,7 +998,7 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 ### [v1] Phase 1: Foundation (Core Infrastructure)
 
 **Sprint 1-2: Workspace Setup and Core Engine Basics**
-- Set up Cargo workspace with 5 crates
+- Set up the v1 Cargo workspace with `rastery-core` and `rastery-app`
 - Implement basic image loading/saving (PNG, JPEG, WebP)
 - Implement image encoding/decoding with quality parameters
 - Write property tests for lossless round-trip (Property 1)
@@ -1183,28 +1049,9 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 - Implement watermarking (text and image)
 - Quality gate: All tests pass, clippy clean
 
-### [v1] Phase 3: System Integration (Capture Module)
+### [removed] Phase 3: System Integration (Capture Module)
 
-**Sprint 9: Display Detection and DPI**
-- Implement multi-display detection
-- Implement Physical_Pixel coordinate calculation
-- Write property tests for DPI calculations (Property 16)
-- Implement platform-specific backends (Windows, macOS, Linux)
-- Quality gate: All tests pass, clippy clean
-
-**Sprint 10: Screenshot and Overlay**
-- Implement global hotkey registration
-- Implement overlay window creation per display
-- Implement region selection UI
-- Implement screen capture with compression
-- Quality gate: Integration tests pass
-
-**Sprint 11: Annotation Tools**
-- Implement brush, mosaic, text annotation tools
-- Implement annotation layer rendering
-- Implement color picker with pixel sampling
-- Implement clipboard integration
-- Quality gate: Integration tests pass
+This phase was removed from the current product scope by ADR-0003.
 
 ### [v2] Phase 4: AI Integration (AI Engine) — v1 整体跳过，见 ADR-0001
 
@@ -1249,7 +1096,6 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 
 **Sprint 20: Canvas Elements**
 - Implement CropFrame canvas element with drag gestures
-- Implement AnnotationCanvas for screenshot tools
 - Implement TextLayerElement for poster design
 - Follow GPUI three-phase rendering (request_layout, prepaint, paint)
 - Quality gate: Interactive canvas features working
@@ -1273,11 +1119,10 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 - Integrate TextSystem rendering for poster text
 - Quality gate: Creative features working end-to-end
 
-**[v1/v2 混合] Sprint 26: Settings and Localization** —— 设置页、语言切换、热键配置属 v1；API key management 属 v2
+**[v1/v2 混合] Sprint 26: Settings and Localization** —— 设置页、语言切换属 v1；API key management 属 v2
 - Implement settings page with all config options
 - Integrate API key management with credential store
 - Implement language switching (Chinese/English)
-- Implement hotkey configuration with conflict detection
 - Quality gate: All settings functional
 
 ### [v1] Phase 6: Polish and Release
@@ -1297,8 +1142,7 @@ After analyzing the 449 acceptance criteria, I identified properties suitable fo
 
 **Sprint 29: Integration Testing**
 - Write end-to-end integration tests for key flows
-- Test multi-display capture scenarios
-- Test AI integration with mock servers
+- 〔v2〕Test AI integration with mock servers
 - Test config persistence across restarts
 - Quality gate: All integration tests pass
 
@@ -1369,6 +1213,7 @@ fn prop_lossless_png_roundtrip() {
 ### Future Extensions (Out of Scope for V1)
 
 The following features are reserved for future versions:
+- Optional screen capture integration (subject to a new size/dependency review)
 - Video watermark removal (UI placeholder exists)
 - Video subtitle removal (UI placeholder exists)
 - Video clarity enhancement (UI placeholder exists)
@@ -1385,7 +1230,7 @@ The following features are reserved for future versions:
 - **Workflow Type**: Requirements-First
 - **Document Version**: 1.0
 - **Total Requirements Covered**: 60
-- **Total Acceptance Criteria Addressed**: 449
-- **Property-Based Tests Defined**: 30
-- **Last Updated**: 2025
+- **Total Acceptance Criteria Addressed**: 433
+- **Property-Based Tests Defined**: 29
+- **Last Updated**: 2026-07-17
 - **Status**: Ready for Review

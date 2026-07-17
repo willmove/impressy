@@ -133,11 +133,13 @@ impl CropRect {
     /// （Requirement 55.1 只要求 0.1% 以内，这里做到 0）。
     ///
     /// 若图像小到放不下一个该比例的矩形（如 1×1 图求 21:9），返回错误。
-    pub fn largest_centered(image_width: u32, image_height: u32, ratio: AspectRatio) -> Result<Self> {
+    pub fn largest_centered(
+        image_width: u32,
+        image_height: u32,
+        ratio: AspectRatio,
+    ) -> Result<Self> {
         if image_width == 0 || image_height == 0 {
-            return Err(CoreError::InvalidArgument(
-                "图像尺寸必须为正".to_string(),
-            ));
+            return Err(CoreError::InvalidArgument("图像尺寸必须为正".to_string()));
         }
         let k = (image_width / ratio.width).min(image_height / ratio.height);
         if k == 0 {
@@ -207,12 +209,7 @@ impl From<ResizeFilter> for fast_image_resize::ResizeAlg {
 ///
 /// 用 `fast_image_resize`（spec §3.4 指定），它带 SIMD 优化，批量处理时明显快于
 /// `image` 自带的缩放。
-pub fn resize(
-    img: &RgbaImage,
-    width: u32,
-    height: u32,
-    filter: ResizeFilter,
-) -> Result<RgbaImage> {
+pub fn resize(img: &RgbaImage, width: u32, height: u32, filter: ResizeFilter) -> Result<RgbaImage> {
     use fast_image_resize::images::Image as FirImage;
     use fast_image_resize::{PixelType, Resizer};
 
@@ -222,8 +219,13 @@ pub fn resize(
         )));
     }
 
-    let src = FirImage::from_vec_u8(img.width(), img.height(), img.as_raw().clone(), PixelType::U8x4)
-        .map_err(|e| CoreError::InvalidArgument(format!("缩放源图无效: {e}")))?;
+    let src = FirImage::from_vec_u8(
+        img.width(),
+        img.height(),
+        img.as_raw().clone(),
+        PixelType::U8x4,
+    )
+    .map_err(|e| CoreError::InvalidArgument(format!("缩放源图无效: {e}")))?;
     let mut dst = FirImage::new(width, height, PixelType::U8x4);
     let mut resizer = Resizer::new();
     let opts = fast_image_resize::ResizeOptions::new().resize_alg(filter.into());

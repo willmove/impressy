@@ -1,36 +1,26 @@
 //! 配置 property tests：Property 3（往返）、23（幂等）、26（无效 TOML 报错）。
 use proptest::prelude::*;
-use rastery_core::config::{self, AppConfig, Hotkey, Language, Modifier};
+use rastery_core::config::{self, AppConfig, Language};
 use rastery_core::format::{OutputFormat, Quality};
 use std::path::PathBuf;
 
 fn arb_config() -> impl Strategy<Value = AppConfig> {
-    (
-        0u8..3,
-        1u8..=100u8,
-        "[a-zA-Z]{1,3}",
-        any::<bool>(),
-        any::<bool>(),
-    )
-        .prop_map(|(fmt, q, key, lang, has_dir)| AppConfig {
+    (0u8..3, 1u8..=100u8, any::<bool>(), any::<bool>()).prop_map(|(fmt, q, lang, has_dir)| {
+        AppConfig {
             default_export_format: match fmt {
                 0 => OutputFormat::Png,
                 1 => OutputFormat::Jpeg,
                 _ => OutputFormat::Webp,
             },
             default_export_quality: Quality::new(q).unwrap_or_default(),
-            screenshot_hotkey: Hotkey {
-                modifiers: vec![Modifier::Ctrl, Modifier::Shift],
-                key,
-            },
-            screenshot_compression: Quality::default(),
             language: if lang { Language::En } else { Language::ZhCn },
             last_output_dir: if has_dir {
                 Some(PathBuf::from("/tmp/rastery-out"))
             } else {
                 None
             },
-        })
+        }
+    })
 }
 
 proptest! {

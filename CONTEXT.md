@@ -1,6 +1,6 @@
 # Rastery
 
-一款跨平台原生桌面图像工具箱，把「屏幕截图」与「图片处理」二合一。本文件只定义领域词汇；架构与 crate 划分见 `spec/.kiro/specs/rastery/design.md`，范围决策见 `docs/adr/`。
+一款跨平台原生桌面图像工具箱，聚焦本地图片处理。本文件只定义领域词汇；架构与 crate 划分见 `docs/spec/design.md`，范围决策见 `docs/adr/`。
 
 ## Language
 

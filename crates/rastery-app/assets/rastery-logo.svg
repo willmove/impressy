@@ -4,7 +4,7 @@
      role="img"
      aria-labelledby="logo-title logo-description">
   <title id="logo-title">Rastery logo</title>
-  <desc id="logo-description">A pixel letter R inside a screen capture frame.</desc>
+  <desc id="logo-description">A pixel letter R inside an image crop frame.</desc>
 
   <defs>
     <linearGradient id="background" x1="80" y1="64" x2="432" y2="448" gradientUnits="userSpaceOnUse">

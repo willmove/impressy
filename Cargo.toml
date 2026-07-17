@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/rastery-app", "crates/rastery-capture", "crates/rastery-core"]
+members = ["crates/rastery-app", "crates/rastery-core"]
 
 [workspace.package]
 version = "0.1.0"
@@ -12,3 +12,10 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+panic = "abort"
+strip = "symbols"

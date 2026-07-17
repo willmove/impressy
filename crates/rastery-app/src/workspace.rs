@@ -1,10 +1,8 @@
-//! 图像工作区：把 v1 功能页的「打开 → 处理 → 预览 → 保存」流程接到 `rastery-core`。
+//! 图像工作区与后台任务。
 //!
-//! 文件选择用 `rfd` 的**阻塞**原生对话框（Linux 走 xdg-portal，Win/macOS 走系统原生），
-//! 编解码与所有图像变换全部委托 `rastery-core`——本模块不含任何图像算法，只做编排。
-//!
-//! **环境约束（ADR-0002）**：无头 VM 上可编译，但对话框弹出、预览渲染、实际读写效果
-//! 须在真机验收。核心变换的正确性由 `rastery-core` 的测试保证，本模块只负责把它们串起来。
+//! 文件对话框在 UI 线程上只负责选择路径；文件读取、编解码和所有图像变换封装为
+//! [`WorkspaceJob`]，由 `AppShell` 投递到 GPUI background executor。完成后只在主线程
+//! 应用状态和刷新预览（Requirement 3、37）。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,318 +10,1066 @@ use std::sync::Arc;
 use gpui::{RenderImage, SharedString};
 use image::{Frame, RgbaImage};
 
-use rastery_core::animation::{self, GifParams, Playback};
+use rastery_core::animation::{self, GifParams};
 use rastery_core::batch::{self, BatchOp};
-use rastery_core::beautify::{self, Background, BeautifyParams};
+use rastery_core::beautify::{self, BeautifyParams};
 use rastery_core::collage::{self, CollageLayout, CollageOptions};
 use rastery_core::format::{self, EncodeSettings, OutputFormat, PngCompression};
+use rastery_core::qr::QrOptions;
 use rastery_core::slice::{self, SliceGrid};
-use rastery_core::transform::{self, AspectRatio, CropRect, Rotation};
+use rastery_core::transform::{self, CropRect, ResizeFilter, Rotation};
+use rastery_core::watermark;
 use rastery_core::{exif, qr};
+use rust_i18n::t;
 
-/// 支持打开的图片扩展名。
+use crate::feature_params::{WatermarkPlacement, WatermarkSource};
+use crate::text_watermark;
+use crate::ui_message::{ErrorKind, InfoMessage, UiMessage};
+
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif"];
+
+/// 当前功能页可触发的工作区命令。
+#[derive(Debug, Clone)]
+pub(crate) enum WorkspaceCommand {
+    OpenSingle,
+    OpenMultiple,
+    SaveResult,
+    Transform(TransformOperation),
+    ReadExif,
+    StripExif,
+    GenerateQr {
+        text: String,
+        options: QrOptions,
+    },
+    DecodeQr,
+    Collage {
+        layout: CollageLayout,
+        options: CollageOptions,
+    },
+    Slice(SliceGrid),
+    MakeGif(GifParams),
+    Batch(BatchRequest),
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum BatchRequest {
+    Convert {
+        format: OutputFormat,
+        settings: EncodeSettings,
+    },
+    Resize {
+        width: u32,
+        height: u32,
+    },
+    Watermark {
+        source: WatermarkSource,
+        text: String,
+        opacity: f32,
+        placement: WatermarkPlacement,
+    },
+}
 
 /// 单个功能页共享的图像工作区状态。
 #[derive(Default)]
-pub struct Workspace {
-    /// 已载入的输入图（单图操作用第 0 张，拼图 / GIF / 批量用全部）。
-    images: Vec<RgbaImage>,
-    /// 第一张输入文件的原始字节，供 EXIF 容器层清除（像素不变）使用。
-    source_bytes: Option<Vec<u8>>,
-    /// 处理结果图（可保存 / 预览）。
-    result_image: Option<RgbaImage>,
-    /// 处理结果的编码字节（GIF 等直接产出字节的操作）。
-    result_bytes: Option<(Vec<u8>, &'static str)>,
-    /// 当前预览（GPUI 的 BGRA 图）。
+pub(crate) struct Workspace {
+    images: Arc<Vec<RgbaImage>>,
+    source_names: Arc<Vec<String>>,
+    source_bytes: Option<Arc<Vec<u8>>>,
+    result_image: Option<Arc<RgbaImage>>,
+    result_bytes: Option<Arc<EncodedResult>>,
     preview: Option<Arc<RenderImage>>,
-    /// 面向用户的状态 / 错误文案（Requirement 36）。
-    pub status: SharedString,
-    /// 图像信息（尺寸等）。
-    pub info: SharedString,
+    preview_dimensions: Option<(u32, u32)>,
+    status: UiMessage,
+    info: InfoMessage,
+    busy: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct EncodedResult {
+    bytes: Vec<u8>,
+    extension: &'static str,
 }
 
 impl Workspace {
-    /// 当前预览图（供 `img()` 渲染）。
     pub fn preview(&self) -> Option<Arc<RenderImage>> {
         self.preview.clone()
     }
 
-    /// 打开单张图片。
-    pub fn open_single(&mut self) {
-        let Some(path) = pick_open_file() else {
-            self.status = "已取消打开".into();
-            return;
-        };
-        match load_image(&path) {
-            Ok((img, bytes)) => {
-                self.info = format!("{} · {}×{}", file_name(&path), img.width(), img.height()).into();
-                self.set_preview(&img);
-                self.source_bytes = Some(bytes);
-                self.images = vec![img];
-                self.result_image = None;
-                self.result_bytes = None;
-                self.status = "已载入图片".into();
-            }
-            Err(e) => self.status = format!("打开失败：{e}").into(),
-        }
+    pub fn preview_size(&self, max_width: f32, max_height: f32) -> Option<(f32, f32)> {
+        let (width, height) = self.preview_dimensions?;
+        let scale = (max_width / width as f32)
+            .min(max_height / height as f32)
+            .min(1.0);
+        Some((width as f32 * scale, height as f32 * scale))
     }
 
-    /// 打开多张图片（拼图 / GIF / 批量）。
-    pub fn open_multiple(&mut self) {
-        let Some(paths) = pick_open_files() else {
-            self.status = "已取消打开".into();
-            return;
-        };
-        let mut images = Vec::new();
-        let mut failures = 0usize;
-        for p in &paths {
-            match load_image(p) {
-                Ok((img, _)) => images.push(img),
-                Err(_) => failures += 1,
-            }
-        }
-        if images.is_empty() {
-            self.status = "没有可用图片".into();
-            return;
-        }
-        self.set_preview(&images[0]);
-        self.info = format!("已载入 {} 张（{} 张失败）", images.len(), failures).into();
-        self.source_bytes = None;
-        self.images = images;
-        self.result_image = None;
-        self.result_bytes = None;
-        self.status = "已载入多张图片".into();
+    pub fn current_dimensions(&self) -> Option<(u32, u32)> {
+        self.result_image
+            .as_deref()
+            .map(RgbaImage::dimensions)
+            .or_else(|| self.images.first().map(RgbaImage::dimensions))
     }
 
-    /// 保存当前结果。优先保存编码字节（GIF 等），否则把结果图编码为 PNG。
-    pub fn save_result(&mut self) {
-        if let Some((bytes, ext)) = &self.result_bytes {
-            match pick_save_file(ext).map(|p| std::fs::write(&p, bytes)) {
-                Some(Ok(())) => self.status = "已保存".into(),
-                Some(Err(e)) => self.status = format!("保存失败：{e}").into(),
-                None => self.status = "已取消保存".into(),
-            }
-            return;
+    pub fn has_image(&self) -> bool {
+        self.current_dimensions().is_some()
+    }
+
+    pub fn status_text(&self) -> SharedString {
+        self.status.text()
+    }
+
+    pub fn info_text(&self) -> SharedString {
+        self.info.text()
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.busy
+    }
+
+    pub fn set_status(&mut self, status: UiMessage) {
+        self.status = status;
+    }
+
+    /// 在主线程完成输入校验和路径选择，返回可安全发送到后台的纯任务。
+    pub fn prepare(
+        &mut self,
+        command: WorkspaceCommand,
+        last_output_dir: Option<&Path>,
+        default_export: EncodeSettings,
+    ) -> Option<WorkspaceJob> {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return None;
         }
-        let Some(img) = &self.result_image else {
-            self.status = "没有可保存的结果，请先执行操作".into();
-            return;
-        };
-        match format::encode(img, EncodeSettings::Png { compression: PngCompression::Default }) {
-            Ok(bytes) => match pick_save_file("png").map(|p| std::fs::write(&p, &bytes)) {
-                Some(Ok(())) => self.status = "已保存 PNG".into(),
-                Some(Err(e)) => self.status = format!("保存失败：{e}").into(),
-                None => self.status = "已取消保存".into(),
+
+        let job = match command {
+            WorkspaceCommand::OpenSingle => {
+                let Some(path) = pick_open_file(last_output_dir) else {
+                    self.status = UiMessage::CancelledOpen;
+                    return None;
+                };
+                WorkspaceJob::LoadPaths {
+                    paths: vec![path],
+                    single: true,
+                }
+            }
+            WorkspaceCommand::OpenMultiple => {
+                let Some(paths) = pick_open_files(last_output_dir) else {
+                    self.status = UiMessage::CancelledOpen;
+                    return None;
+                };
+                WorkspaceJob::LoadPaths {
+                    paths,
+                    single: false,
+                }
+            }
+            WorkspaceCommand::SaveResult => {
+                let (extension, job) = if let Some(result) = &self.result_bytes {
+                    let extension = result.extension;
+                    (
+                        extension,
+                        SaveSource::Bytes {
+                            bytes: Arc::clone(result),
+                        },
+                    )
+                } else if let Some(image) = self.current_image() {
+                    let extension = default_export.format().extension();
+                    (
+                        extension,
+                        SaveSource::Image {
+                            image,
+                            settings: default_export,
+                        },
+                    )
+                } else {
+                    self.status = UiMessage::NeedResult;
+                    return None;
+                };
+
+                let Some(path) = pick_save_file(extension, last_output_dir) else {
+                    self.status = UiMessage::CancelledSave;
+                    return None;
+                };
+                WorkspaceJob::Save { source: job, path }
+            }
+            WorkspaceCommand::Transform(operation) => {
+                let image = if matches!(operation, TransformOperation::Beautify(_)) {
+                    self.source_image_or_status(UiMessage::NeedImage)?
+                } else {
+                    self.current_image_or_status(UiMessage::NeedImage)?
+                };
+                WorkspaceJob::Transform { image, operation }
+            }
+            WorkspaceCommand::ReadExif => {
+                let Some(bytes) = &self.source_bytes else {
+                    self.status = UiMessage::NeedExifImage;
+                    return None;
+                };
+                WorkspaceJob::ReadExif {
+                    bytes: Arc::clone(bytes),
+                }
+            }
+            WorkspaceCommand::StripExif => {
+                let Some(bytes) = &self.source_bytes else {
+                    self.status = UiMessage::NeedExifImage;
+                    return None;
+                };
+                WorkspaceJob::StripExif {
+                    bytes: Arc::clone(bytes),
+                }
+            }
+            WorkspaceCommand::GenerateQr { text, options } => {
+                WorkspaceJob::GenerateQr { text, options }
+            }
+            WorkspaceCommand::DecodeQr => WorkspaceJob::DecodeQr {
+                images: self.first_images_with(UiMessage::NeedQrImage)?,
             },
-            Err(e) => self.status = format!("编码失败：{e}").into(),
-        }
-    }
-
-    /// 旋转 90°（FR-01）。
-    pub fn rotate90(&mut self) {
-        self.with_first(|img| Ok(transform::rotate(img, Rotation::Cw90)));
-    }
-
-    /// 裁剪为 1:1 居中最大区域（FR-01）。
-    pub fn crop_square(&mut self) {
-        self.with_first(|img| {
-            let rect = CropRect::largest_centered(img.width(), img.height(), AspectRatio::SQUARE)
-                .map_err(|e| e.to_string())?;
-            transform::crop(img, rect).map_err(|e| e.to_string())
-        });
-    }
-
-    /// 清除 EXIF（FR-06，容器层，像素不变）。
-    pub fn strip_exif(&mut self) {
-        let Some(bytes) = &self.source_bytes else {
-            self.status = "请先打开一张带 EXIF 的图片".into();
-            return;
-        };
-        match exif::strip(bytes) {
-            Ok(clean) => {
-                // 解码干净字节用于预览，并把字节留作保存（保持像素与格式）。
-                if let Ok(img) = format::decode(&clean) {
-                    self.set_preview(&img);
+            WorkspaceCommand::Collage { layout, options } => WorkspaceJob::Collage {
+                images: self.all_images()?,
+                layout,
+                options,
+            },
+            WorkspaceCommand::Slice(grid) => {
+                let images = self.first_images()?;
+                let Some(directory) = pick_folder(last_output_dir) else {
+                    self.status = UiMessage::CancelledSave;
+                    return None;
+                };
+                WorkspaceJob::Slice {
+                    images,
+                    grid,
+                    directory,
                 }
-                let ext = detect_ext(&clean);
-                self.result_bytes = Some((clean, ext));
-                self.result_image = None;
-                self.status = "已清除 EXIF".into();
             }
-            Err(e) => self.status = format!("清除失败：{e}").into(),
-        }
-    }
-
-    /// 默认参数截图美化（FR-07）。
-    pub fn beautify_default(&mut self) {
-        self.with_first(|img| {
-            let params = BeautifyParams {
-                corner_radius: 24,
-                inner_padding: 48,
-                background: Background::Solid(image::Rgba([240, 240, 245, 255])),
-                border: None,
-                shadow: None,
-            };
-            beautify::beautify(img, &params).map_err(|e| e.to_string())
-        });
-    }
-
-    /// 识别图中的二维码（FR-05），结果显示为文本。
-    pub fn decode_qr(&mut self) {
-        let Some(img) = self.images.first() else {
-            self.status = "请先打开二维码图片".into();
-            return;
-        };
-        match qr::decode(img) {
-            Ok(text) => {
-                self.info = format!("识别结果：{text}").into();
-                self.status = "识别成功".into();
-            }
-            Err(e) => self.status = format!("未识别到二维码：{e}").into(),
-        }
-    }
-
-    /// 纵向拼接已载入的多张图（FR-02）。
-    pub fn collage_vertical(&mut self) {
-        if self.images.is_empty() {
-            self.status = "请先打开多张图片".into();
-            return;
-        }
-        match collage::compose(&self.images, CollageLayout::Vertical, CollageOptions::default()) {
-            Ok(out) => {
-                self.set_preview(&out);
-                self.result_image = Some(out);
-                self.result_bytes = None;
-                self.status = "已纵向拼接".into();
-            }
-            Err(e) => self.status = format!("拼接失败：{e}").into(),
-        }
-    }
-
-    /// 九宫格切图（FR-04），保存到所选目录。
-    pub fn slice_3x3(&mut self) {
-        let Some(img) = self.images.first() else {
-            self.status = "请先打开图片".into();
-            return;
-        };
-        let tiles = match slice::slice(img, SliceGrid::three_by_three()) {
-            Ok(t) => t,
-            Err(e) => {
-                self.status = format!("切图失败：{e}").into();
-                return;
-            }
-        };
-        let Some(dir) = pick_folder() else {
-            self.status = "已取消保存".into();
-            return;
-        };
-        let mut ok = 0usize;
-        for tile in &tiles {
-            let Ok(bytes) =
-                format::encode(&tile.image, EncodeSettings::Png { compression: PngCompression::Default })
-            else {
-                continue;
-            };
-            let path = dir.join(format!("tile{}.png", tile.filename_suffix()));
-            if std::fs::write(&path, &bytes).is_ok() {
-                ok += 1;
-            }
-        }
-        self.status = format!("已保存 {ok}/{} 块到所选目录", tiles.len()).into();
-    }
-
-    /// 把已载入的多张图合成 GIF（FR-10）。
-    pub fn make_gif(&mut self) {
-        if self.images.is_empty() {
-            self.status = "请先打开多张图片".into();
-            return;
-        }
-        let params = GifParams {
-            frame_delay_ms: 200,
-            dimensions: None,
-            playback: Playback::Forward,
-        };
-        match animation::compose(&self.images, &params) {
-            Ok(bytes) => {
-                if let Some(first) = self.images.first() {
-                    let f = first.clone();
-                    self.set_preview(&f);
+            WorkspaceCommand::MakeGif(params) => WorkspaceJob::Gif {
+                images: self.all_images()?,
+                params,
+            },
+            WorkspaceCommand::Batch(request) => {
+                let images = self.all_images()?;
+                let Some(directory) = pick_folder(last_output_dir) else {
+                    self.status = UiMessage::CancelledSave;
+                    return None;
+                };
+                let names = Arc::clone(&self.source_names);
+                match request {
+                    BatchRequest::Convert { format, settings } => WorkspaceJob::Batch {
+                        images,
+                        names,
+                        operation: BatchOperation::Ready(BatchOp::Convert { format, settings }),
+                        directory,
+                    },
+                    BatchRequest::Resize { width, height } => WorkspaceJob::Batch {
+                        images,
+                        names,
+                        operation: BatchOperation::Ready(BatchOp::Resize {
+                            width,
+                            height,
+                            filter: ResizeFilter::default(),
+                        }),
+                        directory,
+                    },
+                    BatchRequest::Watermark {
+                        source,
+                        text,
+                        opacity,
+                        placement,
+                    } => {
+                        let position = match placement {
+                            WatermarkPlacement::BottomRight => {
+                                watermark::Position::BottomRight { margin: 24 }
+                            }
+                            WatermarkPlacement::Tiled => watermark::Position::Tiled { spacing: 64 },
+                        };
+                        let operation = match source {
+                            WatermarkSource::Text => BatchOperation::TextWatermark {
+                                text,
+                                opacity,
+                                position,
+                            },
+                            WatermarkSource::Image => {
+                                let Some(path) = pick_open_file(last_output_dir) else {
+                                    self.status = UiMessage::CancelledOpen;
+                                    return None;
+                                };
+                                BatchOperation::ImageWatermark {
+                                    path,
+                                    opacity,
+                                    position,
+                                }
+                            }
+                        };
+                        WorkspaceJob::Batch {
+                            images,
+                            names,
+                            operation,
+                            directory,
+                        }
+                    }
                 }
-                self.result_bytes = Some((bytes, "gif"));
+            }
+        };
+
+        self.busy = true;
+        self.status = UiMessage::Processing;
+        Some(job)
+    }
+
+    /// 从系统剪贴板取得编码字节后，准备后台解码任务。
+    pub fn prepare_paste(&mut self, bytes: Vec<u8>) -> Option<WorkspaceJob> {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return None;
+        }
+        self.busy = true;
+        self.status = UiMessage::Processing;
+        Some(WorkspaceJob::LoadClipboard { bytes })
+    }
+
+    /// 准备由操作系统拖放进来的路径；`multiple` 决定是否保留全部有效图片。
+    pub fn prepare_paths(&mut self, paths: Vec<PathBuf>, multiple: bool) -> Option<WorkspaceJob> {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return None;
+        }
+        let paths = paths
+            .into_iter()
+            .filter(|path| {
+                path.extension()
+                    .and_then(|extension| extension.to_str())
+                    .is_some_and(|extension| {
+                        IMAGE_EXTS
+                            .iter()
+                            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+                    })
+            })
+            .collect::<Vec<_>>();
+        if paths.is_empty() {
+            self.status = UiMessage::NeedImage;
+            return None;
+        }
+        self.busy = true;
+        self.status = UiMessage::Processing;
+        Some(WorkspaceJob::LoadPaths {
+            paths,
+            single: !multiple,
+        })
+    }
+
+    /// 准备把当前结果编码后复制到系统剪贴板。
+    pub fn prepare_copy(&mut self) -> Option<WorkspaceJob> {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return None;
+        }
+        let job = if let Some(result) = &self.result_bytes {
+            WorkspaceJob::CopyBytes {
+                bytes: Arc::clone(result),
+            }
+        } else if let Some(image) = self.current_image() {
+            WorkspaceJob::CopyImage { image }
+        } else {
+            self.status = UiMessage::NeedResult;
+            return None;
+        };
+        self.busy = true;
+        self.status = UiMessage::Processing;
+        Some(job)
+    }
+
+    /// 把后台任务结果应用到 UI 状态，返回需要由 App context 执行的副作用。
+    pub fn apply(&mut self, outcome: WorkspaceOutcome) -> WorkspaceEffects {
+        self.busy = false;
+        let mut effects = WorkspaceEffects::default();
+        match outcome {
+            WorkspaceOutcome::Loaded {
+                images,
+                source_names,
+                source_bytes,
+                info,
+                status,
+            } => {
+                if let Some(first) = images.first() {
+                    self.preview = Some(to_render_image(first));
+                    self.preview_dimensions = Some(first.dimensions());
+                }
+                self.images = Arc::new(images);
+                self.source_names = Arc::new(source_names);
+                self.source_bytes = source_bytes.map(Arc::new);
                 self.result_image = None;
-                self.status = "已合成 GIF，可保存".into();
-            }
-            Err(e) => self.status = format!("合成失败：{e}").into(),
-        }
-    }
-
-    /// 批量转 PNG（FR-03），保存到所选目录。
-    pub fn batch_to_png(&mut self) {
-        if self.images.is_empty() {
-            self.status = "请先打开多张图片".into();
-            return;
-        }
-        let op = BatchOp::Convert {
-            format: OutputFormat::Png,
-            settings: EncodeSettings::Png { compression: PngCompression::Default },
-        };
-        let result = batch::process(&self.images, &op);
-        let Some(dir) = pick_folder() else {
-            self.status = "已取消保存".into();
-            return;
-        };
-        let mut ok = 0usize;
-        for (index, output) in &result.successes {
-            let path = dir.join(format!("{index}.png"));
-            if std::fs::write(&path, &output.bytes).is_ok() {
-                ok += 1;
-            }
-        }
-        self.status =
-            format!("成功 {ok}，失败 {} 项（共 {}）", result.failures.len(), result.total()).into();
-    }
-
-    /// 对第一张输入图套用一个产出 [`RgbaImage`] 的操作，统一处理错误与预览。
-    fn with_first(&mut self, op: impl FnOnce(&RgbaImage) -> Result<RgbaImage, String>) {
-        let Some(img) = self.images.first() else {
-            self.status = "请先打开一张图片".into();
-            return;
-        };
-        match op(img) {
-            Ok(out) => {
-                self.set_preview(&out);
-                self.result_image = Some(out);
                 self.result_bytes = None;
-                self.status = "已处理，可保存".into();
+                self.info = info;
+                self.status = status;
             }
-            Err(e) => self.status = format!("处理失败：{e}").into(),
+            WorkspaceOutcome::Image { image, status } => {
+                let image = Arc::new(image);
+                self.preview = Some(to_render_image(&image));
+                self.preview_dimensions = Some(image.dimensions());
+                self.result_image = Some(image);
+                self.result_bytes = None;
+                self.status = status;
+            }
+            WorkspaceOutcome::Bytes {
+                bytes,
+                extension,
+                preview,
+                status,
+            } => {
+                if let Some(preview) = preview {
+                    self.preview = Some(to_render_image(&preview));
+                    self.preview_dimensions = Some(preview.dimensions());
+                }
+                self.result_bytes = Some(Arc::new(EncodedResult { bytes, extension }));
+                self.result_image = None;
+                self.status = status;
+            }
+            WorkspaceOutcome::Info { info, status } => {
+                self.info = info;
+                self.status = status;
+            }
+            WorkspaceOutcome::Written {
+                status,
+                directory,
+                info,
+            } => {
+                self.status = status;
+                if let Some(info) = info {
+                    self.info = info;
+                }
+                effects.last_output_dir = Some(directory);
+            }
+            WorkspaceOutcome::Clipboard {
+                bytes,
+                format,
+                status,
+            } => {
+                self.status = status;
+                effects.clipboard = Some(ClipboardPayload { bytes, format });
+            }
+            WorkspaceOutcome::Failed { kind, detail } => {
+                log::error!("workspace operation failed: {detail}");
+                self.status = UiMessage::Error(kind);
+            }
+        }
+        effects
+    }
+
+    fn first_images(&mut self) -> Option<Arc<Vec<RgbaImage>>> {
+        self.first_images_with(UiMessage::NeedImage)
+    }
+
+    fn first_images_with(&mut self, missing: UiMessage) -> Option<Arc<Vec<RgbaImage>>> {
+        if self.images.is_empty() {
+            self.status = missing;
+            return None;
+        }
+        Some(Arc::clone(&self.images))
+    }
+
+    fn all_images(&mut self) -> Option<Arc<Vec<RgbaImage>>> {
+        if self.images.is_empty() {
+            self.status = UiMessage::NeedMultipleImages;
+            return None;
+        }
+        Some(Arc::clone(&self.images))
+    }
+
+    fn current_image(&self) -> Option<Arc<RgbaImage>> {
+        self.result_image
+            .as_ref()
+            .map(Arc::clone)
+            .or_else(|| self.images.first().cloned().map(Arc::new))
+    }
+
+    fn current_image_or_status(&mut self, missing: UiMessage) -> Option<Arc<RgbaImage>> {
+        let image = self.current_image();
+        if image.is_none() {
+            self.status = missing;
+        }
+        image
+    }
+
+    fn source_image_or_status(&mut self, missing: UiMessage) -> Option<Arc<RgbaImage>> {
+        let image = self.images.first().cloned().map(Arc::new);
+        if image.is_none() {
+            self.status = missing;
+        }
+        image
+    }
+}
+
+/// 可在线程池执行的工作区任务。
+pub(crate) enum WorkspaceJob {
+    LoadPaths {
+        paths: Vec<PathBuf>,
+        single: bool,
+    },
+    LoadClipboard {
+        bytes: Vec<u8>,
+    },
+    Save {
+        source: SaveSource,
+        path: PathBuf,
+    },
+    Transform {
+        image: Arc<RgbaImage>,
+        operation: TransformOperation,
+    },
+    ReadExif {
+        bytes: Arc<Vec<u8>>,
+    },
+    StripExif {
+        bytes: Arc<Vec<u8>>,
+    },
+    GenerateQr {
+        text: String,
+        options: QrOptions,
+    },
+    DecodeQr {
+        images: Arc<Vec<RgbaImage>>,
+    },
+    Collage {
+        images: Arc<Vec<RgbaImage>>,
+        layout: CollageLayout,
+        options: CollageOptions,
+    },
+    Slice {
+        images: Arc<Vec<RgbaImage>>,
+        grid: SliceGrid,
+        directory: PathBuf,
+    },
+    Gif {
+        images: Arc<Vec<RgbaImage>>,
+        params: GifParams,
+    },
+    Batch {
+        images: Arc<Vec<RgbaImage>>,
+        names: Arc<Vec<String>>,
+        operation: BatchOperation,
+        directory: PathBuf,
+    },
+    CopyImage {
+        image: Arc<RgbaImage>,
+    },
+    CopyBytes {
+        bytes: Arc<EncodedResult>,
+    },
+}
+
+pub(crate) enum SaveSource {
+    Image {
+        image: Arc<RgbaImage>,
+        settings: EncodeSettings,
+    },
+    Bytes {
+        bytes: Arc<EncodedResult>,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum TransformOperation {
+    Rotate(Rotation),
+    Crop(CropRect),
+    Resize { width: u32, height: u32 },
+    Beautify(BeautifyParams),
+}
+
+pub(crate) enum BatchOperation {
+    Ready(BatchOp),
+    TextWatermark {
+        text: String,
+        opacity: f32,
+        position: watermark::Position,
+    },
+    ImageWatermark {
+        path: PathBuf,
+        opacity: f32,
+        position: watermark::Position,
+    },
+}
+
+impl WorkspaceJob {
+    /// 执行任务；批处理每完成一项便回报一次进度。
+    pub fn run_with_progress(
+        self,
+        mut report_progress: impl FnMut(usize, usize),
+    ) -> WorkspaceOutcome {
+        match self {
+            Self::LoadPaths { paths, single } => load_paths(paths, single),
+            Self::LoadClipboard { bytes } => match decode_bytes(&bytes) {
+                Ok(image) => WorkspaceOutcome::Loaded {
+                    info: InfoMessage::ClipboardImage {
+                        width: image.width(),
+                        height: image.height(),
+                    },
+                    images: vec![image],
+                    source_names: vec!["clipboard".to_string()],
+                    source_bytes: Some(bytes),
+                    status: UiMessage::ImagePasted,
+                },
+                Err((kind, detail)) => WorkspaceOutcome::Failed { kind, detail },
+            },
+            Self::Save { source, path } => {
+                let bytes = match source {
+                    SaveSource::Image { image, settings } => match format::encode(&image, settings)
+                    {
+                        Ok(bytes) => bytes,
+                        Err(error) => return failure(ErrorKind::Encode, error),
+                    },
+                    SaveSource::Bytes { bytes } => bytes.bytes.clone(),
+                };
+                match std::fs::write(&path, bytes) {
+                    Ok(()) => WorkspaceOutcome::Written {
+                        status: UiMessage::Saved,
+                        directory: parent_or_path(&path),
+                        info: None,
+                    },
+                    Err(error) => io_failure(&path, error),
+                }
+            }
+            Self::Transform { image, operation } => {
+                let result = match operation {
+                    TransformOperation::Rotate(rotation) => Ok(transform::rotate(&image, rotation)),
+                    TransformOperation::Crop(rect) => transform::crop(&image, rect),
+                    TransformOperation::Resize { width, height } => {
+                        transform::resize(&image, width, height, ResizeFilter::default())
+                    }
+                    TransformOperation::Beautify(params) => beautify::beautify(&image, &params),
+                };
+                match result {
+                    Ok(image) => WorkspaceOutcome::Image {
+                        image,
+                        status: UiMessage::SavedReady,
+                    },
+                    Err(error) => failure(ErrorKind::Operation, error),
+                }
+            }
+            Self::ReadExif { bytes } => match exif::read(&bytes) {
+                Ok(data) => WorkspaceOutcome::Info {
+                    info: InfoMessage::Exif(data),
+                    status: UiMessage::ExifRead,
+                },
+                Err(error) => failure(ErrorKind::Exif, error),
+            },
+            Self::StripExif { bytes } => match exif::strip(&bytes) {
+                Ok(clean) => {
+                    let preview = format::decode(&clean).ok();
+                    WorkspaceOutcome::Bytes {
+                        extension: detect_ext(&clean),
+                        bytes: clean,
+                        preview,
+                        status: UiMessage::ExifStripped,
+                    }
+                }
+                Err(error) => failure(ErrorKind::Exif, error),
+            },
+            Self::GenerateQr { text, options } => match qr::generate(&text, options) {
+                Ok(image) => WorkspaceOutcome::Image {
+                    image,
+                    status: UiMessage::QrGenerated,
+                },
+                Err(error) => failure(ErrorKind::Qr, error),
+            },
+            Self::DecodeQr { images } => match qr::decode(&images[0]) {
+                Ok(text) => WorkspaceOutcome::Info {
+                    info: InfoMessage::QrContent(text),
+                    status: UiMessage::QrDecoded,
+                },
+                Err(error) => failure(ErrorKind::Qr, error),
+            },
+            Self::Collage {
+                images,
+                layout,
+                options,
+            } => match collage::compose(&images, layout, options) {
+                Ok(image) => WorkspaceOutcome::Image {
+                    image,
+                    status: UiMessage::CollageReady,
+                },
+                Err(error) => failure(ErrorKind::Operation, error),
+            },
+            Self::Slice {
+                images,
+                grid,
+                directory,
+            } => match slice::slice(&images[0], grid) {
+                Ok(tiles) => {
+                    let total = tiles.len();
+                    let mut successes = 0;
+                    for tile in tiles {
+                        let bytes = match format::encode(
+                            &tile.image,
+                            EncodeSettings::Png {
+                                compression: PngCompression::Default,
+                            },
+                        ) {
+                            Ok(bytes) => bytes,
+                            Err(error) => {
+                                log::error!("slice tile encode failed: {error}");
+                                continue;
+                            }
+                        };
+                        let path = directory.join(format!("tile{}.png", tile.filename_suffix()));
+                        match std::fs::write(&path, bytes) {
+                            Ok(()) => successes += 1,
+                            Err(error) => log::error!(
+                                "slice tile write failed for {}: {error}",
+                                path.display()
+                            ),
+                        }
+                    }
+                    WorkspaceOutcome::Written {
+                        status: UiMessage::SlicesSaved { successes, total },
+                        directory,
+                        info: None,
+                    }
+                }
+                Err(error) => failure(ErrorKind::Operation, error),
+            },
+            Self::Gif { images, params } => match animation::compose(&images, &params) {
+                Ok(bytes) => WorkspaceOutcome::Bytes {
+                    bytes,
+                    extension: "gif",
+                    preview: images.first().cloned(),
+                    status: UiMessage::GifReady,
+                },
+                Err(error) => failure(ErrorKind::Operation, error),
+            },
+            Self::Batch {
+                images,
+                names,
+                operation,
+                directory,
+            } => {
+                let operation = match prepare_batch_operation(operation) {
+                    Ok(operation) => operation,
+                    Err((kind, detail)) => return WorkspaceOutcome::Failed { kind, detail },
+                };
+                let total = images.len();
+                report_progress(0, total);
+                let mut successes = 0;
+                let mut failures = 0;
+                let mut failed_names = Vec::new();
+                for (index, image) in images.iter().enumerate() {
+                    let mut result = batch::process(std::slice::from_ref(image), &operation);
+                    let Some((_, output)) = result.successes.pop() else {
+                        failures += 1;
+                        failed_names.push(batch_item_name(&names, index));
+                        if let Some(failure) = result.failures.pop() {
+                            log::error!("batch item {} failed: {}", index + 1, failure.error);
+                        }
+                        report_progress(index + 1, total);
+                        continue;
+                    };
+                    let source_stem = names
+                        .get(index)
+                        .map(String::as_str)
+                        .filter(|name| !name.is_empty())
+                        .unwrap_or("image");
+                    let path = directory.join(format!(
+                        "{}-rastery-{}.{}",
+                        sanitize_stem(source_stem),
+                        index + 1,
+                        output.format.extension()
+                    ));
+                    match std::fs::write(&path, output.bytes) {
+                        Ok(()) => successes += 1,
+                        Err(error) => {
+                            failures += 1;
+                            failed_names.push(batch_item_name(&names, index));
+                            log::error!(
+                                "batch output write failed for {}: {error}",
+                                path.display()
+                            );
+                        }
+                    }
+                    report_progress(index + 1, total);
+                }
+                WorkspaceOutcome::Written {
+                    status: UiMessage::BatchComplete {
+                        successes,
+                        failures,
+                        total,
+                    },
+                    directory,
+                    info: (!failed_names.is_empty())
+                        .then_some(InfoMessage::BatchFailures(failed_names)),
+                }
+            }
+            Self::CopyImage { image } => match format::encode(
+                &image,
+                EncodeSettings::Png {
+                    compression: PngCompression::Default,
+                },
+            ) {
+                Ok(bytes) => WorkspaceOutcome::Clipboard {
+                    bytes,
+                    format: ClipboardFormat::Png,
+                    status: UiMessage::ImageCopied,
+                },
+                Err(error) => failure(ErrorKind::Clipboard, error),
+            },
+            Self::CopyBytes { bytes } => WorkspaceOutcome::Clipboard {
+                bytes: bytes.bytes.clone(),
+                format: ClipboardFormat::from_extension(bytes.extension),
+                status: UiMessage::ImageCopied,
+            },
+        }
+    }
+}
+
+/// 后台任务的完成结果。
+pub(crate) enum WorkspaceOutcome {
+    Loaded {
+        images: Vec<RgbaImage>,
+        source_names: Vec<String>,
+        source_bytes: Option<Vec<u8>>,
+        info: InfoMessage,
+        status: UiMessage,
+    },
+    Image {
+        image: RgbaImage,
+        status: UiMessage,
+    },
+    Bytes {
+        bytes: Vec<u8>,
+        extension: &'static str,
+        preview: Option<RgbaImage>,
+        status: UiMessage,
+    },
+    Info {
+        info: InfoMessage,
+        status: UiMessage,
+    },
+    Written {
+        status: UiMessage,
+        directory: PathBuf,
+        info: Option<InfoMessage>,
+    },
+    Clipboard {
+        bytes: Vec<u8>,
+        format: ClipboardFormat,
+        status: UiMessage,
+    },
+    Failed {
+        kind: ErrorKind,
+        detail: String,
+    },
+}
+
+#[derive(Default)]
+pub(crate) struct WorkspaceEffects {
+    pub last_output_dir: Option<PathBuf>,
+    pub clipboard: Option<ClipboardPayload>,
+}
+
+pub(crate) struct ClipboardPayload {
+    pub bytes: Vec<u8>,
+    pub format: ClipboardFormat,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ClipboardFormat {
+    Png,
+    Jpeg,
+    Webp,
+    Gif,
+    Bmp,
+}
+
+impl ClipboardFormat {
+    fn from_extension(extension: &str) -> Self {
+        match extension {
+            "jpg" | "jpeg" => Self::Jpeg,
+            "webp" => Self::Webp,
+            "gif" => Self::Gif,
+            "bmp" => Self::Bmp,
+            _ => Self::Png,
+        }
+    }
+}
+
+fn prepare_batch_operation(operation: BatchOperation) -> Result<BatchOp, (ErrorKind, String)> {
+    match operation {
+        BatchOperation::Ready(operation) => Ok(operation),
+        BatchOperation::TextWatermark {
+            text,
+            opacity,
+            position,
+        } => text_watermark::rasterize(&text)
+            .map(|overlay| BatchOp::Watermark {
+                overlay,
+                opacity,
+                position,
+            })
+            .map_err(|detail| (ErrorKind::Operation, detail)),
+        BatchOperation::ImageWatermark {
+            path,
+            opacity,
+            position,
+        } => {
+            let bytes = std::fs::read(&path)
+                .map_err(|error| (classify_io(&error), format!("{}: {error}", path.display())))?;
+            let overlay = decode_bytes(&bytes)?;
+            Ok(BatchOp::Watermark {
+                overlay,
+                opacity,
+                position,
+            })
+        }
+    }
+}
+
+fn sanitize_stem(stem: &str) -> String {
+    let sanitized = stem
+        .chars()
+        .map(|character| {
+            if character.is_control()
+                || matches!(
+                    character,
+                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
+                )
+            {
+                '_'
+            } else {
+                character
+            }
+        })
+        .collect::<String>();
+    let sanitized = sanitized.trim_matches([' ', '.']);
+    if sanitized.is_empty() {
+        "image".to_string()
+    } else {
+        sanitized.to_string()
+    }
+}
+
+fn batch_item_name(names: &[String], index: usize) -> String {
+    names
+        .get(index)
+        .filter(|name| !name.is_empty())
+        .cloned()
+        .unwrap_or_else(|| format!("#{}", index + 1))
+}
+
+fn load_paths(paths: Vec<PathBuf>, single: bool) -> WorkspaceOutcome {
+    let mut images = Vec::new();
+    let mut source_names = Vec::new();
+    let mut first_bytes = None;
+    let mut failures = 0;
+    let mut first_path = None;
+    let mut last_failure = None;
+
+    for path in &paths {
+        match std::fs::read(path) {
+            Ok(bytes) => match decode_bytes(&bytes) {
+                Ok(image) => {
+                    if images.is_empty() {
+                        first_path = Some(path.clone());
+                        first_bytes = Some(bytes);
+                    }
+                    source_names.push(
+                        path.file_stem()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "image".to_string()),
+                    );
+                    images.push(image);
+                    if single {
+                        break;
+                    }
+                }
+                Err(error) => {
+                    failures += 1;
+                    last_failure = Some(error);
+                }
+            },
+            Err(error) => {
+                failures += 1;
+                last_failure = Some((classify_io(&error), error.to_string()));
+            }
         }
     }
 
-    /// 用给定图更新预览。
-    fn set_preview(&mut self, img: &RgbaImage) {
-        self.preview = Some(to_render_image(img));
+    let Some(first) = images.first() else {
+        let (kind, detail) = last_failure.unwrap_or((
+            ErrorKind::CorruptedImage,
+            "no image could be loaded".to_string(),
+        ));
+        return WorkspaceOutcome::Failed { kind, detail };
+    };
+
+    let info = if single {
+        InfoMessage::Image {
+            name: first_path
+                .as_deref()
+                .and_then(Path::file_name)
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            width: first.width(),
+            height: first.height(),
+        }
+    } else {
+        InfoMessage::None
+    };
+    let successes = images.len();
+    WorkspaceOutcome::Loaded {
+        images,
+        source_names,
+        source_bytes: if single { first_bytes } else { None },
+        info,
+        status: if single {
+            UiMessage::LoadedImage
+        } else {
+            UiMessage::LoadedMultiple {
+                successes,
+                failures,
+            }
+        },
     }
 }
 
-/// 把 `rastery-core` 的 RGBA 图转成 GPUI 的 [`RenderImage`]（BGRA 序）。
-pub(crate) fn to_render_image(img: &RgbaImage) -> Arc<RenderImage> {
-    let mut bgra = img.clone();
-    for px in bgra.pixels_mut() {
-        px.0.swap(0, 2); // RGBA → BGRA
+fn decode_bytes(bytes: &[u8]) -> Result<RgbaImage, (ErrorKind, String)> {
+    if !format::is_supported_input(bytes) {
+        return Err((
+            ErrorKind::UnsupportedFormat,
+            "input magic does not match a supported format".to_string(),
+        ));
     }
-    Arc::new(RenderImage::new(vec![Frame::new(bgra)]))
+    format::decode(bytes).map_err(|error| (ErrorKind::CorruptedImage, error.to_string()))
 }
 
-/// 读取并解码一张图，返回 (解码图, 原始字节)。
-fn load_image(path: &Path) -> Result<(RgbaImage, Vec<u8>), String> {
-    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
-    let img = format::decode(&bytes).map_err(|e| e.to_string())?;
-    Ok((img, bytes))
+fn failure(kind: ErrorKind, error: impl std::fmt::Display) -> WorkspaceOutcome {
+    WorkspaceOutcome::Failed {
+        kind,
+        detail: error.to_string(),
+    }
 }
 
-/// 按魔数猜测清除 EXIF 后应使用的扩展名。
+fn io_failure(path: &Path, error: std::io::Error) -> WorkspaceOutcome {
+    WorkspaceOutcome::Failed {
+        kind: classify_io(&error),
+        detail: format!("{}: {error}", path.display()),
+    }
+}
+
+fn classify_io(error: &std::io::Error) -> ErrorKind {
+    if error.kind() == std::io::ErrorKind::PermissionDenied {
+        ErrorKind::Permission
+    } else if error.kind() == std::io::ErrorKind::StorageFull
+        || matches!(error.raw_os_error(), Some(28 | 112))
+    {
+        ErrorKind::DiskFull
+    } else {
+        ErrorKind::Io
+    }
+}
+
+fn parent_or_path(path: &Path) -> PathBuf {
+    path.parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
 fn detect_ext(bytes: &[u8]) -> &'static str {
     match image::guess_format(bytes) {
         Ok(image::ImageFormat::Png) => "png",
@@ -332,31 +1078,98 @@ fn detect_ext(bytes: &[u8]) -> &'static str {
     }
 }
 
-fn file_name(path: &Path) -> String {
-    path.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "图片".to_string())
+fn pick_open_file(directory: Option<&Path>) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new().add_filter(t!("dialog.images"), IMAGE_EXTS);
+    if let Some(directory) = directory {
+        dialog = dialog.set_directory(directory);
+    }
+    dialog.pick_file()
 }
 
-fn pick_open_file() -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter("图片", IMAGE_EXTS)
-        .pick_file()
+fn pick_open_files(directory: Option<&Path>) -> Option<Vec<PathBuf>> {
+    let mut dialog = rfd::FileDialog::new().add_filter(t!("dialog.images"), IMAGE_EXTS);
+    if let Some(directory) = directory {
+        dialog = dialog.set_directory(directory);
+    }
+    dialog.pick_files()
 }
 
-fn pick_open_files() -> Option<Vec<PathBuf>> {
-    rfd::FileDialog::new()
-        .add_filter("图片", IMAGE_EXTS)
-        .pick_files()
+fn pick_save_file(extension: &str, directory: Option<&Path>) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new()
+        .add_filter(extension, &[extension])
+        .set_file_name(format!("rastery-output.{extension}"));
+    if let Some(directory) = directory {
+        dialog = dialog.set_directory(directory);
+    }
+    dialog.save_file()
 }
 
-fn pick_save_file(ext: &str) -> Option<PathBuf> {
-    rfd::FileDialog::new()
-        .add_filter(ext, &[ext])
-        .set_file_name(format!("rastery-output.{ext}"))
-        .save_file()
+fn pick_folder(directory: Option<&Path>) -> Option<PathBuf> {
+    let mut dialog = rfd::FileDialog::new();
+    if let Some(directory) = directory {
+        dialog = dialog.set_directory(directory);
+    }
+    dialog.pick_folder()
 }
 
-fn pick_folder() -> Option<PathBuf> {
-    rfd::FileDialog::new().pick_folder()
+/// 把 `rastery-core` 的 RGBA 图转成 GPUI 的 [`RenderImage`]（BGRA 序）。
+pub(crate) fn to_render_image(img: &RgbaImage) -> Arc<RenderImage> {
+    let mut bgra = img.clone();
+    for pixel in bgra.pixels_mut() {
+        pixel.0.swap(0, 2);
+    }
+    Arc::new(RenderImage::new(vec![Frame::new(bgra)]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::Rgba;
+
+    #[test]
+    fn filename_sanitization_keeps_outputs_inside_the_selected_directory() {
+        assert_eq!(sanitize_stem("hero:cover?.png"), "hero_cover_.png");
+        assert_eq!(sanitize_stem("..."), "image");
+        assert_eq!(sanitize_stem("封面"), "封面");
+    }
+
+    #[test]
+    fn batch_job_uses_source_stems_and_sequential_numbers() {
+        let directory = tempfile::tempdir().expect("temporary output directory");
+        let images = Arc::new(vec![
+            RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])),
+            RgbaImage::from_pixel(2, 2, Rgba([0, 255, 0, 255])),
+        ]);
+        let names = Arc::new(vec!["hero:cover".to_string(), "second".to_string()]);
+        let job = WorkspaceJob::Batch {
+            images,
+            names,
+            operation: BatchOperation::Ready(BatchOp::Convert {
+                format: OutputFormat::Png,
+                settings: EncodeSettings::Png {
+                    compression: PngCompression::Fast,
+                },
+            }),
+            directory: directory.path().to_path_buf(),
+        };
+        let mut progress = Vec::new();
+        let outcome = job.run_with_progress(|completed, total| {
+            progress.push((completed, total));
+        });
+
+        match outcome {
+            WorkspaceOutcome::Written { status, .. } => assert_eq!(
+                status,
+                UiMessage::BatchComplete {
+                    successes: 2,
+                    failures: 0,
+                    total: 2,
+                }
+            ),
+            _ => panic!("batch job should write its outputs"),
+        }
+        assert!(directory.path().join("hero_cover-rastery-1.png").is_file());
+        assert!(directory.path().join("second-rastery-2.png").is_file());
+        assert_eq!(progress, vec![(0, 2), (1, 2), (2, 2)]);
+    }
 }

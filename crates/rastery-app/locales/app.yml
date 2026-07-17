@@ -4,8 +4,8 @@ app:
     en: Rastery
     zh-CN: Rastery
   subtitle:
-    en: Screenshot & image toolbox
-    zh-CN: 截图与图片工具箱
+    en: Native image toolbox
+    zh-CN: 原生图片工具箱
 nav:
   basic_image:
     en: Basic Image Processing
@@ -26,6 +26,26 @@ lang:
   label:
     en: Language
     zh-CN: 语言
+settings:
+  title:
+    en: Settings
+    zh-CN: 设置
+  export_format:
+    en: Default export format
+    zh-CN: 默认导出格式
+  export_quality:
+    en: Default export quality
+    zh-CN: 默认导出质量
+  output_directory:
+    en: Last output directory
+    zh-CN: 最近输出目录
+  no_output_directory:
+    en: Not selected yet
+    zh-CN: 尚未选择
+dialog:
+  images:
+    en: Images
+    zh-CN: 图片
 action:
   open:
     en: Open image
@@ -36,6 +56,21 @@ action:
   save:
     en: Save result
     zh-CN: 保存结果
+  paste:
+    en: Paste image
+    zh-CN: 粘贴图片
+  copy:
+    en: Copy result
+    zh-CN: 复制结果
+  quality_down:
+    en: Quality -5
+    zh-CN: 质量 -5
+  quality_up:
+    en: Quality +5
+    zh-CN: 质量 +5
+  cycle_format:
+    en: Change format
+    zh-CN: 切换格式
   rotate90:
     en: Rotate 90°
     zh-CN: 旋转 90°
@@ -63,6 +98,381 @@ action:
   batch_png:
     en: Batch → PNG folder
     zh-CN: 批量转 PNG → 目录
+  apply_crop:
+    en: Apply crop
+    zh-CN: 应用裁剪
+  apply_resize:
+    en: Apply resize
+    zh-CN: 应用缩放
+  compose_collage:
+    en: Compose collage
+    zh-CN: 生成拼图
+  run_batch:
+    en: Run batch → folder
+    zh-CN: 开始批处理 → 目录
+  export_slices:
+    en: Export tiles → folder
+    zh-CN: 导出切图 → 目录
+  generate_qr:
+    en: Generate QR
+    zh-CN: 生成二维码
+  read_exif:
+    en: Read EXIF
+    zh-CN: 查看 EXIF
+  make_gif:
+    en: Make GIF
+    zh-CN: 合成 GIF
+  open_output_directory:
+    en: Open output folder
+    zh-CN: 打开输出目录
+  decrease:
+    en: Decrease
+    zh-CN: 减少
+  increase:
+    en: Increase
+    zh-CN: 增加
+  change:
+    en: Change
+    zh-CN: 切换
+parameter:
+  aspect_ratio:
+    en: Crop aspect ratio
+    zh-CN: 裁剪比例
+  output_width:
+    en: Output width
+    zh-CN: 输出宽度
+  output_height:
+    en: Output height
+    zh-CN: 输出高度
+  layout:
+    en: Layout
+    zh-CN: 布局
+  columns:
+    en: Columns
+    zh-CN: 列数
+  spacing:
+    en: Spacing
+    zh-CN: 间距
+  background:
+    en: Background
+    zh-CN: 背景
+  mode:
+    en: Processing mode
+    zh-CN: 处理模式
+  format:
+    en: Output format
+    zh-CN: 输出格式
+  quality:
+    en: Quality
+    zh-CN: 质量
+  watermark_source:
+    en: Watermark type
+    zh-CN: 水印类型
+  watermark_text:
+    en: Watermark text
+    zh-CN: 水印文字
+  opacity:
+    en: Opacity
+    zh-CN: 不透明度
+  position:
+    en: Position
+    zh-CN: 位置
+  rows:
+    en: Rows
+    zh-CN: 行数
+  qr_text:
+    en: Text or URL
+    zh-CN: 文本或网址
+  qr_size:
+    en: QR size
+    zh-CN: 二维码尺寸
+  correction:
+    en: Error correction
+    zh-CN: 纠错级别
+  palette:
+    en: Color palette
+    zh-CN: 配色
+  corner_radius:
+    en: Corner radius
+    zh-CN: 圆角半径
+  padding:
+    en: Inner padding
+    zh-CN: 内边距
+  border:
+    en: Border width
+    zh-CN: 描边宽度
+  shadow:
+    en: Shadow
+    zh-CN: 阴影
+  frame_delay:
+    en: Frame delay
+    zh-CN: 帧延迟
+  size_mode:
+    en: Output dimensions
+    zh-CN: 输出尺寸
+  playback:
+    en: Playback
+    zh-CN: 播放模式
+option:
+  vertical:
+    en: Vertical
+    zh-CN: 纵向
+  horizontal:
+    en: Horizontal
+    zh-CN: 横向
+  grid:
+    en: Grid
+    zh-CN: 网格
+  white:
+    en: White
+    zh-CN: 白色
+  black:
+    en: Black
+    zh-CN: 黑色
+  gray:
+    en: Gray
+    zh-CN: 灰色
+  transparent:
+    en: Transparent
+    zh-CN: 透明
+  convert:
+    en: Format conversion
+    zh-CN: 格式转换
+  compress:
+    en: Compression
+    zh-CN: 压缩
+  resize:
+    en: Resize
+    zh-CN: 调整尺寸
+  watermark:
+    en: Watermark
+    zh-CN: 加水印
+  text_watermark:
+    en: Text
+    zh-CN: 文字水印
+  image_watermark:
+    en: Image (choose when running)
+    zh-CN: 图片水印（运行时选择）
+  bottom_right:
+    en: Bottom right
+    zh-CN: 右下角
+  tiled:
+    en: Tiled
+    zh-CN: 平铺
+  correction_low:
+    en: Low (7%)
+    zh-CN: 低（7%）
+  correction_medium:
+    en: Medium (15%)
+    zh-CN: 中（15%）
+  correction_quartile:
+    en: Quartile (25%)
+    zh-CN: 四分位（25%）
+  correction_high:
+    en: High (30%)
+    zh-CN: 高（30%）
+  qr_black_white:
+    en: Black on white
+    zh-CN: 黑白
+  qr_blue:
+    en: Blue
+    zh-CN: 蓝色
+  qr_inverted:
+    en: Inverted
+    zh-CN: 反色
+  gradient:
+    en: Gradient
+    zh-CN: 渐变
+  solid:
+    en: Solid
+    zh-CN: 纯色
+  enabled:
+    en: Enabled
+    zh-CN: 开启
+  disabled:
+    en: Disabled
+    zh-CN: 关闭
+  original_size:
+    en: First-frame size
+    zh-CN: 首帧尺寸
+  custom_size:
+    en: Custom size
+    zh-CN: 自定义尺寸
+  forward:
+    en: Forward
+    zh-CN: 正序
+  reverse:
+    en: Reverse
+    zh-CN: 倒序
+  ping_pong:
+    en: Ping-pong
+    zh-CN: 乒乓
+status:
+  processing:
+    en: Processing in the background…
+    zh-CN: 正在后台处理…
+  batch_progress:
+    en: Batch progress
+    zh-CN: 批处理进度
+  cancelled_open:
+    en: Open cancelled.
+    zh-CN: 已取消打开。
+  cancelled_save:
+    en: Save cancelled.
+    zh-CN: 已取消保存。
+  loaded_image:
+    en: Image loaded.
+    zh-CN: 已载入图片。
+  ready_to_save:
+    en: Processing complete. The result is ready to save.
+    zh-CN: 处理完成，可保存结果。
+  clipboard_image:
+    en: Clipboard image
+    zh-CN: 剪贴板图片
+  successes:
+    en: Succeeded
+    zh-CN: 成功
+  failures:
+    en: Failed
+    zh-CN: 失败
+  failed_items:
+    en: Failed items
+    zh-CN: 失败项目
+  total:
+    en: Total
+    zh-CN: 总计
+  saved:
+    en: Saved.
+    zh-CN: 已保存。
+  exif_stripped:
+    en: EXIF metadata removed.
+    zh-CN: 已清除 EXIF。
+  exif_read:
+    en: EXIF information loaded.
+    zh-CN: 已读取 EXIF 信息。
+  no_exif:
+    en: This image contains no readable EXIF metadata.
+    zh-CN: 该图片没有可读取的 EXIF 元数据。
+  qr_generated:
+    en: QR code generated and ready to save.
+    zh-CN: 二维码已生成，可保存。
+  qr_decoded:
+    en: QR code recognized.
+    zh-CN: 二维码识别成功。
+  qr_content:
+    en: QR content
+    zh-CN: 二维码内容
+  collage_ready:
+    en: Collage ready to save.
+    zh-CN: 拼图已生成，可保存。
+  slices_saved:
+    en: Tiles saved
+    zh-CN: 切图已保存
+  gif_ready:
+    en: GIF ready to save.
+    zh-CN: GIF 已合成，可保存。
+  image_pasted:
+    en: Image pasted from the clipboard.
+    zh-CN: 已从剪贴板粘贴图片。
+  image_copied:
+    en: Result copied to the clipboard.
+    zh-CN: 已复制结果到剪贴板。
+  settings_saved:
+    en: Settings saved.
+    zh-CN: 设置已保存。
+  config_reset:
+    en: The configuration was invalid and has been reset to defaults.
+    zh-CN: 配置文件无效，已恢复默认设置。
+validation:
+  need_image:
+    en: Open or paste an image first.
+    zh-CN: 请先打开或粘贴一张图片。
+  need_multiple_images:
+    en: Open at least one image first.
+    zh-CN: 请先打开图片。
+  need_result:
+    en: Run an operation before saving or copying.
+    zh-CN: 请先执行处理，再保存或复制结果。
+  need_exif_image:
+    en: Open an image with container metadata first.
+    zh-CN: 请先打开带容器元数据的图片。
+  need_qr_image:
+    en: Open a QR-code image first.
+    zh-CN: 请先打开二维码图片。
+  clipboard_no_image:
+    en: The clipboard does not contain an image.
+    zh-CN: 剪贴板中没有图片。
+  need_text:
+    en: Enter text before running this operation.
+    zh-CN: 请先输入文本再执行此操作。
+  busy:
+    en: Another operation is still running.
+    zh-CN: 另一个操作仍在进行中。
+error:
+  unsupported_format:
+    en: Unsupported image format.
+    zh-CN: 不支持的图片格式。
+  corrupted_image:
+    en: The image is corrupted or cannot be decoded.
+    zh-CN: 图片已损坏或无法解码。
+  encode:
+    en: Image encoding failed.
+    zh-CN: 图片编码失败。
+  operation:
+    en: Image processing failed.
+    zh-CN: 图片处理失败。
+  exif:
+    en: EXIF processing failed.
+    zh-CN: EXIF 处理失败。
+  qr:
+    en: No readable QR code was found.
+    zh-CN: 未识别到可读二维码。
+  disk_full:
+    en: There is not enough disk space to save the output.
+    zh-CN: 磁盘空间不足，无法保存输出。
+  permission:
+    en: Permission denied. Check the destination permissions.
+    zh-CN: 权限不足，请检查目标位置权限。
+  io:
+    en: File operation failed.
+    zh-CN: 文件操作失败。
+  config:
+    en: The settings file could not be saved.
+    zh-CN: 设置文件保存失败。
+  clipboard:
+    en: Clipboard operation failed.
+    zh-CN: 剪贴板操作失败。
+exif:
+  camera_make:
+    en: Camera make
+    zh-CN: 相机厂商
+  camera_model:
+    en: Camera model
+    zh-CN: 相机型号
+  lens_model:
+    en: Lens model
+    zh-CN: 镜头型号
+  focal_length:
+    en: Focal length
+    zh-CN: 焦距
+  aperture:
+    en: Aperture
+    zh-CN: 光圈
+  shutter_speed:
+    en: Shutter speed
+    zh-CN: 快门速度
+  iso:
+    en: ISO
+    zh-CN: ISO
+  taken_at:
+    en: Taken at
+    zh-CN: 拍摄时间
+  gps:
+    en: GPS coordinates
+    zh-CN: GPS 坐标
+  privacy_warning:
+    en: Privacy-sensitive device or location metadata is present.
+    zh-CN: 检测到设备或位置隐私信息。
 placeholder:
   dev:
     en: Under development (v2). This feature ships in a later release.
@@ -79,6 +489,15 @@ placeholder:
   open_image:
     en: Choose an image to begin (wired to rastery-core on the desktop build).
     zh-CN: 选择一张图片开始（桌面构建中接入 rastery-core）。
+  qr_text:
+    en: Enter text or https://example.com
+    zh-CN: 输入文本或 https://example.com
+  watermark_text:
+    en: Enter watermark text
+    zh-CN: 输入水印文字
+  drop_images:
+    en: You can also drop image files anywhere on this workspace.
+    zh-CN: 也可以把图片文件拖放到此工作区。
 feature:
   edit:
     name:
@@ -87,6 +506,9 @@ feature:
     desc:
       en: Aspect-ratio presets, lossless rotation, high-quality resampling.
       zh-CN: 比例预设、无损旋转、高质量重采样。
+    detail:
+      en: Powered by rastery-core transform operations and exact aspect-ratio math.
+      zh-CN: 由 rastery-core 变换能力与精确比例计算驱动。
   collage:
     name:
       en: Collage
@@ -94,6 +516,9 @@ feature:
     desc:
       en: Combine images vertically, horizontally, or in a grid.
       zh-CN: 纵向、横向或网格拼接多张图片。
+    detail:
+      en: Vertical, horizontal, and centered grid composition.
+      zh-CN: 支持纵向、横向与居中网格拼接。
   batch:
     name:
       en: Batch Processing
@@ -101,6 +526,9 @@ feature:
     desc:
       en: Convert, compress, resize, or watermark many images at once.
       zh-CN: 批量转换、压缩、缩放或加水印，失败项单独标记。
+    detail:
+      en: Per-item failures do not interrupt the remaining batch.
+      zh-CN: 单项失败不会中断其余批处理任务。
   slice:
     name:
       en: Slicing
@@ -108,6 +536,9 @@ feature:
     desc:
       en: Split an image into an N×M grid of tiles.
       zh-CN: 把图片按 N×M 网格切成多块。
+    detail:
+      en: Produces exactly rows × columns tiles without dropping remainder pixels.
+      zh-CN: 精确产出“行 × 列”块，余数像素不会丢失。
   qrcode:
     name:
       en: QR Code
@@ -115,6 +546,9 @@ feature:
     desc:
       en: Generate and recognize QR codes with custom colors.
       zh-CN: 生成与识别二维码，支持自定义颜色与纠错级别。
+    detail:
+      en: Quiet-zone-aware generation and local recognition.
+      zh-CN: 支持静区的二维码生成与本地识别。
   exif:
     name:
       en: EXIF Manager
@@ -122,6 +556,9 @@ feature:
     desc:
       en: View and strip camera/GPS metadata without touching pixels.
       zh-CN: 查看并清除相机 / GPS 元数据，像素不变。
+    detail:
+      en: Container-level metadata removal preserves encoded pixels and is idempotent.
+      zh-CN: 在容器层清除元数据，保持像素且可幂等重复执行。
   beautify:
     name:
       en: Screenshot Beautify
@@ -129,6 +566,9 @@ feature:
     desc:
       en: Rounded corners, padding, gradients, borders, and shadows.
       zh-CN: 圆角、内边距、渐变背景、描边与阴影。
+    detail:
+      en: Rounded corners, padding, backgrounds, borders, and shadows are composed locally.
+      zh-CN: 圆角、边距、背景、描边与阴影均在本地合成。
   gif:
     name:
       en: GIF Maker
@@ -136,6 +576,9 @@ feature:
     desc:
       en: Turn frames into a GIF with delay and playback modes.
       zh-CN: 把多帧合成 GIF，可设延迟与播放模式。
+    detail:
+      en: Supports forward, reverse, and ping-pong playback with 100–800 ms delay.
+      zh-CN: 支持正序、倒序、乒乓播放与 100–800 毫秒帧延迟。
   poster:
     name:
       en: Poster Design
@@ -185,51 +628,3 @@ feature:
     desc:
       en: "13 industry tools: ID photos, avatars, product shots, and more."
       zh-CN: 13 项行业工具：证件照、头像、商品图等。
-  screenshot:
-    name:
-      en: Screenshot
-      zh-CN: 屏幕截图
-    desc:
-      en: Capture a screen region with annotation tools (global hotkey in real build).
-      zh-CN: 截取屏幕区域并标注（真机构建支持全局热键）。
-capture:
-  start:
-    en: Start screenshot
-    zh-CN: 开始截图
-  start_hint:
-    en: Opens a fullscreen overlay. On the headless build it shows a placeholder; build with --features system to capture the real screen.
-    zh-CN: 打开全屏覆盖层。无头构建显示占位图；用 --features system 构建可截取真实屏幕。
-  annotate:
-    en: Annotate
-    zh-CN: 标注
-  back_select:
-    en: Back to select
-    zh-CN: 返回选区
-  confirm:
-    en: Confirm
-    zh-CN: 确认
-  cancel:
-    en: Cancel
-    zh-CN: 取消
-  saved_copied:
-    en: Saved and copied to clipboard.
-    zh-CN: 已保存并复制到剪贴板。
-  saved_only:
-    en: Saved (clipboard copy unavailable).
-    zh-CN: 已保存（剪贴板复制不可用）。
-  copied:
-    en: Copied to clipboard.
-    zh-CN: 已复制到剪贴板。
-  nothing:
-    en: Nothing saved.
-    zh-CN: 未保存。
-annotate:
-  brush:
-    en: Brush
-    zh-CN: 画笔
-  mosaic:
-    en: Mosaic
-    zh-CN: 马赛克
-  count:
-    en: "%{count} annotation(s)"
-    zh-CN: "%{count} 个标注"

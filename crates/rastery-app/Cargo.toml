@@ -11,19 +11,21 @@ description = "Rastery 桌面应用：GPUI 主窗口与四板块导航。"
 name = "rastery"
 path = "src/main.rs"
 
-[features]
-# 启用后转发到 rastery-capture 的真实平台后端（xcap / arboard / global-hotkey）。
-# 无头 VM 与 CI 基础 check 不启用——见 ADR-0002。
-system = ["rastery-capture/system"]
-
 [lints]
 workspace = true
 
 [dependencies]
+async-channel = "=2.5.0"
+cosmic-text = "=0.14.2"
+directories = "6.0.0"
+env_logger = "0.11.11"
 gpui = "=0.2.2"
 gpui-component = "=0.5.1"
 image = "=0.25.8"
-rastery-capture = { version = "0.1.0", path = "../rastery-capture" }
+log = "0.4.33"
 rastery-core = { path = "../rastery-core" }
 rfd = "0.17.2"
 rust-i18n = "3"
+
+[dev-dependencies]
+tempfile = "3.27.0"

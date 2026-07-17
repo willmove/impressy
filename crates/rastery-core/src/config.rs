@@ -10,29 +10,6 @@ use crate::error::{CoreError, Result};
 use crate::format::{OutputFormat, Quality};
 use std::path::PathBuf;
 
-/// 截图热键。修饰键以集合表示，跨平台差异（macOS 的 Cmd → [`Modifier::Super`]）
-/// 由 UI 层映射，core 只存结构。
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Hotkey {
-    /// 按下的修饰键集合。
-    pub modifiers: Vec<Modifier>,
-    /// 主键，如 `"X"`、`"PrintScreen"`、`"A"`。约定大写存储。
-    pub key: String,
-}
-
-/// 修饰键。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum Modifier {
-    /// Ctrl（Windows/Linux）。
-    Ctrl,
-    /// Alt / Option。
-    Alt,
-    /// Shift。
-    Shift,
-    /// Super / Cmd（macOS）/ Win。
-    Super,
-}
-
 /// 界面语言（Requirement 35）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum Language {
@@ -41,6 +18,16 @@ pub enum Language {
     ZhCn,
     /// English。
     En,
+}
+
+impl Language {
+    /// `rust-i18n` / `gpui-component` 使用的 locale 标识。
+    pub const fn locale(self) -> &'static str {
+        match self {
+            Self::ZhCn => "zh-CN",
+            Self::En => "en",
+        }
+    }
 }
 
 /// 应用配置（Requirement 32）。
@@ -53,10 +40,6 @@ pub struct AppConfig {
     pub default_export_format: OutputFormat,
     /// 默认导出质量（Requirement 32.5）。
     pub default_export_quality: Quality,
-    /// 截图热键（Requirement 32.6）。
-    pub screenshot_hotkey: Hotkey,
-    /// 截图压缩质量（Requirement 32.7）。
-    pub screenshot_compression: Quality,
     /// 界面语言。
     pub language: Language,
     /// 最近使用的输出目录（Requirement 32.10）。
@@ -68,11 +51,6 @@ impl Default for AppConfig {
         Self {
             default_export_format: OutputFormat::Png,
             default_export_quality: Quality::default(),
-            screenshot_hotkey: Hotkey {
-                modifiers: vec![Modifier::Ctrl, Modifier::Shift],
-                key: "X".to_string(),
-            },
-            screenshot_compression: Quality::default(),
             language: Language::default(),
             last_output_dir: None,
         }

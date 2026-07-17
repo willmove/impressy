@@ -71,7 +71,10 @@ fn exif_strip_removes_metadata_and_preserves_pixels() {
     .expect("encode jpeg");
 
     let with_exif = inject_exif(&jpeg);
-    assert!(exif::has_exif(&with_exif).expect("has_exif before"), "injected exif must be present");
+    assert!(
+        exif::has_exif(&with_exif).expect("has_exif before"),
+        "injected exif must be present"
+    );
 
     let stripped = exif::strip(&with_exif).expect("strip");
     assert!(

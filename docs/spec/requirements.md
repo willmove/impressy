@@ -7,20 +7,21 @@
 
 ### 为什么存在
 
-现有截图工具（如 QQ 截图）体验好，但**输出文件过大且无法设置压缩**；现有图片处理软件（如美图秀秀）**启动慢、功能臃肿**，常用功能缺失、不需要的功能冗余。Rastery 的目标是用一款轻量、快启动的原生工具，覆盖个人用户的全部截图与图片处理需求。
+现有图片处理软件（如美图秀秀）**启动慢、功能臃肿**，常用功能缺失、不需要的功能冗余。Rastery 的目标是用一款轻量、快启动的原生工具，覆盖个人用户的常用本地图片处理需求。
 
 这段问题陈述是 [ADR-0001](../adr/0001-v1-scope-local-only.md) 的基石——它解释了为什么本地功能是产品的本体，而 AI 功能是后加的一层。
 
 ### 是什么
 
-Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处理工具，基于 Rust + GPUI 框架构建。该系统将屏幕截图与图片处理功能整合为一体，围绕四大**板块**组织：基础图片处理、AI 生成与改图、行业定制 AI 工具、创作输出。系统采用本地优先架构，基础功能完全离线可用，AI 功能通过用户自备 API Key（BYOK）实现，确保隐私安全与零成本运营。
+Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处理工具，基于 Rust + GPUI 框架构建，围绕四大**板块**组织：基础图片处理、AI 生成与改图、行业定制 AI 工具、创作输出。系统采用本地优先架构，基础功能完全离线可用，AI 功能通过用户自备 API Key（BYOK）实现，确保隐私安全与零成本运营。屏幕截图、全局热键与屏幕取色已按 [ADR-0003](../adr/0003-remove-screen-capture.md) 从当前范围剥离。
 
 ### v1 范围（重要）
 
 **v1 只交付本地功能**——完全离线、不需要 API Key 的功能集合。每条需求的标题都标了 `[v1]` 或 `[v2]`：
 
-- **`[v1]` 39 条**：本地功能（FR-01~FR-10）及其支撑需求（架构、导航、i18n、格式、质量、剪贴板、性能、property test 等）。
+- **`[v1]` 35 条**：当前交付的本地图片处理功能及其支撑需求（架构、导航、i18n、格式、质量、剪贴板、性能、property test 等）。
 - **`[v2]` 21 条**：AI 功能——Requirement 4、5、16、17、18、19–31、33、50、59。**v1 阶段不要实现它们**，也不要为它们建 `rastery-ai` / `rastery-presets` crate。
+- **`[removed]` 4 条**：Requirement 13、14、48、49，以及其他需求中的截图专用 AC。它们不属于当前交付范围，见 ADR-0003。
 
 注意「本地功能 / AI 功能」与「板块」是**正交的两根轴**：v1 交付的不是「四大板块的前两个」，而是横切所有板块的本地功能集合。因此 v1 的主界面上，「AI 生成与改图」与「行业定制 AI 工具」两个板块是空的（与三个视频功能一样做「开发中」占位）。详见 [CONTEXT.md](../../CONTEXT.md) 与 [ADR-0001](../adr/0001-v1-scope-local-only.md)。
 
@@ -34,7 +35,6 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 - **UI_Layer**: 基于 GPUI 的用户界面层，负责所有可视化交互
 - **Core_Engine**: 本地图像处理引擎（rastery-core crate），执行裁剪、压缩、拼接等离线操作
 - **AI_Engine**: AI 服务提供商抽象层（rastery-ai crate），统一管理多个 AI 服务商接口
-- **Capture_Module**: 系统集成模块（rastery-capture crate），处理屏幕截图、全局热键、取色
 - **Preset_Library**: 行业工具锁定提示词模板库（rastery-presets crate）
 - **Provider**: AI 服务提供商，包括 Seedream（默认）、Google Nano Banana、OpenAI GPT-Image。〔v2〕Agnes 暂不实现，仅预留接口扩展能力。
 - **API_Key**: 用户自备的 AI 服务商访问密钥
@@ -42,9 +42,6 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 - **Background_Executor**: GPUI 异步执行器，用于处理耗时任务而不阻塞 UI
 - **BYOK**: Bring Your Own Key，用户自备 API Key 模式
 - **EXIF**: Exchangeable Image File Format，图像文件元数据标准
-- **DPI**: Dots Per Inch，显示器像素密度
-- **Physical_Pixel**: 物理像素，屏幕实际像素单位，不受 DPI 缩放影响
-- **Overlay_Window**: 全屏透明无边框窗口，用于截图区域选择
 - **Canvas_Element**: GPUI 自定义 UI 元素，用于交互式画布功能
 - **Text_Layer**: 海报设计中的本地渲染文字图层
 - **Batch_Queue**: 批量处理任务队列
@@ -93,7 +90,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL organize code into a Cargo workspace. 〔v1 只建三个 crate：**rastery-app、rastery-core、rastery-capture**。`rastery-ai` 与 `rastery-presets` 属 AI 功能，v1 不建 —— 见 ADR-0001。〕
+1. THE Rastery_System SHALL organize code into a Cargo workspace. 〔v1 只建两个 crate：**rastery-app、rastery-core**。`rastery-capture` 按 ADR-0003 剥离；`rastery-ai` 与 `rastery-presets` 属 AI 功能，v1 不建 —— 见 ADR-0001。〕
 2. 〔v2〕THE AI_Engine SHALL implement a unified Provider trait for all AI service providers
 3. 〔v2〕WHEN a new Provider is added, THE AI_Engine SHALL integrate it without modifying upper-layer business logic
 4. THE Core_Engine SHALL execute all image encoding operations in Background_Executor
@@ -255,36 +252,16 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 9. WHILE a user adjusts beautification parameters, THE UI_Layer SHALL update the preview in real-time
 10. WHEN a user exports with transparent background selected, THE Core_Engine SHALL produce a PNG file with true transparency outside rounded corners
 
+> 本需求只处理用户导入的现有图片，不包含屏幕捕获，也不依赖 `rastery-capture`。
 
-### [v1] Requirement 13: 屏幕截图
 
-**User Story:** 作为用户,我希望通过全局快捷键快速截取屏幕任意区域,并使用标注工具添加说明,同时控制输出文件大小。
+### [removed] Requirement 13: 屏幕截图
 
-#### Acceptance Criteria
+已从当前产品范围剥离，不实现、不占位。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
 
-1. WHEN a user presses the global screenshot hotkey, THE Capture_Module SHALL activate regardless of the foreground application
-2. WHEN the screenshot mode activates, THE Capture_Module SHALL create an Overlay_Window for each connected display
-3. WHEN the screenshot mode activates, THE UI_Layer SHALL allow the user to select an arbitrary rectangular region
-4. THE UI_Layer SHALL provide a brush annotation tool during screenshot mode
-5. THE UI_Layer SHALL provide a mosaic annotation tool during screenshot mode
-6. THE UI_Layer SHALL provide a text annotation tool during screenshot mode
-7. THE UI_Layer SHALL provide a color picker tool during screenshot mode
-8. WHEN a user completes a screenshot, THE Capture_Module SHALL save the captured region to a file with user-configured compression settings
-9. WHEN a user completes a screenshot, THE Capture_Module SHALL copy the captured region to the system clipboard
-10. WHEN multiple displays are connected with mixed DPI scaling ratios (100%, 125%, 150%, 200%), THE Capture_Module SHALL capture the exact pixel region corresponding to the visual selection
-11. WHEN a user configures compression quality settings, THE Core_Engine SHALL apply the quality setting to saved screenshot files
-12. THE Capture_Module SHALL calculate screen coordinates in Physical_Pixel units to ensure DPI-independent accuracy
+### [removed] Requirement 14: 屏幕取色
 
-### [v1] Requirement 14: 屏幕取色
-
-**User Story:** 作为设计师或开发者,我希望点击屏幕任意位置快速获取像素颜色值,以便在设计和开发中使用。
-
-#### Acceptance Criteria
-
-1. WHEN a user activates the color picker, THE Capture_Module SHALL allow clicking on any screen pixel
-2. WHEN a user clicks a pixel, THE Capture_Module SHALL copy the color value to the system clipboard
-3. WHEN displays use different DPI scaling ratios, THE Capture_Module SHALL sample the pixel at the exact visual position
-4. THE Capture_Module SHALL calculate color sampling coordinates in Physical_Pixel units
+已随屏幕截图能力一并剥离，不实现、不占位。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
 
 
 ### [v1] Requirement 15: GIF 制作
@@ -550,7 +527,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 ### [v1] Requirement 32: 配置管理
 
-**User Story:** 作为用户,我希望自定义默认导出设置和快捷键,以提高工作效率。
+**User Story:** 作为用户,我希望自定义默认导出设置,以提高工作效率。
 
 #### Acceptance Criteria
 
@@ -559,12 +536,10 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 3. 〔v2〕THE Rastery_System SHALL store default Provider selection in configuration
 4. THE Rastery_System SHALL store default export format in configuration
 5. THE Rastery_System SHALL store default export quality in configuration
-6. THE Rastery_System SHALL store screenshot hotkey binding in configuration
-7. THE Rastery_System SHALL store screenshot compression settings in configuration
-8. 〔v2〕THE Rastery_System SHALL NOT store API_Key in the configuration file
-9. THE Rastery_System SHALL store generation history records locally only
-10. THE Rastery_System SHALL store recent output directory paths locally only
-11. THE UI_Layer SHALL provide a clear all history function
+6. 〔v2〕THE Rastery_System SHALL NOT store API_Key in the configuration file
+7. THE Rastery_System SHALL store generation history records locally only
+8. THE Rastery_System SHALL store recent output directory paths locally only
+9. THE UI_Layer SHALL provide a clear all history function
 
 
 ### [v2] Requirement 33: 提示词模板管理
@@ -673,10 +648,8 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 #### Acceptance Criteria
 
 1. WHEN the system clipboard contains image data, THE UI_Layer SHALL allow pasting the image into any image input field
-2. WHEN a user completes a screenshot, THE Capture_Module SHALL copy the captured image to the system clipboard
-3. WHEN a user copies an edited image, THE Rastery_System SHALL place the image data in the system clipboard
-4. WHEN a user copies a color value from the color picker, THE Capture_Module SHALL place the color code in the system clipboard as text
-5. THE Rastery_System SHALL support pasting images from clipboard across different applications
+2. WHEN a user copies an edited image, THE Rastery_System SHALL place the image data in the system clipboard
+3. THE Rastery_System SHALL support pasting images from clipboard across different applications
 
 ### [v1] Requirement 41: 文件输出与命名
 
@@ -688,7 +661,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 2. WHEN a user exports batch processed images, THE UI_Layer SHALL prompt the user to select output directory
 3. WHEN batch processing outputs multiple files, THE Core_Engine SHALL append sequential numbers to filenames
 4. WHEN slicing outputs multiple tiles, THE Core_Engine SHALL append grid position identifiers to filenames
-5. WHEN multiple AI images are generated, THE Core_Engine SHALL use timestamp-based filenames to prevent overwrites
+5. 〔v2〕WHEN multiple AI images are generated, THE Core_Engine SHALL use timestamp-based filenames to prevent overwrites
 6. THE Rastery_System SHALL remember the last used output directory in local configuration
 7. THE UI_Layer SHALL provide an option to open the output directory after export completes
 
@@ -701,7 +674,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 1. IF a user attempts to export without selecting an image, THEN THE UI_Layer SHALL display a no image selected warning
 2. 〔v2〕IF a user attempts to generate AI image without configuring API_Key, THEN THE UI_Layer SHALL display an API key required message with link to settings
-3. IF a user uploads an image exceeding size limits for AI processing, THEN THE UI_Layer SHALL display an image too large warning
+3. 〔v2〕IF a user uploads an image exceeding size limits for AI processing, THEN THE UI_Layer SHALL display an image too large warning
 4. IF a user enters invalid text in a numeric field, THEN THE UI_Layer SHALL highlight the field and display an invalid input message
 5. WHERE a field has specific format requirements, THE UI_Layer SHALL display format hints below the input field
 6. WHEN a user hovers over an unfamiliar option, THE UI_Layer SHALL display a tooltip explanation
@@ -761,55 +734,29 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 4. THE installation package size SHALL NOT exceed 30 megabytes
 5. THE installer SHALL create application shortcuts in the Start Menu
 6. THE installer SHALL register file type associations for common image formats
-7. THE installer SHALL set up global hotkey bindings during installation
 
 ### [v1] Requirement 47: 自定义 UI 元素
 
-**User Story:** 作为用户,我希望使用流畅的交互式画布进行裁剪、标注和图层操作。
+**User Story:** 作为用户,我希望使用流畅的交互式画布进行裁剪和图层操作。
 
 #### Acceptance Criteria
 
 1. THE UI_Layer SHALL implement crop frame as a custom Canvas_Element
 2. THE crop frame Canvas_Element SHALL support drag gestures to adjust position
 3. THE crop frame Canvas_Element SHALL support drag gestures on corner handles to adjust size
-4. THE UI_Layer SHALL implement annotation tools as custom Canvas_Element components
-5. THE annotation Canvas_Element SHALL support brush drawing with configurable stroke width and color
-6. THE annotation Canvas_Element SHALL support mosaic effect application with adjustable block size
-7. THE annotation Canvas_Element SHALL support text input with font and size selection
-8. THE UI_Layer SHALL implement text layers in poster design as draggable Canvas_Element components
-9. THE text layer Canvas_Element SHALL support position adjustment through drag gestures
-10. THE text layer Canvas_Element SHALL support size adjustment through corner handle dragging
-11. FOR ALL Canvas_Element implementations, THE UI_Layer SHALL follow GPUI three-phase rendering pipeline: request_layout, prepaint, and paint
+4. 〔v2〕THE UI_Layer SHALL implement text layers in poster design as draggable Canvas_Element components
+5. 〔v2〕THE text layer Canvas_Element SHALL support position adjustment through drag gestures
+6. 〔v2〕THE text layer Canvas_Element SHALL support size adjustment through corner handle dragging
+7. FOR ALL Canvas_Element implementations, THE UI_Layer SHALL follow GPUI three-phase rendering pipeline: request_layout, prepaint, and paint
 
 
-### [v1] Requirement 48: 多显示器与 DPI 支持
+### [removed] Requirement 48: 多显示器与 DPI 支持
 
-**User Story:** 作为多显示器用户,我希望在不同 DPI 缩放比例的屏幕上精确截图和取色。
+截图专用的多显示器与 DPI 捕获要求已从当前产品范围剥离。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
 
-#### Acceptance Criteria
+### [removed] Requirement 49: 热键冲突处理
 
-1. WHEN multiple displays are connected, THE Capture_Module SHALL detect all connected displays
-2. WHEN screenshot mode activates, THE Capture_Module SHALL create an independent Overlay_Window for each display
-3. WHEN displays have different DPI scaling ratios, THE Capture_Module SHALL calculate coordinates in Physical_Pixel units for each display independently
-4. THE Capture_Module SHALL support 100% DPI scaling accurately
-5. THE Capture_Module SHALL support 125% DPI scaling accurately
-6. THE Capture_Module SHALL support 150% DPI scaling accurately
-7. THE Capture_Module SHALL support 200% DPI scaling accurately
-8. WHEN displays use mixed DPI scaling ratios, THE Capture_Module SHALL capture the exact pixel region matching the visual selection
-9. WHEN color picking on a high-DPI display, THE Capture_Module SHALL sample the pixel at the exact visual position
-10. FOR ALL DPI configurations, pixel coordinates used for capture and color sampling SHALL be in Physical_Pixel units to ensure DPI-independent accuracy
-
-### [v1] Requirement 49: 热键冲突处理
-
-**User Story:** 作为用户,我希望自定义截图热键,避免与其他应用冲突。
-
-#### Acceptance Criteria
-
-1. THE UI_Layer SHALL allow the user to configure the screenshot hotkey in settings
-2. IF the user selects a hotkey already in use by another application, THEN THE UI_Layer SHALL display a hotkey conflict warning
-3. WHEN the user changes the screenshot hotkey, THE Capture_Module SHALL unregister the previous hotkey
-4. WHEN the user changes the screenshot hotkey, THE Capture_Module SHALL register the new hotkey globally
-5. THE Capture_Module SHALL persist the hotkey configuration across application restarts
+截图全局热键已从当前产品范围剥离。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
 
 
 ### [v2] Requirement 50: AI 提供商能力声明
@@ -844,10 +791,8 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 8. THE Core_Engine SHALL execute EXIF cleaning without requiring network connectivity
 9. THE Core_Engine SHALL execute screenshot beautification without requiring network connectivity
 10. THE Core_Engine SHALL execute GIF creation without requiring network connectivity
-11. THE Capture_Module SHALL execute screen capture without requiring network connectivity
-12. THE Capture_Module SHALL execute color picking without requiring network connectivity
-13. WHEN network connectivity is unavailable, THE UI_Layer SHALL display AI-dependent features as unavailable with clear indication
-14. WHEN network connectivity is unavailable, THE UI_Layer SHALL allow full access to all Core_Engine and Capture_Module features
+11. WHEN network connectivity is unavailable, THE UI_Layer SHALL display AI-dependent features as unavailable with clear indication
+12. WHEN network connectivity is unavailable, THE UI_Layer SHALL allow full access to all Core_Engine features
 
 
 ### [v1] Requirement 52: 图像解析与打印的往返一致性
@@ -984,8 +929,8 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 - **Feature Name**: rastery
 - **Spec Type**: Feature
 - **Document Version**: 1.0
-- **Total Requirements**: 60（v1: 39 / v2: 21，见各条标题的 [v1]/[v2] 标记与 ADR-0001）
-- **Total Acceptance Criteria**: 475
-- **Last Updated**: 2026-07-15
+- **Total Requirements**: 60（v1: 35 / v2: 21 / removed: 4，见各条标题、ADR-0001 与 ADR-0003）
+- **Total Acceptance Criteria**: 433
+- **Last Updated**: 2026-07-17
 - **Language**: 简体中文 + English
 - **Status**: 真相源（Source of Truth）。范围与顺序决策见 docs/adr/。

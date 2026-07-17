@@ -29,6 +29,15 @@ jobs:
       - name: Cache cargo build
         uses: Swatinem/rust-cache@v2
 
+      # GPUI 的 Linux 测试二进制在链接阶段需要 XCB / xkbcommon。`cargo check`
+      # 不执行最终链接，因此缺少这些包时只会在 `cargo test` 才暴露。
+      - name: Install Linux GPUI link dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+
       - name: cargo check
         run: cargo check --workspace --all-targets
 
@@ -37,43 +46,3 @@ jobs:
 
       - name: cargo test
         run: cargo test --workspace
-
-  # 真实平台后端（rastery-capture/system：xcap / arboard / global-hotkey）只能在
-  # 有显示栈的真机上编译——无头开发 VM 上验证不了 Windows / macOS 的平台内部实现。
-  # CI runner 正是这类真机（可编译，虽不能跑起窗口），因此在此对 `system` feature
-  # 做三平台编译校验，补上本机测不到的那一半（ADR-0002）。
-  system-backends:
-    name: check --features system (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust stable (+ clippy)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      - name: Cache cargo build
-        uses: Swatinem/rust-cache@v2
-
-      # xcap 的 Linux 后端依赖 wayland / pipewire / xcb / egl 等系统库，
-      # 且 libspa-sys 用 bindgen 需要 clang。Windows / macOS 用系统原生 API，无需此步。
-      - name: Install Linux capture deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config clang libclang-dev \
-            libwayland-dev libpipewire-0.3-dev libdbus-1-dev \
-            libxcb1-dev libxcb-randr0-dev libxcb-shm0-dev libxcb-xfixes0-dev \
-            libxrandr-dev libx11-dev libegl-dev libgl-dev
-
-      - name: cargo check --features system
-        run: cargo check -p rastery-app --features system --all-targets
-
-      - name: cargo clippy --features system
-        run: cargo clippy -p rastery-app --features system --all-targets -- -D warnings

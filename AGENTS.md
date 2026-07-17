@@ -1,17 +1,16 @@
 # rastery
 
-Rastery 是一款跨平台原生桌面图像工具箱（Rust + GPUI），把「屏幕截图」与「图片处理」二合一。
+Rastery 是一款跨平台原生桌面图像工具箱（Rust + GPUI），聚焦轻量、快速的本地图片处理。
 
 ## 工具链与 workspace
 
 - **Rust**：stable（本机 1.96.1）。`gpui 0.2.2` 与 `gpui-component 0.5.1` 均为 **edition 2024**，Rastery 的 crate 一律用 `edition = "2024"`（需 Rust ≥ 1.85）。两者都未声明 MSRV。
-- **Workspace crate 职责**（v1 只建前三个，见 [ADR-0001](./docs/adr/0001-v1-scope-local-only.md)）：
+- **Workspace crate 职责**（v1 只建前两个，见 [ADR-0001](./docs/adr/0001-v1-scope-local-only.md) 与 [ADR-0003](./docs/adr/0003-remove-screen-capture.md)）：
 
 | crate | 职责 | v1 |
 | --- | --- | --- |
 | `rastery-core` | 本地图像引擎：裁剪/压缩/拼接/切图/GIF/二维码/EXIF/水印。**纯函数，无 UI 无网络**，可完全 headless 测试 | ✅ |
 | `rastery-app` | GPUI UI 层：四大板块导航 + 各功能页面 + 自定义 Element | ✅ |
-| `rastery-capture` | 系统集成：全局热键 / 屏幕捕获 / 剪贴板 / 取色 | ✅ |
 | `rastery-ai` | AI Provider 抽象层与各家适配器 | ❌ v2 |
 | `rastery-presets` | 行业工具锁定提示词模板库 | ❌ v2 |
 
@@ -25,12 +24,12 @@ Rastery 是一款跨平台原生桌面图像工具箱（Rust + GPUI），把「�
 
 ## v1 只做本地功能（硬约束）
 
-**v1 = 本地功能**：完全离线、不需要 API Key 的功能集合（FR-01~FR-10）。
+**v1 = 本地功能**：完全离线、不需要 API Key 的图片处理功能集合。FR-08 屏幕截图、FR-09 屏幕取色及其支撑需求已按 ADR-0003 从当前范围剥离。
 **v2 = AI 功能**：Requirement 4、5、16、17、18、19–31、33、50、59，以及所有标 `〔v2〕` 的 AC。
 
 v1 阶段：
 
-- **不建 `rastery-ai`、`rastery-presets` 两个 crate。** workspace 只有 `rastery-app`、`rastery-core`、`rastery-capture`。
+- **不建 `rastery-capture`、`rastery-ai`、`rastery-presets`。** workspace 只有 `rastery-app`、`rastery-core`。
 - **不实现** Provider trait、BYOK、keyring / Credential Store、FR-11 海报设计。
 - 主界面上「AI 生成与改图」与「行业定制 AI 工具」两个板块**是空的**，做「开发中」占位即可（与三个视频功能一样）。
 
@@ -38,7 +37,7 @@ v1 阶段：
 
 ## 建设顺序：core 优先
 
-**先把 `rastery-core` 写到全绿，GPUI 骨架推后**（design.md 的 Phase 1–2 → Phase 3 → Phase 5）。理由见 [ADR-0002](./docs/adr/0002-core-before-ui.md)。
+**先把 `rastery-core` 写到全绿，GPUI 骨架推后**（design.md 的 Phase 1–2 → Phase 5）。理由见 [ADR-0002](./docs/adr/0002-core-before-ui.md)。
 
 i18n 随 UI 走，不随库走——`rastery-core` 是库，没有用户可见文本。
 
@@ -50,8 +49,7 @@ i18n 随 UI 走，不随库走——`rastery-core` 是库，没有用户可见�
 
 - **`rastery-core` 在本机全自动收敛**：写 → `cargo test` → 绿。无需人工介入。这是首选工作方式。
 - **UI 代码在本机能类型检查、不能运行**。已实测：`gpui 0.2.2` + `gpui-component 0.5.1` 在本机 `cargo check` 干净通过（3m14s，756 依赖，无缺失系统库）。**写完 GPUI 代码必须先在本机 `cargo check`**——它能自动抓住幻觉 API，那正是 GPUI pre-1.0 的主要风险形态。
-- **但「能编译」≠「已验证」**。渲染正确性、截图与 DPI 精度、取色、自定义 Element 手感、冷启动耗时，本机一律测不了，必须由开发者在真机（Windows / macOS / Linux 桌面 + 多屏混合 DPI 环境均具备）上验收。**涉及这些的改动，如实说明「本机只做了类型检查」，不要声称已验证。**
-- **平台特定代码本机检查不到**：`#[cfg(windows)]` / `#[cfg(target_os = "macos")]` 门控的代码在 Linux 上编译时根本不参与编译。`rastery-capture` 大部分属于此类，是三个 crate 里本机覆盖最差的一个。
+- **但「能编译」≠「已验证」**。渲染正确性、自定义 Element 手感、冷启动耗时，本机一律测不了，必须由开发者在真机（Windows / macOS / Linux 桌面）上验收。**涉及这些的改动，如实说明「本机只做了类型检查」，不要声称已验证。**
 
 ## 质量门禁（每个任务的 Definition of Done）
 
@@ -77,7 +75,7 @@ gpui-component = "=0.5.1"  # crates.io 最新稳定版，2026-02-05，依赖 gpu
 **[`vendor-docs/gpui-0.2.2/API-NOTES.md`](./vendor-docs/gpui-0.2.2/API-NOTES.md) 的「记忆陷阱」一节是强制阅读项。** 模型记忆中的 GPUI 是 context 重构**之前**的版本，与 0.2.2 差异巨大——已核实 `WindowContext`、`ViewContext` 在 0.2.2 中**根本不存在**，`AppContext` 从结构体变成了 trait，入口改为 `Application::new().run(|cx: &mut App| ...)`，视图创建改为 `cx.new(...)`。凭记忆写基本每行都错。
 
 - API 存疑 → 查 [`vendor-docs/gpui-0.2.2/examples/`](./vendor-docs/gpui-0.2.2/examples/)（28 个官方示例，版本匹配，真实可编译）。**不要猜。**
-- 自定义 Element（裁剪框、标注画布）→ 参考 `examples/input.rs`，那是唯一实现完整三阶段管线的示例。
+- 自定义 Element（裁剪框）→ 参考 `examples/input.rs`，那是唯一实现完整三阶段管线的示例。
 - 组件与 feature 陷阱 → [`vendor-docs/gpui-component-0.5.1/COMPONENTS.md`](./vendor-docs/gpui-component-0.5.1/COMPONENTS.md)。**不要启用 `webview` 或 `inspector` feature**——它们会引入 `wry` 浏览器内核，违反 §1.3 原则 5「无浏览器内核依赖」。
 
 ## 跨平台约定
@@ -85,8 +83,6 @@ gpui-component = "=0.5.1"  # crates.io 最新稳定版，2026-02-05，依赖 gpu
 三平台同时支持（Windows 10/11 x64、macOS、Linux）。
 
 - 文件路径一律用 `std::path::PathBuf`，禁止字符串拼接。
-- 热键需适配三平台差异（Ctrl / Cmd / Super）。
-- 剪贴板与 OS 凭据存储需平台特定测试。
 - `rastery-core` 的三平台回归由 GitHub Actions（`windows-latest` / `macos-latest` / `ubuntu-latest`）承担，零人工成本。
 
 ## 多语言：用 `rust-i18n` v3（这不是选择题）

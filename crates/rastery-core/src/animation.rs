@@ -91,10 +91,8 @@ pub fn compose(frames: &[RgbaImage], params: &GifParams) -> Result<Vec<u8>> {
 
     let mut buf = Cursor::new(Vec::new());
     {
-        let mut encoder =
-            gif::Encoder::new(&mut buf, tw16, th16, &[]).map_err(|e| CoreError::GifEncode {
-                source: e,
-            })?;
+        let mut encoder = gif::Encoder::new(&mut buf, tw16, th16, &[])
+            .map_err(|e| CoreError::GifEncode { source: e })?;
         encoder
             .set_repeat(gif::Repeat::Infinite)
             .map_err(|e| CoreError::GifEncode { source: e })?;

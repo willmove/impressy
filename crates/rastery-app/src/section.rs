@@ -62,7 +62,6 @@ impl Section {
                 Feature::QrCode,
                 Feature::Exif,
                 Feature::Beautify,
-                Feature::Screenshot,
             ],
             // 三个视频功能是 Requirement 34.5–34.7 要求提供的入口，均为 v2 占位。
             Self::AiGeneration => &[
@@ -96,8 +95,6 @@ pub enum Feature {
     Exif,
     /// 截图美化（FR-07，`rastery_core::beautify`）。
     Beautify,
-    /// 屏幕截图（FR-08，`rastery_capture::device` + 覆盖层）。
-    Screenshot,
     // —— 创作输出 ——
     /// GIF 制作（FR-10，v1，`rastery_core::animation`）。
     Gif,
@@ -128,7 +125,7 @@ impl Feature {
                 | Self::Collage
                 | Self::Batch
                 | Self::Slice
-                | Self::Screenshot
+                | Self::QrCode
                 | Self::Exif
                 | Self::Beautify
                 | Self::Gif
@@ -151,7 +148,6 @@ impl Feature {
             Self::ImageEdit => "feat-img-edit",
             Self::VideoWatermark => "feat-video-wm",
             Self::VideoSubtitle => "feat-video-sub",
-            Self::Screenshot => "feat-screenshot",
             Self::VideoClarity => "feat-video-clarity",
             Self::Industry => "feat-industry",
         }
@@ -173,7 +169,6 @@ impl Feature {
             Self::ImageEdit => "feature.image_edit.name",
             Self::VideoWatermark => "feature.video_watermark.name",
             Self::VideoSubtitle => "feature.video_subtitle.name",
-            Self::Screenshot => "feature.screenshot.name",
             Self::VideoClarity => "feature.video_clarity.name",
             Self::Industry => "feature.industry.name",
         }
@@ -197,7 +192,6 @@ impl Feature {
             Self::VideoSubtitle => "feature.video_subtitle.desc",
             Self::VideoClarity => "feature.video_clarity.desc",
             Self::Industry => "feature.industry.desc",
-            Self::Screenshot => "feature.screenshot.desc",
         }
     }
 }

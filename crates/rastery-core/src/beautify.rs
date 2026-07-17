@@ -157,7 +157,15 @@ fn round_corners(img: &mut RgbaImage, radius: u32) {
     let r = i64::from(radius);
     for y in 0..h {
         for x in 0..w {
-            if !inside_rounded(i64::from(x), i64::from(y), 0, 0, i64::from(w), i64::from(h), r) {
+            if !inside_rounded(
+                i64::from(x),
+                i64::from(y),
+                0,
+                0,
+                i64::from(w),
+                i64::from(h),
+                r,
+            ) {
                 img.get_pixel_mut(x, y).0[3] = 0;
             }
         }
@@ -223,23 +231,22 @@ fn draw_shadow(
 }
 
 /// 沿圆角矩形边缘绘制描边环。
-fn draw_border(
-    canvas: &mut RgbaImage,
-    ox: u32,
-    oy: u32,
-    iw: u32,
-    ih: u32,
-    radius: u32,
-    b: Border,
-) {
+fn draw_border(canvas: &mut RgbaImage, ox: u32, oy: u32, iw: u32, ih: u32, radius: u32, b: Border) {
     let r = i64::from(radius);
     let bw = i64::from(b.width);
     for y in 0..ih {
         for x in 0..iw {
             let (gx, gy) = (i64::from(ox) + i64::from(x), i64::from(oy) + i64::from(y));
             // 外圆角矩形内、内圆角矩形（内缩 width）外 → 描边带。
-            let in_outer =
-                inside_rounded(gx, gy, i64::from(ox), i64::from(oy), i64::from(iw), i64::from(ih), r);
+            let in_outer = inside_rounded(
+                gx,
+                gy,
+                i64::from(ox),
+                i64::from(oy),
+                i64::from(iw),
+                i64::from(ih),
+                r,
+            );
             let in_inner = inside_rounded(
                 gx,
                 gy,
@@ -286,7 +293,9 @@ fn lerp(a: Rgba<u8>, b: Rgba<u8>, t: f32) -> Rgba<u8> {
 }
 
 fn lerp_ch(a: u8, b: u8, t: f32) -> u8 {
-    (f32::from(a) * (1.0 - t) + f32::from(b) * t).round().clamp(0.0, 255.0) as u8
+    (f32::from(a) * (1.0 - t) + f32::from(b) * t)
+        .round()
+        .clamp(0.0, 255.0) as u8
 }
 
 fn blend_ch(src: u8, dst: u8, sa: f32, inv: f32) -> u8 {

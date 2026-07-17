@@ -11,27 +11,56 @@
 // 之前声明，否则子模块里的 `t!` 找不到 `crate::_rust_i18n_t`。
 rust_i18n::i18n!("locales");
 
-mod annotate_canvas;
-mod capture;
+// 裁剪交互已实现，但图片编辑页尚未接入；保留源码不影响 release 二进制体积。
+mod config_store;
 mod crop_frame;
- mod section;
- mod shell;
- mod workspace;
+mod feature_params;
+mod section;
+mod shell;
+mod text_watermark;
+mod ui_message;
+mod workspace;
 
 use gpui::{
     App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
 };
 use gpui_component::Root;
 
+use config_store::{ConfigLoad, ConfigStore};
+use rastery_core::config::AppConfig;
 use shell::AppShell;
 
 fn main() {
+    let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .try_init();
+
+    let (config_store, loaded) = match ConfigStore::for_current_user() {
+        Ok(store) => {
+            let loaded = store.load();
+            (Some(store), loaded)
+        }
+        Err(error) => {
+            log::error!("configuration directory unavailable: {error}");
+            (
+                None,
+                ConfigLoad {
+                    config: AppConfig::default(),
+                    warning: Some(error.to_string()),
+                },
+            )
+        }
+    };
+
+    let initial_path = std::env::args_os()
+        .nth(1)
+        .map(std::path::PathBuf::from)
+        .filter(|path| path.is_file());
     let app = Application::new();
-    app.run(|cx: &mut App| {
+    app.run(move |cx: &mut App| {
         // 必须在使用任何 gpui-component 功能之前调用。
         gpui_component::init(cx);
-        // 默认简体中文（Requirement 35）；set_locale 同时切换组件库文案。
-        gpui_component::set_locale("zh-CN");
+        // set_locale 同时切换应用与组件库文案。
+        gpui_component::set_locale(loaded.config.language.locale());
 
         let bounds = Bounds::centered(None, size(px(1024.), px(700.)), cx);
         cx.open_window(
@@ -46,8 +75,13 @@ fn main() {
                 app_id: Some("rastery".into()),
                 ..Default::default()
             },
-            |window, cx| {
-                let view = cx.new(|_| AppShell::new());
+            move |window, cx| {
+                let view = cx.new(|cx| {
+                    AppShell::new(loaded.config, config_store, loaded.warning, window, cx)
+                });
+                if let Some(path) = initial_path {
+                    view.update(cx, |shell, cx| shell.open_initial_path(path, cx));
+                }
                 // 窗口第一层必须是 Root（gpui-component 的弹层 / 通知等依赖它）。
                 cx.new(|cx| Root::new(view, window, cx))
             },

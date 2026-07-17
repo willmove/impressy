@@ -7,11 +7,12 @@
 //! 只负责绘制（暗罩 + 选框 + 8 个把手），并在 prepaint 阶段把元素边界写回 [`Selection`]，
 //! 供下一轮命中测试换算坐标。这正是 `vendor-docs` 里 `input.rs` 的状态回写模式。
 //!
-//! [`Selection`] 被设计为可复用实体：图片编辑页（裁剪一张打开的图）与截图覆盖层
-//! （在屏幕抓帧上选区）共享同一交互模型。
+//! [`Selection`] 被设计为独立实体，图片编辑页可直接复用同一套交互模型，
+//! 不把手势逻辑耦合到具体页面。
 
 use gpui::{
-    App, Bounds, Context, Entity, IntoElement, Pixels, Point, canvas, fill, point, px, rgba, size,
+    App, Bounds, Context, Entity, IntoElement, Pixels, Point, Styled, canvas, fill, point, px,
+    rgba, size,
 };
 use rastery_core::transform::{AspectRatio, CropRect};
 
@@ -92,7 +93,7 @@ struct Drag {
     anchor: (f32, f32),
 }
 
-/// 选区交互状态（作为独立 `Entity`，便于在编辑页与截图覆盖层间复用）。
+/// 选区交互状态（作为独立 `Entity`，便于图片编辑页复用）。
 pub struct Selection {
     /// 当前选区（归一化）。
     pub rect: NormRect,
@@ -134,7 +135,9 @@ impl Selection {
             return;
         };
         let anchor = norm_at(pos, b);
-        let grip = self.grip_at(pos, b).unwrap_or(Grip::Move);
+        let Some(grip) = self.grip_at(pos, b) else {
+            return;
+        };
         self.drag = Some(Drag {
             grip,
             origin: self.rect,
@@ -204,7 +207,7 @@ impl Selection {
         let raw_w = (cur.0 - fix_x).abs();
         let raw_h = (cur.1 - fix_y).abs();
 
-        let (w, h) = match (grip.is_corner(), self.ratio) {
+        let (mut w, mut h) = match (grip.is_corner(), self.ratio) {
             (true, Some(ratio)) => {
                 // 角把手锁定比例：以拖动距离更约束的一轴为准。
                 let rv = ratio.value() as f32; // w/h
@@ -218,6 +221,15 @@ impl Selection {
 
         let sx = if cur.0 >= fix_x { 1.0 } else { -1.0 };
         let sy = if cur.1 >= fix_y { 1.0 } else { -1.0 };
+        if grip.is_corner() && self.ratio.is_some() {
+            let max_w = if sx > 0.0 { 1.0 - fix_x } else { fix_x };
+            let max_h = if sy > 0.0 { 1.0 - fix_y } else { fix_y };
+            let scale = (max_w / w.max(MIN_EDGE))
+                .min(max_h / h.max(MIN_EDGE))
+                .min(1.0);
+            w *= scale;
+            h *= scale;
+        }
         NormRect {
             x: fix_x.min(fix_x + sx * w),
             y: fix_y.min(fix_y + sy * h),
@@ -334,10 +346,7 @@ pub fn selection_overlay(state: Entity<Selection>) -> impl IntoElement {
 
             // 选框描边（四条窄条）。
             let outline = [
-                fill(
-                    Bounds::new(sel.origin, size(sel.size.width, border)),
-                    edge,
-                ),
+                fill(Bounds::new(sel.origin, size(sel.size.width, border)), edge),
                 fill(
                     Bounds::new(
                         point(sel.left(), sel.bottom() - border),
@@ -345,10 +354,7 @@ pub fn selection_overlay(state: Entity<Selection>) -> impl IntoElement {
                     ),
                     edge,
                 ),
-                fill(
-                    Bounds::new(sel.origin, size(border, sel.size.height)),
-                    edge,
-                ),
+                fill(Bounds::new(sel.origin, size(border, sel.size.height)), edge),
                 fill(
                     Bounds::new(
                         point(sel.right() - border, sel.top()),
@@ -380,4 +386,55 @@ pub fn selection_overlay(state: Entity<Selection>) -> impl IntoElement {
             }
         },
     )
+    .size_full()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn centered_presets_keep_the_exact_requested_ratio() {
+        for ratio in AspectRatio::PRESETS {
+            let rect = NormRect::centered(ratio);
+            let actual = rect.w / rect.h;
+            assert!((actual - ratio.value() as f32).abs() < 0.000_01);
+            assert!(rect.x >= 0.0 && rect.y >= 0.0);
+            assert!(rect.x + rect.w <= 1.0 && rect.y + rect.h <= 1.0);
+        }
+    }
+
+    #[test]
+    fn locked_corner_resize_stays_in_bounds_and_preserves_ratio() {
+        let ratio = AspectRatio::PORTRAIT_4_5;
+        let selection = Selection::new(Some(ratio));
+        let drag = Drag {
+            grip: Grip::Se,
+            origin: selection.rect,
+            anchor: (selection.rect.x + selection.rect.w, 1.0),
+        };
+        let resized = selection.resize(Grip::Se, drag, (2.0, 2.0)).clamp();
+        assert!(resized.x + resized.w <= 1.0);
+        assert!(resized.y + resized.h <= 1.0);
+        assert!((resized.w / resized.h - ratio.value() as f32).abs() < 0.000_01);
+    }
+
+    #[test]
+    fn normalized_selection_maps_to_a_valid_pixel_crop() {
+        let mut selection = Selection::new(Some(AspectRatio::WIDESCREEN_16_9));
+        selection.rect = NormRect {
+            x: 0.1,
+            y: 0.2,
+            w: 0.8,
+            h: 0.45,
+        };
+        let crop = selection
+            .to_crop_rect(1_000, 800)
+            .expect("normalized selection should produce a crop");
+        assert!(crop.fits_within(1_000, 800));
+        assert_eq!(
+            (crop.x, crop.y, crop.width, crop.height),
+            (100, 160, 800, 360)
+        );
+    }
 }

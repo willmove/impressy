@@ -58,7 +58,12 @@ pub fn compose(
         ));
     }
 
-    let cell_w = images.iter().map(RgbaImage::width).max().unwrap_or(1).max(1);
+    let cell_w = images
+        .iter()
+        .map(RgbaImage::width)
+        .max()
+        .unwrap_or(1)
+        .max(1);
     let cell_h = images
         .iter()
         .map(RgbaImage::height)

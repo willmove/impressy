@@ -194,11 +194,10 @@ fn decode_webp(bytes: &[u8]) -> Result<RgbaImage> {
         })
     } else {
         // 无 alpha 的 WebP：补全不透明 alpha 后转为 RGBA。
-        let rgb = image::RgbImage::from_raw(w, h, img.to_vec())
-            .ok_or_else(|| CoreError::Webp {
-                operation: "解码",
-                detail: format!("{w}×{h} RGB 缓冲区与尺寸不符"),
-            })?;
+        let rgb = image::RgbImage::from_raw(w, h, img.to_vec()).ok_or_else(|| CoreError::Webp {
+            operation: "解码",
+            detail: format!("{w}×{h} RGB 缓冲区与尺寸不符"),
+        })?;
         Ok(image::DynamicImage::ImageRgb8(rgb).to_rgba8())
     }
 }
