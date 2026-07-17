@@ -3,17 +3,25 @@
 //! GPUI 主线程只更新状态和渲染；文件读取、编解码及图像变换通过 background
 //! executor 执行。渲染和交互仍须按 ADR-0002 在桌面真机验收。
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
+
 use gpui::{
-    AnyElement, AppContext, ClipboardEntry, ClipboardItem, Context, Entity, ExternalPaths,
+    AnyElement, AppContext, ClipboardEntry, ClipboardItem, Context, Entity, ExternalPaths, Hsla,
     Image as ClipboardImage, ImageFormat as ClipboardImageFormat, InteractiveElement, IntoElement,
     MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, img, prelude::FluentBuilder, px,
+    StatefulInteractiveElement, Styled, Subscription, Timer, Window, black, div, img,
+    prelude::FluentBuilder, px, white,
 };
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_component::input::{Input, InputState};
+use gpui_component::slider::{Slider, SliderEvent, SliderState};
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme, Disableable, h_flex, v_flex};
 use rastery_core::config::{AppConfig, Language};
-use rastery_core::format::{EncodeSettings, OutputFormat, PngCompression, Quality};
+use rastery_core::format::{self, EncodeSettings, OutputFormat, PngCompression, Quality};
 use rastery_core::transform::Rotation;
 use rust_i18n::t;
 
@@ -24,7 +32,7 @@ use crate::section::{Feature, Section};
 use crate::ui_message::{ErrorKind, UiMessage};
 use crate::workspace::{
     BatchRequest, ClipboardFormat, ClipboardPayload, TransformOperation, Workspace,
-    WorkspaceCommand, WorkspaceJob, WorkspaceOutcome,
+    WorkspaceCommand, WorkspaceJob, WorkspaceOutcome, is_supported_image_path,
 };
 
 fn tr(key: &str) -> SharedString {
@@ -34,6 +42,15 @@ fn tr(key: &str) -> SharedString {
 enum WorkspaceEvent {
     Progress { completed: usize, total: usize },
     Finished(Box<WorkspaceOutcome>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum EstimateState {
+    #[default]
+    Unavailable,
+    Pending,
+    Ready(usize),
+    Failed,
 }
 
 pub struct AppShell {
@@ -47,6 +64,13 @@ pub struct AppShell {
     crop_selection: Entity<Selection>,
     qr_input: Entity<InputState>,
     watermark_input: Entity<InputState>,
+    quality_slider: Entity<SliderState>,
+    batch_quality_slider: Entity<SliderState>,
+    qr_foreground: Entity<ColorPickerState>,
+    qr_background: Entity<ColorPickerState>,
+    estimate_state: EstimateState,
+    estimate_generation: Arc<AtomicU64>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl AppShell {
@@ -68,6 +92,55 @@ impl AppShell {
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("placeholder.qr_text")));
         let watermark_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("placeholder.watermark_text")));
+        let quality_slider = cx.new(|_| {
+            SliderState::new()
+                .min(1.0)
+                .max(100.0)
+                .step(1.0)
+                .default_value(f32::from(config.default_export_quality.get()))
+        });
+        let batch_quality_slider = cx.new(|_| {
+            SliderState::new()
+                .min(1.0)
+                .max(100.0)
+                .step(1.0)
+                .default_value(f32::from(params.batch.quality.get()))
+        });
+        let qr_foreground = cx.new(|cx| ColorPickerState::new(window, cx).default_value(black()));
+        let qr_background = cx.new(|cx| ColorPickerState::new(window, cx).default_value(white()));
+
+        let _subscriptions = vec![
+            cx.subscribe(&quality_slider, |this, _, event: &SliderEvent, cx| {
+                let SliderEvent::Change(value) = event;
+                let value = value.start().round().clamp(1.0, 100.0) as u8;
+                this.config.default_export_quality =
+                    Quality::new(value).expect("quality slider is clamped to 1..=100");
+                this.persist_config(false);
+                this.schedule_size_estimate(cx);
+                cx.notify();
+            }),
+            cx.subscribe(&batch_quality_slider, |this, _, event: &SliderEvent, cx| {
+                let SliderEvent::Change(value) = event;
+                let value = value.start().round().clamp(1.0, 100.0) as u8;
+                this.params.batch.quality =
+                    Quality::new(value).expect("quality slider is clamped to 1..=100");
+                cx.notify();
+            }),
+            cx.subscribe(&qr_foreground, |this, _, event: &ColorPickerEvent, cx| {
+                let ColorPickerEvent::Change(color) = event;
+                if let Some(color) = color {
+                    this.params.qr.foreground = hsla_to_image_rgba(*color);
+                    cx.notify();
+                }
+            }),
+            cx.subscribe(&qr_background, |this, _, event: &ColorPickerEvent, cx| {
+                let ColorPickerEvent::Change(color) = event;
+                if let Some(color) = color {
+                    this.params.qr.background = hsla_to_image_rgba(*color);
+                    cx.notify();
+                }
+            }),
+        ];
         Self {
             active: Section::BasicImage,
             open: None,
@@ -79,11 +152,26 @@ impl AppShell {
             crop_selection,
             qr_input,
             watermark_input,
+            quality_slider,
+            batch_quality_slider,
+            qr_foreground,
+            qr_background,
+            estimate_state: EstimateState::Unavailable,
+            estimate_generation: Arc::new(AtomicU64::new(0)),
+            _subscriptions,
         }
     }
 
-    pub fn open_initial_path(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
-        if let Some(job) = self.workspace.prepare_paths(vec![path], false) {
+    pub fn open_initial_paths(&mut self, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
+        let supported_count = paths
+            .iter()
+            .filter(|path| is_supported_image_path(path))
+            .count();
+        let multiple = supported_count > 1;
+        self.active = Section::BasicImage;
+        self.open = Some(initial_paths_feature(supported_count));
+        self.settings_open = false;
+        if let Some(job) = self.workspace.prepare_paths(paths, multiple) {
             self.spawn_workspace_job(job, cx);
         } else {
             cx.notify();
@@ -130,17 +218,57 @@ impl AppShell {
             OutputFormat::Webp => OutputFormat::Png,
         };
         self.persist_config(true);
+        self.schedule_size_estimate(cx);
         cx.notify();
     }
 
-    fn adjust_quality(&mut self, delta: i16, cx: &mut Context<Self>) {
-        let current = i16::from(self.config.default_export_quality.get());
-        let next = (current + delta).clamp(1, 100) as u8;
-        if let Ok(quality) = Quality::new(next) {
-            self.config.default_export_quality = quality;
-            self.persist_config(true);
-            cx.notify();
-        }
+    fn cycle_png_compression(&mut self, cx: &mut Context<Self>) {
+        self.config.default_png_compression =
+            next_png_compression(self.config.default_png_compression);
+        self.persist_config(true);
+        self.schedule_size_estimate(cx);
+        cx.notify();
+    }
+
+    fn schedule_size_estimate(&mut self, cx: &mut Context<Self>) {
+        let Some(image) = self.workspace.image_for_estimate() else {
+            self.estimate_state = EstimateState::Unavailable;
+            return;
+        };
+        let generation = self
+            .estimate_generation
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
+        let generation_token = Arc::clone(&self.estimate_generation);
+        let settings = default_export_settings(&self.config);
+        self.estimate_state = EstimateState::Pending;
+
+        let task = cx.background_executor().spawn(async move {
+            Timer::after(Duration::from_millis(180)).await;
+            if generation_token.load(Ordering::Relaxed) != generation {
+                return None;
+            }
+            Some(format::encode(image.image(), settings).map(|bytes| bytes.len()))
+        });
+        cx.spawn(async move |this, cx| {
+            let Some(result) = task.await else {
+                return;
+            };
+            let _ = this.update(cx, |this, cx| {
+                if this.estimate_generation.load(Ordering::Relaxed) != generation {
+                    return;
+                }
+                this.estimate_state = match result {
+                    Ok(bytes) => EstimateState::Ready(bytes),
+                    Err(error) => {
+                        log::error!("output size estimation failed: {error}");
+                        EstimateState::Failed
+                    }
+                };
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn nav_button(&self, section: Section, cx: &mut Context<Self>) -> impl IntoElement {
@@ -455,6 +583,7 @@ impl AppShell {
         if let Some(payload) = effects.clipboard {
             self.write_clipboard(payload, cx);
         }
+        self.schedule_size_estimate(cx);
         cx.notify();
     }
 
@@ -595,6 +724,7 @@ impl AppShell {
         action: ParamAction,
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let help = tr(parameter_help_key(label_key));
         h_flex()
             .justify_between()
             .gap_3()
@@ -603,6 +733,7 @@ impl AppShell {
                 Button::new(button_id)
                     .outline()
                     .label(value)
+                    .tooltip(help)
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.adjust_param(action, cx);
                     })),
@@ -618,6 +749,7 @@ impl AppShell {
         actions: (ParamAction, ParamAction),
         cx: &mut Context<Self>,
     ) -> AnyElement {
+        let help = tr(parameter_help_key(label_key));
         h_flex()
             .justify_between()
             .gap_3()
@@ -629,6 +761,7 @@ impl AppShell {
                         Button::new(ids.0)
                             .outline()
                             .label("−")
+                            .tooltip(help.clone())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.adjust_param(actions.0, cx);
                             })),
@@ -638,9 +771,37 @@ impl AppShell {
                         Button::new(ids.1)
                             .outline()
                             .label("+")
+                            .tooltip(help)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.adjust_param(actions.1, cx);
                             })),
+                    ),
+            )
+            .into_any_element()
+    }
+
+    fn slider_control(
+        &self,
+        label_key: &str,
+        value: SharedString,
+        slider: &Entity<SliderState>,
+        id: &'static str,
+    ) -> AnyElement {
+        let help = tr(parameter_help_key(label_key));
+        h_flex()
+            .justify_between()
+            .gap_3()
+            .child(div().text_sm().child(tr(label_key)))
+            .child(
+                v_flex()
+                    .w(px(220.0))
+                    .gap_1()
+                    .child(div().text_sm().text_center().child(value))
+                    .child(
+                        div()
+                            .id(id)
+                            .tooltip(move |window, cx| Tooltip::new(help.clone()).build(window, cx))
+                            .child(Slider::new(slider).w_full()),
                     ),
             )
             .into_any_element()
@@ -747,13 +908,47 @@ impl AppShell {
                     ParamAction::QrCorrectionNext,
                     cx,
                 ));
-                controls.push(self.cycle_control(
-                    "parameter.palette",
-                    tr(self.params.qr.palette_label_key()),
-                    "param-qr-palette",
-                    ParamAction::QrPaletteNext,
-                    cx,
-                ));
+                let foreground_help = tr("help.qr_foreground");
+                let background_help = tr("help.qr_background");
+                controls.push(
+                    h_flex()
+                        .justify_between()
+                        .gap_3()
+                        .child(div().text_sm().child(tr("parameter.qr_colors")))
+                        .child(
+                            h_flex()
+                                .gap_3()
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(div().text_xs().child(tr("parameter.qr_foreground")))
+                                        .child(
+                                            div()
+                                                .id("param-qr-foreground")
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::new(foreground_help.clone())
+                                                        .build(window, cx)
+                                                })
+                                                .child(ColorPicker::new(&self.qr_foreground)),
+                                        ),
+                                )
+                                .child(
+                                    v_flex()
+                                        .gap_1()
+                                        .child(div().text_xs().child(tr("parameter.qr_background")))
+                                        .child(
+                                            div()
+                                                .id("param-qr-background")
+                                                .tooltip(move |window, cx| {
+                                                    Tooltip::new(background_help.clone())
+                                                        .build(window, cx)
+                                                })
+                                                .child(ColorPicker::new(&self.qr_background)),
+                                        ),
+                                ),
+                        )
+                        .into_any_element(),
+                );
             }
             Feature::Beautify => self.beautify_controls(&mut controls, cx),
             Feature::Gif => self.gif_controls(&mut controls, cx),
@@ -788,13 +983,20 @@ impl AppShell {
                     ParamAction::BatchFormatNext,
                     cx,
                 ));
-                if params.mode == BatchMode::Compress {
-                    controls.push(self.step_control(
+                if params.format == OutputFormat::Png {
+                    controls.push(self.cycle_control(
+                        "parameter.png_compression",
+                        tr(png_compression_label_key(params.png_compression)),
+                        "param-batch-png-compression",
+                        ParamAction::BatchPngCompressionNext,
+                        cx,
+                    ));
+                } else {
+                    controls.push(self.slider_control(
                         "parameter.quality",
                         format!("{}%", params.quality.get()).into(),
-                        ("param-batch-quality-down", "param-batch-quality-up"),
-                        (ParamAction::BatchQuality(-5), ParamAction::BatchQuality(5)),
-                        cx,
+                        &self.batch_quality_slider,
+                        "param-batch-quality-slider",
                     ));
                 }
             }
@@ -1288,6 +1490,7 @@ impl AppShell {
             .map(|store| store.path().display().to_string().into())
             .unwrap_or_default();
         let status = self.workspace.status_text();
+        let estimate = estimate_text(self.estimate_state);
 
         v_flex()
             .size_full()
@@ -1315,30 +1518,46 @@ impl AppShell {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(format!(
-                        "{}: {}",
-                        t!("settings.export_quality"),
-                        self.config.default_export_quality.get()
-                    ))
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("quality-down")
+                    .when(
+                        self.config.default_export_format == OutputFormat::Png,
+                        |this| {
+                            this.child(tr("settings.png_compression")).child(
+                                Button::new("settings-png-compression")
                                     .outline()
-                                    .label(tr("action.quality_down"))
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.adjust_quality(-5, cx)),
-                                    ),
+                                    .label(tr(png_compression_label_key(
+                                        self.config.default_png_compression,
+                                    )))
+                                    .tooltip(tr("help.png_compression"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cycle_png_compression(cx);
+                                    })),
                             )
+                        },
+                    )
+                    .when(
+                        self.config.default_export_format != OutputFormat::Png,
+                        |this| {
+                            this.child(format!(
+                                "{}: {}",
+                                t!("settings.export_quality"),
+                                self.config.default_export_quality.get()
+                            ))
                             .child(
-                                Button::new("quality-up")
-                                    .outline()
-                                    .label(tr("action.quality_up"))
-                                    .on_click(
-                                        cx.listener(|this, _, _, cx| this.adjust_quality(5, cx)),
-                                    ),
-                            ),
+                                div()
+                                    .id("settings-quality-slider")
+                                    .w(px(360.0))
+                                    .tooltip(|window, cx| {
+                                        Tooltip::new(tr("help.quality")).build(window, cx)
+                                    })
+                                    .child(Slider::new(&self.quality_slider).w_full()),
+                            )
+                        },
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child(estimate),
                     ),
             )
             .child(
@@ -1369,7 +1588,7 @@ impl AppShell {
 fn default_export_settings(config: &AppConfig) -> EncodeSettings {
     match config.default_export_format {
         OutputFormat::Png => EncodeSettings::Png {
-            compression: PngCompression::Default,
+            compression: config.default_png_compression,
         },
         OutputFormat::Jpeg => EncodeSettings::Jpeg {
             quality: config.default_export_quality,
@@ -1377,6 +1596,98 @@ fn default_export_settings(config: &AppConfig) -> EncodeSettings {
         OutputFormat::Webp => EncodeSettings::WebpLossy {
             quality: config.default_export_quality,
         },
+    }
+}
+
+fn initial_paths_feature(path_count: usize) -> Feature {
+    if path_count > 1 {
+        Feature::Batch
+    } else {
+        Feature::Edit
+    }
+}
+
+fn next_png_compression(compression: PngCompression) -> PngCompression {
+    match compression {
+        PngCompression::Fast => PngCompression::Default,
+        PngCompression::Default => PngCompression::Best,
+        PngCompression::Best => PngCompression::Fast,
+    }
+}
+
+fn png_compression_label_key(compression: PngCompression) -> &'static str {
+    match compression {
+        PngCompression::Fast => "option.png_fast",
+        PngCompression::Default => "option.png_default",
+        PngCompression::Best => "option.png_best",
+    }
+}
+
+fn estimate_text(state: EstimateState) -> SharedString {
+    match state {
+        EstimateState::Unavailable => tr("settings.estimated_size_unavailable"),
+        EstimateState::Pending => tr("settings.estimated_size_pending"),
+        EstimateState::Ready(bytes) => format!(
+            "{}: {}",
+            t!("settings.estimated_size"),
+            format_file_size(bytes)
+        )
+        .into(),
+        EstimateState::Failed => tr("settings.estimated_size_failed"),
+    }
+}
+
+fn format_file_size(bytes: usize) -> String {
+    const KIB: f64 = 1024.0;
+    const MIB: f64 = KIB * 1024.0;
+    let bytes = bytes as f64;
+    if bytes < KIB {
+        format!("{bytes:.0} B")
+    } else if bytes < MIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{:.2} MiB", bytes / MIB)
+    }
+}
+
+fn hsla_to_image_rgba(color: Hsla) -> image::Rgba<u8> {
+    let rgba = color.to_rgb();
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    image::Rgba([
+        channel(rgba.r),
+        channel(rgba.g),
+        channel(rgba.b),
+        channel(rgba.a),
+    ])
+}
+
+fn parameter_help_key(label_key: &str) -> &'static str {
+    match label_key {
+        "parameter.aspect_ratio" => "help.aspect_ratio",
+        "parameter.output_width" => "help.output_width",
+        "parameter.output_height" => "help.output_height",
+        "parameter.layout" => "help.layout",
+        "parameter.columns" => "help.columns",
+        "parameter.spacing" => "help.spacing",
+        "parameter.background" => "help.background",
+        "parameter.mode" => "help.batch_mode",
+        "parameter.format" => "help.format",
+        "parameter.quality" => "help.quality",
+        "parameter.png_compression" => "help.png_compression",
+        "parameter.watermark_source" => "help.watermark_source",
+        "parameter.opacity" => "help.opacity",
+        "parameter.position" => "help.position",
+        "parameter.rows" => "help.rows",
+        "parameter.qr_size" => "help.qr_size",
+        "parameter.correction" => "help.correction",
+        "parameter.corner_radius" => "help.corner_radius",
+        "parameter.padding" => "help.padding",
+        "parameter.border" => "help.border",
+        "parameter.shadow" => "help.shadow",
+        "parameter.frame_delay" => "help.frame_delay",
+        "parameter.size_mode" => "help.size_mode",
+        "parameter.playback" => "help.playback",
+        _ => "help.generic",
     }
 }
 
@@ -1474,5 +1785,47 @@ impl Render for AppShell {
                     .child(language),
             )
             .child(v_flex().flex_1().h_full().child(content))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_size_format_uses_readable_binary_units() {
+        assert_eq!(format_file_size(512), "512 B");
+        assert_eq!(format_file_size(1536), "1.5 KiB");
+        assert_eq!(format_file_size(2 * 1024 * 1024), "2.00 MiB");
+    }
+
+    #[test]
+    fn default_png_export_uses_persisted_compression() {
+        let config = AppConfig {
+            default_png_compression: PngCompression::Best,
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            default_export_settings(&config),
+            EncodeSettings::Png {
+                compression: PngCompression::Best,
+            }
+        );
+    }
+
+    #[test]
+    fn color_picker_conversion_preserves_opaque_black_and_white() {
+        assert_eq!(hsla_to_image_rgba(black()), image::Rgba([0, 0, 0, 255]));
+        assert_eq!(
+            hsla_to_image_rgba(white()),
+            image::Rgba([255, 255, 255, 255])
+        );
+    }
+
+    #[test]
+    fn multiple_initial_paths_open_the_batch_workspace() {
+        assert_eq!(initial_paths_feature(1), Feature::Edit);
+        assert_eq!(initial_paths_feature(2), Feature::Batch);
+        assert_eq!(initial_paths_feature(100), Feature::Batch);
     }
 }

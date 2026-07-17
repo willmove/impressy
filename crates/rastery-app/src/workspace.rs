@@ -15,18 +15,29 @@ use rastery_core::batch::{self, BatchOp};
 use rastery_core::beautify::{self, BeautifyParams};
 use rastery_core::collage::{self, CollageLayout, CollageOptions};
 use rastery_core::format::{self, EncodeSettings, OutputFormat, PngCompression};
+use rastery_core::naming;
 use rastery_core::qr::QrOptions;
 use rastery_core::slice::{self, SliceGrid};
 use rastery_core::transform::{self, CropRect, ResizeFilter, Rotation};
 use rastery_core::watermark;
-use rastery_core::{exif, qr};
+use rastery_core::{CoreError, exif, qr};
 use rust_i18n::t;
 
 use crate::feature_params::{WatermarkPlacement, WatermarkSource};
 use crate::text_watermark;
-use crate::ui_message::{ErrorKind, InfoMessage, UiMessage};
+use crate::ui_message::{BatchItemFailure, ErrorKind, InfoMessage, UiMessage};
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif"];
+
+pub(crate) fn is_supported_image_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            IMAGE_EXTS
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
+}
 
 /// 当前功能页可触发的工作区命令。
 #[derive(Debug, Clone)]
@@ -84,6 +95,24 @@ pub(crate) struct Workspace {
     busy: bool,
 }
 
+#[derive(Clone)]
+pub(crate) enum ImageSource {
+    Result(Arc<RgbaImage>),
+    Input {
+        images: Arc<Vec<RgbaImage>>,
+        index: usize,
+    },
+}
+
+impl ImageSource {
+    pub fn image(&self) -> &RgbaImage {
+        match self {
+            Self::Result(image) => image,
+            Self::Input { images, index } => &images[*index],
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct EncodedResult {
     bytes: Vec<u8>,
@@ -112,6 +141,10 @@ impl Workspace {
 
     pub fn has_image(&self) -> bool {
         self.current_dimensions().is_some()
+    }
+
+    pub fn image_for_estimate(&self) -> Option<ImageSource> {
+        self.current_image_source()
     }
 
     pub fn status_text(&self) -> SharedString {
@@ -172,7 +205,7 @@ impl Workspace {
                             bytes: Arc::clone(result),
                         },
                     )
-                } else if let Some(image) = self.current_image() {
+                } else if let Some(image) = self.current_image_source() {
                     let extension = default_export.format().extension();
                     (
                         extension,
@@ -334,15 +367,7 @@ impl Workspace {
         }
         let paths = paths
             .into_iter()
-            .filter(|path| {
-                path.extension()
-                    .and_then(|extension| extension.to_str())
-                    .is_some_and(|extension| {
-                        IMAGE_EXTS
-                            .iter()
-                            .any(|candidate| extension.eq_ignore_ascii_case(candidate))
-                    })
-            })
+            .filter(|path| is_supported_image_path(path))
             .collect::<Vec<_>>();
         if paths.is_empty() {
             self.status = UiMessage::NeedImage;
@@ -366,7 +391,7 @@ impl Workspace {
             WorkspaceJob::CopyBytes {
                 bytes: Arc::clone(result),
             }
-        } else if let Some(image) = self.current_image() {
+        } else if let Some(image) = self.current_image_source() {
             WorkspaceJob::CopyImage { image }
         } else {
             self.status = UiMessage::NeedResult;
@@ -474,23 +499,31 @@ impl Workspace {
         Some(Arc::clone(&self.images))
     }
 
-    fn current_image(&self) -> Option<Arc<RgbaImage>> {
+    fn current_image_source(&self) -> Option<ImageSource> {
         self.result_image
             .as_ref()
-            .map(Arc::clone)
-            .or_else(|| self.images.first().cloned().map(Arc::new))
+            .map(|image| ImageSource::Result(Arc::clone(image)))
+            .or_else(|| {
+                (!self.images.is_empty()).then(|| ImageSource::Input {
+                    images: Arc::clone(&self.images),
+                    index: 0,
+                })
+            })
     }
 
-    fn current_image_or_status(&mut self, missing: UiMessage) -> Option<Arc<RgbaImage>> {
-        let image = self.current_image();
+    fn current_image_or_status(&mut self, missing: UiMessage) -> Option<ImageSource> {
+        let image = self.current_image_source();
         if image.is_none() {
             self.status = missing;
         }
         image
     }
 
-    fn source_image_or_status(&mut self, missing: UiMessage) -> Option<Arc<RgbaImage>> {
-        let image = self.images.first().cloned().map(Arc::new);
+    fn source_image_or_status(&mut self, missing: UiMessage) -> Option<ImageSource> {
+        let image = (!self.images.is_empty()).then(|| ImageSource::Input {
+            images: Arc::clone(&self.images),
+            index: 0,
+        });
         if image.is_none() {
             self.status = missing;
         }
@@ -512,7 +545,7 @@ pub(crate) enum WorkspaceJob {
         path: PathBuf,
     },
     Transform {
-        image: Arc<RgbaImage>,
+        image: ImageSource,
         operation: TransformOperation,
     },
     ReadExif {
@@ -549,7 +582,7 @@ pub(crate) enum WorkspaceJob {
         directory: PathBuf,
     },
     CopyImage {
-        image: Arc<RgbaImage>,
+        image: ImageSource,
     },
     CopyBytes {
         bytes: Arc<EncodedResult>,
@@ -558,7 +591,7 @@ pub(crate) enum WorkspaceJob {
 
 pub(crate) enum SaveSource {
     Image {
-        image: Arc<RgbaImage>,
+        image: ImageSource,
         settings: EncodeSettings,
     },
     Bytes {
@@ -611,11 +644,12 @@ impl WorkspaceJob {
             },
             Self::Save { source, path } => {
                 let bytes = match source {
-                    SaveSource::Image { image, settings } => match format::encode(&image, settings)
-                    {
-                        Ok(bytes) => bytes,
-                        Err(error) => return failure(ErrorKind::Encode, error),
-                    },
+                    SaveSource::Image { image, settings } => {
+                        match format::encode(image.image(), settings) {
+                            Ok(bytes) => bytes,
+                            Err(error) => return failure(ErrorKind::Encode, error),
+                        }
+                    }
                     SaveSource::Bytes { bytes } => bytes.bytes.clone(),
                 };
                 match std::fs::write(&path, bytes) {
@@ -629,12 +663,16 @@ impl WorkspaceJob {
             }
             Self::Transform { image, operation } => {
                 let result = match operation {
-                    TransformOperation::Rotate(rotation) => Ok(transform::rotate(&image, rotation)),
-                    TransformOperation::Crop(rect) => transform::crop(&image, rect),
-                    TransformOperation::Resize { width, height } => {
-                        transform::resize(&image, width, height, ResizeFilter::default())
+                    TransformOperation::Rotate(rotation) => {
+                        Ok(transform::rotate(image.image(), rotation))
                     }
-                    TransformOperation::Beautify(params) => beautify::beautify(&image, &params),
+                    TransformOperation::Crop(rect) => transform::crop(image.image(), rect),
+                    TransformOperation::Resize { width, height } => {
+                        transform::resize(image.image(), width, height, ResizeFilter::default())
+                    }
+                    TransformOperation::Beautify(params) => {
+                        beautify::beautify(image.image(), &params)
+                    }
                 };
                 match result {
                     Ok(image) => WorkspaceOutcome::Image {
@@ -709,7 +747,7 @@ impl WorkspaceJob {
                                 continue;
                             }
                         };
-                        let path = directory.join(format!("tile{}.png", tile.filename_suffix()));
+                        let path = directory.join(naming::tile_filename(&tile));
                         match std::fs::write(&path, bytes) {
                             Ok(()) => successes += 1,
                             Err(error) => log::error!(
@@ -749,14 +787,18 @@ impl WorkspaceJob {
                 report_progress(0, total);
                 let mut successes = 0;
                 let mut failures = 0;
-                let mut failed_names = Vec::new();
+                let mut failed_items = Vec::new();
                 for (index, image) in images.iter().enumerate() {
                     let mut result = batch::process(std::slice::from_ref(image), &operation);
                     let Some((_, output)) = result.successes.pop() else {
                         failures += 1;
-                        failed_names.push(batch_item_name(&names, index));
+                        let name = batch_item_name(&names, index);
                         if let Some(failure) = result.failures.pop() {
+                            failed_items
+                                .push(BatchItemFailure::new(name, core_error_kind(&failure.error)));
                             log::error!("batch item {} failed: {}", index + 1, failure.error);
+                        } else {
+                            failed_items.push(BatchItemFailure::new(name, ErrorKind::Operation));
                         }
                         report_progress(index + 1, total);
                         continue;
@@ -766,17 +808,16 @@ impl WorkspaceJob {
                         .map(String::as_str)
                         .filter(|name| !name.is_empty())
                         .unwrap_or("image");
-                    let path = directory.join(format!(
-                        "{}-rastery-{}.{}",
-                        sanitize_stem(source_stem),
-                        index + 1,
-                        output.format.extension()
-                    ));
+                    let path =
+                        directory.join(naming::batch_filename(source_stem, index, output.format));
                     match std::fs::write(&path, output.bytes) {
                         Ok(()) => successes += 1,
                         Err(error) => {
                             failures += 1;
-                            failed_names.push(batch_item_name(&names, index));
+                            failed_items.push(BatchItemFailure::new(
+                                batch_item_name(&names, index),
+                                classify_io(&error),
+                            ));
                             log::error!(
                                 "batch output write failed for {}: {error}",
                                 path.display()
@@ -792,12 +833,12 @@ impl WorkspaceJob {
                         total,
                     },
                     directory,
-                    info: (!failed_names.is_empty())
-                        .then_some(InfoMessage::BatchFailures(failed_names)),
+                    info: (!failed_items.is_empty())
+                        .then_some(InfoMessage::BatchFailures(failed_items)),
                 }
             }
             Self::CopyImage { image } => match format::encode(
-                &image,
+                image.image(),
                 EncodeSettings::Png {
                     compression: PngCompression::Default,
                 },
@@ -917,30 +958,6 @@ fn prepare_batch_operation(operation: BatchOperation) -> Result<BatchOp, (ErrorK
                 position,
             })
         }
-    }
-}
-
-fn sanitize_stem(stem: &str) -> String {
-    let sanitized = stem
-        .chars()
-        .map(|character| {
-            if character.is_control()
-                || matches!(
-                    character,
-                    '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*'
-                )
-            {
-                '_'
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    let sanitized = sanitized.trim_matches([' ', '.']);
-    if sanitized.is_empty() {
-        "image".to_string()
-    } else {
-        sanitized.to_string()
     }
 }
 
@@ -1064,6 +1081,15 @@ fn classify_io(error: &std::io::Error) -> ErrorKind {
     }
 }
 
+fn core_error_kind(error: &CoreError) -> ErrorKind {
+    match error {
+        CoreError::ImageEncode { .. } | CoreError::Webp { .. } => ErrorKind::Encode,
+        CoreError::InsufficientDiskSpace { .. } => ErrorKind::DiskFull,
+        CoreError::Io { source, .. } => classify_io(source),
+        _ => ErrorKind::Operation,
+    }
+}
+
 fn parent_or_path(path: &Path) -> PathBuf {
     path.parent()
         .map(Path::to_path_buf)
@@ -1128,9 +1154,17 @@ mod tests {
 
     #[test]
     fn filename_sanitization_keeps_outputs_inside_the_selected_directory() {
-        assert_eq!(sanitize_stem("hero:cover?.png"), "hero_cover_.png");
-        assert_eq!(sanitize_stem("..."), "image");
-        assert_eq!(sanitize_stem("封面"), "封面");
+        assert_eq!(naming::sanitize_stem("hero:cover?.png"), "hero_cover_.png");
+        assert_eq!(naming::sanitize_stem("..."), "image");
+        assert_eq!(naming::sanitize_stem("封面"), "封面");
+    }
+
+    #[test]
+    fn supported_image_path_filter_is_case_insensitive() {
+        assert!(is_supported_image_path(Path::new("sample.PNG")));
+        assert!(is_supported_image_path(Path::new("sample.WebP")));
+        assert!(!is_supported_image_path(Path::new("notes.txt")));
+        assert!(!is_supported_image_path(Path::new("no-extension")));
     }
 
     #[test]
@@ -1171,5 +1205,54 @@ mod tests {
         assert!(directory.path().join("hero_cover-rastery-1.png").is_file());
         assert!(directory.path().join("second-rastery-2.png").is_file());
         assert_eq!(progress, vec![(0, 2), (1, 2), (2, 2)]);
+    }
+
+    // Feature: rastery, Property 27: errors leave the application workspace reusable
+    #[test]
+    fn error_outcome_keeps_workspace_reusable() {
+        let mut workspace = Workspace::default();
+        let first = workspace.prepare_paste(vec![1, 2, 3]);
+        assert!(first.is_some());
+        assert!(workspace.is_busy());
+
+        workspace.apply(WorkspaceOutcome::Failed {
+            kind: ErrorKind::CorruptedImage,
+            detail: "test decode failure".to_string(),
+        });
+
+        assert!(!workspace.is_busy());
+        assert_eq!(
+            workspace.status,
+            UiMessage::Error(ErrorKind::CorruptedImage)
+        );
+        assert!(workspace.prepare_paste(vec![4, 5, 6]).is_some());
+    }
+
+    #[test]
+    fn batch_failures_keep_each_item_reason() {
+        let directory = tempfile::tempdir().expect("temporary output directory");
+        let job = WorkspaceJob::Batch {
+            images: Arc::new(vec![RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255]))]),
+            names: Arc::new(vec!["broken-item".to_string()]),
+            operation: BatchOperation::Ready(BatchOp::Resize {
+                width: 0,
+                height: 0,
+                filter: ResizeFilter::Nearest,
+            }),
+            directory: directory.path().to_path_buf(),
+        };
+
+        let outcome = job.run_with_progress(|_, _| {});
+        match outcome {
+            WorkspaceOutcome::Written {
+                info: Some(InfoMessage::BatchFailures(items)),
+                ..
+            } => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].name, "broken-item");
+                assert_eq!(items[0].kind, ErrorKind::Operation);
+            }
+            _ => panic!("batch failure should preserve the item reason"),
+        }
     }
 }

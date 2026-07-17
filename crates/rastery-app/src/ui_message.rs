@@ -22,6 +22,28 @@ pub enum ErrorKind {
     Clipboard,
 }
 
+impl ErrorKind {
+    fn text_key(self) -> &'static str {
+        match self {
+            Self::UnsupportedFormat => "error.unsupported_format",
+            Self::CorruptedImage => "error.corrupted_image",
+            Self::Encode => "error.encode",
+            Self::Operation => "error.operation",
+            Self::Exif => "error.exif",
+            Self::Qr => "error.qr",
+            Self::DiskFull => "error.disk_full",
+            Self::Permission => "error.permission",
+            Self::Io => "error.io",
+            Self::Config => "error.config",
+            Self::Clipboard => "error.clipboard",
+        }
+    }
+
+    fn text(self) -> String {
+        t!(self.text_key()).to_string()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum UiMessage {
     #[default]
@@ -124,20 +146,20 @@ impl UiMessage {
             Self::ClipboardHasNoImage => translated("validation.clipboard_no_image"),
             Self::NeedText => translated("validation.need_text"),
             Self::Busy => translated("validation.busy"),
-            Self::Error(kind) => match kind {
-                ErrorKind::UnsupportedFormat => translated("error.unsupported_format"),
-                ErrorKind::CorruptedImage => translated("error.corrupted_image"),
-                ErrorKind::Encode => translated("error.encode"),
-                ErrorKind::Operation => translated("error.operation"),
-                ErrorKind::Exif => translated("error.exif"),
-                ErrorKind::Qr => translated("error.qr"),
-                ErrorKind::DiskFull => translated("error.disk_full"),
-                ErrorKind::Permission => translated("error.permission"),
-                ErrorKind::Io => translated("error.io"),
-                ErrorKind::Config => translated("error.config"),
-                ErrorKind::Clipboard => translated("error.clipboard"),
-            },
+            Self::Error(kind) => kind.text().into(),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchItemFailure {
+    pub name: String,
+    pub kind: ErrorKind,
+}
+
+impl BatchItemFailure {
+    pub fn new(name: String, kind: ErrorKind) -> Self {
+        Self { name, kind }
     }
 }
 
@@ -156,7 +178,7 @@ pub enum InfoMessage {
     },
     QrContent(String),
     Exif(Option<ExifData>),
-    BatchFailures(Vec<String>),
+    BatchFailures(Vec<BatchItemFailure>),
 }
 
 impl InfoMessage {
@@ -198,8 +220,13 @@ impl InfoMessage {
                 }
                 lines.join("\n").into()
             }
-            Self::BatchFailures(names) => {
-                format!("{}: {}", t!("status.failed_items"), names.join(", ")).into()
+            Self::BatchFailures(items) => {
+                let details = items
+                    .iter()
+                    .map(|item| format!("{}: {}", item.name, item.kind.text()))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!("{}:\n{details}", t!("status.failed_items")).into()
             }
         }
     }

@@ -37,11 +37,14 @@
                 Directory="RasteryProgramMenu"
                 Name="Rastery"
                 Description="Native image toolbox"
-                Icon="RasteryIcon"
                 WorkingDirectory="INSTALLFOLDER"
                 Advertise="yes" />
             </File>
-            <ProgId Id="Rastery.Image" Description="Image file" Icon="RasteryIcon">
+            <ProgId
+              Id="Rastery.Image"
+              Description="Image file"
+              Icon="RasteryExe"
+              IconIndex="0">
               <Extension Id="png" ContentType="image/png">
                 <Verb
                   Id="open_png"

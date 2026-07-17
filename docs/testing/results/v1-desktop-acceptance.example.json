@@ -1,0 +1,73 @@
+{
+  "source_commit": "0000000000000000000000000000000000000000",
+  "resources": {
+    "generated_sha256": "",
+    "exif_photo_sha256": ""
+  },
+  "platforms": {
+    "windows": {
+      "system_version": "",
+      "gpu": "",
+      "display": "",
+      "tester": "",
+      "date": "",
+      "result": "pending",
+      "checks": []
+    },
+    "macos": {
+      "system_version": "",
+      "gpu": "",
+      "display": "",
+      "tester": "",
+      "date": "",
+      "result": "pending",
+      "checks": []
+    },
+    "linux-x11": {
+      "system_version": "",
+      "gpu": "",
+      "display": "",
+      "tester": "",
+      "date": "",
+      "result": "pending",
+      "checks": []
+    },
+    "linux-wayland": {
+      "system_version": "",
+      "gpu": "",
+      "display": "",
+      "tester": "",
+      "date": "",
+      "result": "pending",
+      "checks": []
+    }
+  },
+  "performance": {
+    "windows": {
+      "cold_start_ms": [],
+      "open_50mp_ms": [],
+      "beautify_preview_ms": [],
+      "batch_click_response_ms": [],
+      "batch_progress_hz": []
+    },
+    "macos": {
+      "cold_start_ms": [],
+      "open_50mp_ms": [],
+      "beautify_preview_ms": [],
+      "batch_click_response_ms": [],
+      "batch_progress_hz": []
+    },
+    "linux": {
+      "cold_start_ms": [],
+      "open_50mp_ms": [],
+      "beautify_preview_ms": [],
+      "batch_click_response_ms": [],
+      "batch_progress_hz": []
+    }
+  },
+  "package_checks": {
+    "windows": false,
+    "macos": false,
+    "linux": false
+  }
+}

@@ -19,3 +19,9 @@ lto = "thin"
 opt-level = 3
 panic = "abort"
 strip = "symbols"
+
+# gpui 0.2.2 -> stacksafe 0.1.4 pins proc-macro-error2 2.0.1. Rust's
+# future-incompat lint E0365 requires its proc_macro re-export source to be public.
+# Remove this patch when a synchronized GPUI upgrade no longer needs it.
+[patch.crates-io]
+proc-macro-error2 = { path = "vendor/proc-macro-error2-2.0.1" }

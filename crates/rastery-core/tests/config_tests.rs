@@ -1,26 +1,31 @@
 //! 配置 property tests：Property 3（往返）、23（幂等）、26（无效 TOML 报错）。
 use proptest::prelude::*;
 use rastery_core::config::{self, AppConfig, Language};
-use rastery_core::format::{OutputFormat, Quality};
+use rastery_core::format::{OutputFormat, PngCompression, Quality};
 use std::path::PathBuf;
 
 fn arb_config() -> impl Strategy<Value = AppConfig> {
-    (0u8..3, 1u8..=100u8, any::<bool>(), any::<bool>()).prop_map(|(fmt, q, lang, has_dir)| {
-        AppConfig {
+    (0u8..3, 1u8..=100u8, 0u8..3, any::<bool>(), any::<bool>()).prop_map(
+        |(fmt, q, png, lang, has_dir)| AppConfig {
             default_export_format: match fmt {
                 0 => OutputFormat::Png,
                 1 => OutputFormat::Jpeg,
                 _ => OutputFormat::Webp,
             },
             default_export_quality: Quality::new(q).unwrap_or_default(),
+            default_png_compression: match png {
+                0 => PngCompression::Fast,
+                1 => PngCompression::Default,
+                _ => PngCompression::Best,
+            },
             language: if lang { Language::En } else { Language::ZhCn },
             last_output_dir: if has_dir {
                 Some(PathBuf::from("/tmp/rastery-out"))
             } else {
                 None
             },
-        }
-    })
+        },
+    )
 }
 
 proptest! {
@@ -47,4 +52,15 @@ proptest! {
 fn invalid_toml_returns_error_without_crash() {
     let result = config::from_toml("this is = = not valid toml ==");
     assert!(result.is_err(), "invalid TOML must error, not panic");
+}
+
+#[test]
+fn legacy_config_without_png_compression_uses_default() {
+    let legacy = r#"
+default_export_format = "jpeg"
+default_export_quality = 80
+language = "En"
+"#;
+    let parsed = config::from_toml(legacy).expect("legacy v1 config must remain readable");
+    assert_eq!(parsed.default_png_compression, PngCompression::Default);
 }

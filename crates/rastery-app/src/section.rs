@@ -7,7 +7,7 @@
 //! v2 占位入口挂在「AI 生成与改图」板块下。
 //!
 //! 每个 [`Feature`] 只携带 i18n 键与 v1/v2 标记，**不含任何 UI 与业务逻辑**——
-//! 渲染在 [`crate::pages`]，图像处理在 `rastery-core`。
+//! 渲染与工作区编排在 [`crate::shell`]，图像处理在 `rastery-core`。
 
 /// 主界面四大板块（Requirement 34.1–34.4）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

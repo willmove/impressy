@@ -7,7 +7,7 @@
 //! property test 完全自动验证（Property 3、23、26）。
 
 use crate::error::{CoreError, Result};
-use crate::format::{OutputFormat, Quality};
+use crate::format::{OutputFormat, PngCompression, Quality};
 use std::path::PathBuf;
 
 /// 界面语言（Requirement 35）。
@@ -40,6 +40,11 @@ pub struct AppConfig {
     pub default_export_format: OutputFormat,
     /// 默认导出质量（Requirement 32.5）。
     pub default_export_quality: Quality,
+    /// PNG 压缩档位（Requirement 39.3）。
+    ///
+    /// `serde(default)` 保证升级前的配置文件仍可读取。
+    #[serde(default)]
+    pub default_png_compression: PngCompression,
     /// 界面语言。
     pub language: Language,
     /// 最近使用的输出目录（Requirement 32.10）。
@@ -51,6 +56,7 @@ impl Default for AppConfig {
         Self {
             default_export_format: OutputFormat::Png,
             default_export_quality: Quality::default(),
+            default_png_compression: PngCompression::default(),
             language: Language::default(),
             last_output_dir: None,
         }

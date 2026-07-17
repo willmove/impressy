@@ -36,6 +36,21 @@ settings:
   export_quality:
     en: Default export quality
     zh-CN: 默认导出质量
+  png_compression:
+    en: PNG compression
+    zh-CN: PNG 压缩档位
+  estimated_size:
+    en: Estimated output size
+    zh-CN: 预计输出大小
+  estimated_size_unavailable:
+    en: Open an image to estimate the output size.
+    zh-CN: 打开图片后可估算输出大小。
+  estimated_size_pending:
+    en: Estimating output size…
+    zh-CN: 正在估算输出大小…
+  estimated_size_failed:
+    en: Output size estimate is unavailable for the current image.
+    zh-CN: 当前图片暂时无法估算输出大小。
   output_directory:
     en: Last output directory
     zh-CN: 最近输出目录
@@ -62,12 +77,6 @@ action:
   copy:
     en: Copy result
     zh-CN: 复制结果
-  quality_down:
-    en: Quality -5
-    zh-CN: 质量 -5
-  quality_up:
-    en: Quality +5
-    zh-CN: 质量 +5
   cycle_format:
     en: Change format
     zh-CN: 切换格式
@@ -165,6 +174,9 @@ parameter:
   quality:
     en: Quality
     zh-CN: 质量
+  png_compression:
+    en: PNG compression
+    zh-CN: PNG 压缩档位
   watermark_source:
     en: Watermark type
     zh-CN: 水印类型
@@ -189,9 +201,15 @@ parameter:
   correction:
     en: Error correction
     zh-CN: 纠错级别
-  palette:
-    en: Color palette
-    zh-CN: 配色
+  qr_colors:
+    en: QR colors
+    zh-CN: 二维码颜色
+  qr_foreground:
+    en: Foreground
+    zh-CN: 前景色
+  qr_background:
+    en: Background
+    zh-CN: 背景色
   corner_radius:
     en: Corner radius
     zh-CN: 圆角半径
@@ -235,6 +253,15 @@ option:
   transparent:
     en: Transparent
     zh-CN: 透明
+  png_fast:
+    en: Fast
+    zh-CN: 快速
+  png_default:
+    en: Balanced
+    zh-CN: 均衡
+  png_best:
+    en: Smallest file
+    zh-CN: 最小体积
   convert:
     en: Format conversion
     zh-CN: 格式转换
@@ -271,15 +298,6 @@ option:
   correction_high:
     en: High (30%)
     zh-CN: 高（30%）
-  qr_black_white:
-    en: Black on white
-    zh-CN: 黑白
-  qr_blue:
-    en: Blue
-    zh-CN: 蓝色
-  qr_inverted:
-    en: Inverted
-    zh-CN: 反色
   gradient:
     en: Gradient
     zh-CN: 渐变
@@ -307,6 +325,88 @@ option:
   ping_pong:
     en: Ping-pong
     zh-CN: 乒乓
+help:
+  generic:
+    en: Adjust this option for the current operation.
+    zh-CN: 调整当前操作的该项参数。
+  aspect_ratio:
+    en: Locks the crop frame to one of the five supported aspect ratios.
+    zh-CN: 将裁剪框锁定为五种受支持比例之一。
+  output_width:
+    en: Sets the output width in pixels without changing the source file.
+    zh-CN: 设置输出宽度（像素），不会修改源文件。
+  output_height:
+    en: Sets the output height in pixels without changing the source file.
+    zh-CN: 设置输出高度（像素），不会修改源文件。
+  layout:
+    en: Chooses vertical, horizontal, or grid collage composition.
+    zh-CN: 选择纵向、横向或网格拼图布局。
+  columns:
+    en: Sets the number of columns used by the grid layout.
+    zh-CN: 设置网格布局使用的列数。
+  spacing:
+    en: Sets the gap in pixels between collage images.
+    zh-CN: 设置拼图中图片之间的像素间距。
+  background:
+    en: Chooses the color behind collage cells or beautified content.
+    zh-CN: 选择拼图单元格或美化内容背后的背景。
+  batch_mode:
+    en: Chooses format conversion, compression, resize, or watermark processing.
+    zh-CN: 选择格式转换、压缩、缩放或水印处理。
+  format:
+    en: Selects PNG, JPEG, or WebP for exported images.
+    zh-CN: 选择导出图片使用 PNG、JPEG 或 WebP。
+  quality:
+    en: Sets the exact JPEG or WebP encoder quality from 1 to 100.
+    zh-CN: 设置 JPEG 或 WebP 编码器的精确质量值（1–100）。
+  png_compression:
+    en: Trades PNG encoding speed for a smaller lossless file.
+    zh-CN: 在 PNG 编码速度与无损文件体积之间取舍。
+  watermark_source:
+    en: Chooses a rendered text watermark or an imported image watermark.
+    zh-CN: 选择渲染文字水印或导入图片水印。
+  opacity:
+    en: Controls how transparent the watermark appears.
+    zh-CN: 控制水印显示时的透明程度。
+  position:
+    en: Places the watermark at the bottom right or repeats it as tiles.
+    zh-CN: 将水印放在右下角或平铺重复显示。
+  rows:
+    en: Sets the number of rows produced by image slicing.
+    zh-CN: 设置切图输出的行数。
+  qr_size:
+    en: Sets the minimum QR output size in pixels.
+    zh-CN: 设置二维码输出的最小像素尺寸。
+  correction:
+    en: Higher error correction improves recovery but increases QR density.
+    zh-CN: 更高纠错级别更易恢复，但会增加二维码密度。
+  qr_foreground:
+    en: Selects or enters the color used for QR modules.
+    zh-CN: 选择或输入二维码模块使用的前景色。
+  qr_background:
+    en: Selects or enters the color behind the QR modules.
+    zh-CN: 选择或输入二维码模块背后的背景色。
+  corner_radius:
+    en: Controls the radius of the screenshot's rounded corners.
+    zh-CN: 控制截图圆角的半径。
+  padding:
+    en: Adds space between the screenshot and its outer background.
+    zh-CN: 在截图与外层背景之间增加留白。
+  border:
+    en: Sets the outline width around the screenshot.
+    zh-CN: 设置截图外轮廓的描边宽度。
+  shadow:
+    en: Enables or disables the drop shadow behind the screenshot.
+    zh-CN: 开启或关闭截图后的投影。
+  frame_delay:
+    en: Sets each GIF frame delay from 100 to 800 milliseconds.
+    zh-CN: 设置 GIF 每帧 100–800 毫秒的延迟。
+  size_mode:
+    en: Keeps the first frame size or enables a custom GIF size.
+    zh-CN: 保持首帧尺寸，或启用自定义 GIF 尺寸。
+  playback:
+    en: Chooses forward, reverse, or ping-pong GIF playback.
+    zh-CN: 选择 GIF 正序、倒序或乒乓播放。
 status:
   processing:
     en: Processing in the background…

@@ -28,6 +28,7 @@ tempfile = "3.27.0"
 image = "=0.25.8"
 gif = "0.14.2"
 img-parts = "0.4.0"
+sha2 = "0.10.9"
 
 [[bench]]
 name = "v1_local"

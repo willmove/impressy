@@ -60,6 +60,165 @@ jobs:
           print("verified 21 generated icon assets")
           PY
 
+  windows-installer:
+    name: unsigned Windows MSI schema smoke
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install pinned cargo-wix
+        run: cargo install cargo-wix --version 0.3.9 --locked
+
+      - name: Build release executable and MSI
+        run: |
+          cargo build --release --locked -p rastery-app
+          cargo wix --package rastery-app --no-build
+
+      - name: Verify MSI and executable size
+        shell: pwsh
+        run: |
+          $artifacts = @(
+            Get-Item "target\release\rastery.exe"
+            Get-ChildItem "target\wix" -Filter *.msi | Select-Object -First 1
+          )
+          if ($artifacts.Count -ne 2 -or $null -eq $artifacts[1]) {
+            throw "cargo-wix did not produce the expected MSI."
+          }
+          foreach ($artifact in $artifacts) {
+            if ($artifact.Length -gt 30MB) {
+              throw "$($artifact.Name) exceeds the 30 MiB limit."
+            }
+            Write-Host "$($artifact.Name): $($artifact.Length) bytes"
+          }
+
+      - name: Verify MSI install, associations, shortcut, and uninstall
+        shell: pwsh
+        run: |
+          $msi = (Get-ChildItem "target\wix" -Filter *.msi | Select-Object -First 1).FullName
+          $installLog = Join-Path $env:RUNNER_TEMP "rastery-msi-install.log"
+          $uninstallLog = Join-Path $env:RUNNER_TEMP "rastery-msi-uninstall.log"
+
+          $install = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            "/i", "`"$msi`"", "/qn", "/norestart", "/l*v", "`"$installLog`""
+          )
+          if ($install.ExitCode -ne 0) {
+            Get-Content $installLog
+            throw "MSI installation failed with exit code $($install.ExitCode)."
+          }
+
+          $installedExe = Join-Path $env:ProgramFiles "Rastery\rastery.exe"
+          $shortcut = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\Rastery\Rastery.lnk"
+          if (-not (Test-Path $installedExe)) {
+            throw "MSI did not install rastery.exe."
+          }
+          if (-not (Test-Path $shortcut)) {
+            throw "MSI did not install the Start menu shortcut."
+          }
+          foreach ($extension in "png", "jpg", "jpeg", "webp", "bmp", "gif") {
+            $association = (Get-Item "Registry::HKEY_CLASSES_ROOT\.$extension").GetValue("")
+            if ($association -ne "Rastery.Image") {
+              throw ".$extension is not associated with Rastery.Image."
+            }
+          }
+          $openCommand = (Get-Item "Registry::HKEY_CLASSES_ROOT\Rastery.Image\shell\open_png\command").GetValue("")
+          if ($openCommand -notlike "*rastery.exe*`"%1`"*") {
+            throw "The installed image open command is invalid: $openCommand"
+          }
+
+          $uninstall = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            "/x", "`"$msi`"", "/qn", "/norestart", "/l*v", "`"$uninstallLog`""
+          )
+          if ($uninstall.ExitCode -ne 0) {
+            Get-Content $uninstallLog
+            throw "MSI uninstallation failed with exit code $($uninstall.ExitCode)."
+          }
+          if (Test-Path $installedExe) {
+            throw "MSI uninstall left rastery.exe behind."
+          }
+          if (Test-Path $shortcut) {
+            throw "MSI uninstall left the Start menu shortcut behind."
+          }
+          if (Test-Path "Registry::HKEY_CLASSES_ROOT\Rastery.Image") {
+            throw "MSI uninstall left Rastery.Image registration behind."
+          }
+
+  linux-package:
+    name: Linux DEB install/uninstall smoke
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo build
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux build and package dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            desktop-file-utils libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev
+
+      - name: Build release binary and Debian package
+        shell: bash
+        run: |
+          cargo build --release --locked -p rastery-app
+          desktop-file-validate packaging/linux/app.rastery.Rastery.desktop
+          version=$(cargo metadata --no-deps --format-version 1 | \
+            python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"] == "rastery-app"))')
+          stage="target/deb/rastery_${version}_amd64"
+          mkdir -p "$stage/DEBIAN"
+          install -Dm755 target/release/rastery "$stage/usr/bin/rastery"
+          install -Dm644 packaging/linux/app.rastery.Rastery.desktop \
+            "$stage/usr/share/applications/app.rastery.Rastery.desktop"
+          mkdir -p "$stage/usr/share/icons"
+          cp -R crates/rastery-app/assets/icons/hicolor "$stage/usr/share/icons/"
+          cat > "$stage/DEBIAN/control" <<EOF
+          Package: rastery
+          Version: ${version}
+          Section: graphics
+          Priority: optional
+          Architecture: amd64
+          Depends: libc6, libgcc-s1, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libfontconfig1, libfreetype6
+          Maintainer: Rastery <release@rastery.app>
+          Description: Lightweight local image processing toolbox
+           Native offline image editing, collage, batch processing, slicing,
+           QR, EXIF, beautification, watermark, and GIF tools.
+          EOF
+          dpkg-deb --build --root-owner-group "$stage" "target/rastery_${version}_amd64.deb"
+
+      - name: Verify package contents, install, and uninstall
+        shell: bash
+        run: |
+          package=$(find target -maxdepth 1 -name 'rastery_*_amd64.deb' -print -quit)
+          test -n "$package"
+          dpkg-deb --info "$package"
+          dpkg-deb --contents "$package" | grep -F './usr/bin/rastery'
+          dpkg-deb --contents "$package" | grep -F './usr/share/applications/app.rastery.Rastery.desktop'
+          for artifact in target/release/rastery "$package"; do
+            size=$(wc -c < "$artifact")
+            if [ "$size" -gt $((30 * 1024 * 1024)) ]; then
+              echo "$artifact is $size bytes, above the 30 MB limit" >&2
+              exit 1
+            fi
+          done
+
+          sudo dpkg -i "$package"
+          test -x /usr/bin/rastery
+          test -f /usr/share/applications/app.rastery.Rastery.desktop
+          grep -F 'Exec=rastery %F' /usr/share/applications/app.rastery.Rastery.desktop
+          sudo dpkg --verify rastery
+          sudo dpkg -r rastery
+          test ! -e /usr/bin/rastery
+          test ! -e /usr/share/applications/app.rastery.Rastery.desktop
+
   quality:
     name: check + clippy + test (${{ matrix.os }})
     strategy:

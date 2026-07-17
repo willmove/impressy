@@ -13,6 +13,8 @@ cargo bench -p rastery-core --bench v1_local
 
 随后完成 [`testing/v1-desktop-acceptance.md`](./testing/v1-desktop-acceptance.md) 的真机验收。
 Core 探针只用于发现相对性能回退，不能代替 UI 响应与冷启动测量。
+验收结果必须写入 `testing/results/v1-desktop-acceptance.json` 并通过
+`python scripts/verify_desktop_acceptance.py`；tag 发布会先执行同一门禁。
 
 ## 应用图标
 
@@ -42,10 +44,15 @@ node $generator --check @iconArgs
 - Windows 2022：构建并签名 `rastery.exe`，使用固定版本 `cargo-wix 0.3.9` 生成 MSI，
   再签名和验证 MSI；EXE 内嵌应用图标，快捷方式、文件关联与“应用和功能”使用同一 ICO；
   EXE 或 MSI 超过 30 MiB 时失败。
-- Ubuntu 22.04：生成包含 `usr/bin`、`.desktop` 与 hicolor 图标树的 `tar.gz` 安装布局；
-  二进制超过 30 MiB 时失败。
-- macOS 15 arm64：用固定版本 `cargo-bundle 0.11.0` 生成包含 ICNS 的 `Rastery.app`，再归档为
-  `tar.gz`；bundle 内二进制超过 30 MiB 时失败。
+- Ubuntu 22.04：生成包含运行库依赖声明、`.desktop` 与 hicolor 图标树的 amd64 `.deb`；
+  二进制或安装包超过 30 MiB 时失败。
+- macOS 15 arm64：用固定版本 `cargo-bundle 0.11.0` 生成 `.app`，以 Developer ID 签名，
+  通过 Apple 公证并装订票据，最终生成已签名、公证的 DMG；二进制或 DMG 超过 30 MiB 时失败。
+- `v*` tag 的三平台任务全部通过后，工作流创建 GitHub Release 并上传 MSI、DEB 与 DMG。
+
+普通 CI 还会对未签名 MSI 与 `.deb` 执行安装包冒烟：Windows 校验安装目录、六种文件关联、
+开始菜单快捷方式及卸载清理；Ubuntu 校验 desktop entry、包内容、实际安装和卸载清理。
+这些自动检查用于提前发现打包回归，不能替代下文的签名状态、SmartScreen 或桌面真机验收。
 
 Windows job 需要仓库 Actions secrets：
 
@@ -53,6 +60,12 @@ Windows job 需要仓库 Actions secrets：
 | --- | --- |
 | `WINDOWS_CERTIFICATE_BASE64` | 代码签名 PFX 文件的 Base64 文本 |
 | `WINDOWS_CERTIFICATE_PASSWORD` | PFX 密码 |
+| `MACOS_CERTIFICATE_BASE64` | Developer ID Application `.p12` 的 Base64 文本 |
+| `MACOS_CERTIFICATE_PASSWORD` | `.p12` 密码 |
+| `MACOS_SIGNING_IDENTITY` | `Developer ID Application: ... (TEAMID)` 完整身份 |
+| `APPLE_ID` | 公证使用的 Apple ID |
+| `APPLE_TEAM_ID` | Apple Developer Team ID |
+| `APPLE_APP_PASSWORD` | Apple ID app-specific password |
 
 在 PowerShell 中可用 `[Convert]::ToBase64String([IO.File]::ReadAllBytes("certificate.pfx"))`
 生成第一个值。不要把证书、密码或解码后的 PFX 提交到仓库。
@@ -77,9 +90,8 @@ cargo wix --package rastery-app --no-build
 安装器必须在 Windows 10/11 x64 真机验证安装、文件关联、升级、卸载、SmartScreen 与
 签名状态。没有受信任的代码签名证书时，不得把 MSI 标记为正式发布产物。
 
-## 尚未自动化的正式分发
+## 正式分发边界
 
-macOS job 已产出 `.app`，但尚未接入 Developer ID 签名与 Apple 公证；Linux job 已包含桌面文件
-和图标安装树，但未制作 AppImage、Flatpak 或发行版原生包，且仍依赖目标系统运行库。因此这些
-tar 包仍是构建测试产物，不应称为 portable 正式发布包。平台分发应在运行库和发布渠道确定后
-独立完成，不能用 CI 成功替代平台发布验收。
+当前 Linux 正式产物是 Debian/Ubuntu amd64 的 `.deb`；其他发行版仍需后续增加对应原生包，
+不得把 `.deb` 描述为全发行版通用包。CI 只证明构建、签名、公证和结构检查成功，不能替代
+`testing/v1-desktop-acceptance.md` 中的 Windows、macOS、Linux X11/Wayland 真机安装与运行验收。

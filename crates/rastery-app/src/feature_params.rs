@@ -23,7 +23,7 @@ pub(crate) enum ParamAction {
     CollageBackgroundNext,
     BatchModeNext,
     BatchFormatNext,
-    BatchQuality(i16),
+    BatchPngCompressionNext,
     BatchWidth(i32),
     BatchHeight(i32),
     BatchWatermarkSourceNext,
@@ -33,7 +33,6 @@ pub(crate) enum ParamAction {
     SliceColumns(i32),
     QrSize(i32),
     QrCorrectionNext,
-    QrPaletteNext,
     BeautifyRadius(i32),
     BeautifyPadding(i32),
     BeautifyBackgroundNext,
@@ -261,6 +260,7 @@ pub(crate) struct BatchParams {
     pub mode: BatchMode,
     pub format: OutputFormat,
     pub quality: Quality,
+    pub png_compression: PngCompression,
     pub width: u32,
     pub height: u32,
     pub watermark_source: WatermarkSource,
@@ -274,6 +274,7 @@ impl Default for BatchParams {
             mode: BatchMode::Convert,
             format: OutputFormat::Png,
             quality: Quality::default(),
+            png_compression: PngCompression::default(),
             width: 1024,
             height: 1024,
             watermark_source: WatermarkSource::Text,
@@ -287,11 +288,7 @@ impl BatchParams {
     pub fn encode_settings(self) -> EncodeSettings {
         match self.format {
             OutputFormat::Png => EncodeSettings::Png {
-                compression: match self.quality.get() {
-                    1..=33 => PngCompression::Fast,
-                    34..=66 => PngCompression::Default,
-                    _ => PngCompression::Best,
-                },
+                compression: self.png_compression,
             },
             OutputFormat::Jpeg => EncodeSettings::Jpeg {
                 quality: self.quality,
@@ -328,7 +325,8 @@ impl SliceParams {
 pub(crate) struct QrParams {
     pub size: u32,
     pub correction: ErrorCorrection,
-    pub palette_index: usize,
+    pub foreground: Rgba<u8>,
+    pub background: Rgba<u8>,
 }
 
 impl Default for QrParams {
@@ -336,23 +334,19 @@ impl Default for QrParams {
         Self {
             size: 512,
             correction: ErrorCorrection::Medium,
-            palette_index: 0,
+            foreground: Rgba([0, 0, 0, 255]),
+            background: Rgba([255, 255, 255, 255]),
         }
     }
 }
 
 impl QrParams {
     pub fn options(self) -> QrOptions {
-        let (foreground, background) = match self.palette_index {
-            0 => (Rgba([0, 0, 0, 255]), Rgba([255, 255, 255, 255])),
-            1 => (Rgba([30, 64, 175, 255]), Rgba([239, 246, 255, 255])),
-            _ => (Rgba([255, 255, 255, 255]), Rgba([24, 24, 27, 255])),
-        };
         QrOptions {
             error_correction: self.correction,
             min_size: self.size,
-            foreground,
-            background,
+            foreground: self.foreground,
+            background: self.background,
         }
     }
 
@@ -362,14 +356,6 @@ impl QrParams {
             ErrorCorrection::Medium => "option.correction_medium",
             ErrorCorrection::Quartile => "option.correction_quartile",
             ErrorCorrection::High => "option.correction_high",
-        }
-    }
-
-    pub fn palette_label_key(self) -> &'static str {
-        match self.palette_index {
-            0 => "option.qr_black_white",
-            1 => "option.qr_blue",
-            _ => "option.qr_inverted",
         }
     }
 }
@@ -512,9 +498,8 @@ impl FeatureParams {
                 self.batch.format = next_format(self.batch.format);
                 ParamEffect::None
             }
-            ParamAction::BatchQuality(delta) => {
-                let value = (i16::from(self.batch.quality.get()) + delta).clamp(1, 100) as u8;
-                self.batch.quality = Quality::new(value).expect("quality is clamped to 1..=100");
+            ParamAction::BatchPngCompressionNext => {
+                self.batch.png_compression = next_png_compression(self.batch.png_compression);
                 ParamEffect::None
             }
             ParamAction::BatchWidth(delta) => {
@@ -557,10 +542,6 @@ impl FeatureParams {
                     ErrorCorrection::Quartile => ErrorCorrection::High,
                     ErrorCorrection::High => ErrorCorrection::Low,
                 };
-                ParamEffect::None
-            }
-            ParamAction::QrPaletteNext => {
-                self.qr.palette_index = (self.qr.palette_index + 1) % 3;
                 ParamEffect::None
             }
             ParamAction::BeautifyRadius(delta) => {
@@ -624,6 +605,14 @@ fn next_format(format: OutputFormat) -> OutputFormat {
     }
 }
 
+fn next_png_compression(compression: PngCompression) -> PngCompression {
+    match compression {
+        PngCompression::Fast => PngCompression::Default,
+        PngCompression::Default => PngCompression::Best,
+        PngCompression::Best => PngCompression::Fast,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -663,5 +652,22 @@ mod tests {
         }
         assert_eq!(params.collage.mode, CollageMode::Vertical);
         assert_eq!(params.gif.playback, Playback::Forward);
+
+        for _ in 0..3 {
+            params.apply(ParamAction::BatchPngCompressionNext);
+        }
+        assert_eq!(params.batch.png_compression, PngCompression::Default);
+    }
+
+    #[test]
+    fn qr_options_preserve_independent_custom_colors() {
+        let params = QrParams {
+            foreground: Rgba([12, 34, 56, 255]),
+            background: Rgba([210, 220, 230, 255]),
+            ..QrParams::default()
+        };
+        let options = params.options();
+        assert_eq!(options.foreground, params.foreground);
+        assert_eq!(options.background, params.background);
     }
 }

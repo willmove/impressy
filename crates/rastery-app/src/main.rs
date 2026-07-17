@@ -11,7 +11,7 @@
 // 之前声明，否则子模块里的 `t!` 找不到 `crate::_rust_i18n_t`。
 rust_i18n::i18n!("locales");
 
-// 裁剪交互已实现，但图片编辑页尚未接入；保留源码不影响 release 二进制体积。
+// 裁剪交互由图片编辑页直接接入，使用自定义 Element 完成三阶段绘制。
 mod config_store;
 mod crop_frame;
 mod feature_params;
@@ -54,10 +54,11 @@ fn main() {
         }
     };
 
-    let initial_path = std::env::args_os()
-        .nth(1)
+    let initial_paths = std::env::args_os()
+        .skip(1)
         .map(std::path::PathBuf::from)
-        .filter(|path| path.is_file());
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
     let app = Application::new();
     app.run(move |cx: &mut App| {
         // 必须在使用任何 gpui-component 功能之前调用。
@@ -82,8 +83,8 @@ fn main() {
                 let view = cx.new(|cx| {
                     AppShell::new(loaded.config, config_store, loaded.warning, window, cx)
                 });
-                if let Some(path) = initial_path {
-                    view.update(cx, |shell, cx| shell.open_initial_path(path, cx));
+                if !initial_paths.is_empty() {
+                    view.update(cx, |shell, cx| shell.open_initial_paths(initial_paths, cx));
                 }
                 // 窗口第一层必须是 Root（gpui-component 的弹层 / 通知等依赖它）。
                 cx.new(|cx| Root::new(view, window, cx))

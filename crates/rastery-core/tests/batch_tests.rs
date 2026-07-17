@@ -1,5 +1,5 @@
 //! 批处理 property tests：Property 8（数量守恒）、9（顺序）、10（格式转换保尺寸）、
-//! 12（缩放保数量）、13（水印保数量）。
+//! 11（压缩保尺寸）、12（缩放保数量）、13（水印保数量）。
 mod common;
 
 use common::arb_image;
@@ -32,6 +32,23 @@ proptest! {
             prop_assert_eq!(*idx, k);
             let d = format::decode(&out.bytes).expect("decode output");
             prop_assert_eq!(d.dimensions(), imgs[k].dimensions());
+        }
+    }
+
+    // Feature: rastery, Property 11: compression preserves dimensions
+    #[test]
+    fn prop_batch_compression_preserves_dimensions(imgs in arb_images(), quality in 1u8..=100) {
+        let op = BatchOp::Convert {
+            format: OutputFormat::Jpeg,
+            settings: EncodeSettings::Jpeg {
+                quality: Quality::new(quality).expect("generated quality is valid"),
+            },
+        };
+        let res = batch::process(&imgs, &op);
+        prop_assert!(res.failures.is_empty(), "valid images must not fail");
+        for (index, output) in &res.successes {
+            let decoded = format::decode(&output.bytes).expect("decode compressed output");
+            prop_assert_eq!(decoded.dimensions(), imgs[*index].dimensions());
         }
     }
 

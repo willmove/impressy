@@ -1,5 +1,9 @@
 # Rust build artifacts
 /target/
 
+# Python verification-script caches
+__pycache__/
+*.py[cod]
+
 # Local tool settings
 /.claude/settings.local.json*

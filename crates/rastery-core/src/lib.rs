@@ -21,6 +21,7 @@
 //! | [`watermark`] | 水印 | FR-03, Req 8 |
 //! | [`batch`] | 批量处理 | FR-03, Req 8/54 |
 //! | [`config`] | TOML 配置 | Req 53/56 |
+//! | [`naming`] | 批量与切图命名 | Req 41 |
 //!
 //! ## 统一约定
 //!
@@ -38,6 +39,7 @@ pub mod config;
 pub mod error;
 pub mod exif;
 pub mod format;
+pub mod naming;
 pub mod qr;
 pub mod slice;
 pub mod transform;
