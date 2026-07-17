@@ -18,7 +18,9 @@ mod crop_frame;
  mod shell;
  mod workspace;
 
-use gpui::{App, AppContext, Application, Bounds, WindowBounds, WindowOptions, px, size};
+use gpui::{
+    App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
+};
 use gpui_component::Root;
 
 use shell::AppShell;
@@ -35,6 +37,13 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
+                // 窗口标题（任务栏 / 标题栏显示的应用名）。
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Rastery".into()),
+                    ..Default::default()
+                }),
+                // Linux（Wayland）下的应用标识：影响 dock / 任务栏归类与 .desktop 匹配。
+                app_id: Some("rastery".into()),
                 ..Default::default()
             },
             |window, cx| {
