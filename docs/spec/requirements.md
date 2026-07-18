@@ -13,7 +13,7 @@
 
 ### 是什么
 
-Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处理工具，基于 Rust + GPUI 框架构建，围绕四大**板块**组织：基础图片处理、AI 生成与改图、行业定制 AI 工具、创作输出。系统采用本地优先架构，基础功能完全离线可用，AI 功能通过用户自备 API Key（BYOK）实现，确保隐私安全与零成本运营。屏幕截图、全局热键与屏幕取色已按 [ADR-0003](../adr/0003-remove-screen-capture.md) 从当前范围剥离。
+Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处理工具，基于 Rust + GPUI 框架构建，围绕四大**板块**组织：基础图片处理、AI 生成与改图、行业定制 AI 工具、创作输出。系统采用本地优先架构，本地功能完全离线可用，AI 功能通过用户自备 API Key（BYOK）实现，确保隐私安全与零成本运营。屏幕截图、全局热键与屏幕取色已按 [ADR-0003](../adr/0003-remove-screen-capture.md) 从当前范围剥离。
 
 ### v1 范围（重要）
 
@@ -26,6 +26,27 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 注意「本地功能 / AI 功能」与「板块」是**正交的两根轴**：v1 交付的不是「四大板块的前两个」，而是横切所有板块的本地功能集合。因此 v1 的主界面上，「AI 生成与改图」与「行业定制 AI 工具」两个板块是空的（与三个视频功能一样做「开发中」占位）。详见 [CONTEXT.md](../../CONTEXT.md) 与 [ADR-0001](../adr/0001-v1-scope-local-only.md)。
 
 **建设顺序**：先 `rastery-core` 到全绿，GPUI 骨架推后（与已冻结 spec 的 M1→M7 顺序相反）。原因见 [ADR-0002](../adr/0002-core-before-ui.md)。
+
+### v1 当前验收状态（2026-07-18）
+
+本节区分四种经常被混用的状态。后续进度说明必须使用这些词，不得把「代码已写」表述为「需求已验收」：
+
+- **已实现**：对应代码路径已经存在并接入应用。
+- **自动验证通过**：对应行为可由 headless 测试、编译器或 CI 证明，并已通过质量门禁。
+- **待真机验收**：代码已实现且能类型检查，但渲染、交互手感、系统集成或性能只能在桌面真机上判断。
+- **可发布**：自动验证与 [`v1-desktop-acceptance.md`](../testing/v1-desktop-acceptance.md) 全部通过，正式结果文件 `docs/testing/results/v1-desktop-acceptance.json` 存在且通过验证器，安装包签名 / 公证及平台专项均通过。
+
+截至 2026-07-18，基线代码为 `main@9eeff5f`：
+
+| 范围 | 当前状态 | 证据 / 剩余门禁 |
+| --- | --- | --- |
+| `rastery-core` 本地引擎 | 自动验证通过 | 本地质量门禁全绿；Requirement 52–57 的 v1 property 覆盖已落地 |
+| `rastery-app` 八个 v1 功能页 | 已实现，待真机验收 | 工作区、后台任务、i18n、拖放 / 剪贴板、自定义裁剪 Element 已接入；必须按桌面验收清单验证 |
+| 三平台编译与安装包结构 | 自动验证通过 | `main@9eeff5f` 的 Windows、macOS、Linux 质量任务及 Windows MSI、Linux DEB 冒烟均通过；签名、公证与真机安装仍需正式发布流程 |
+| 性能指标 | 待真机验收 | 冷启动、50MP 预览、美化预览、100 张批处理响应与进度频率均不能由 headless 测试替代 |
+| v1 发布状态 | **不可标记为可发布** | 正式桌面验收结果文件尚未提交；缺失或过期会被发布工作流阻止 |
+
+这张表是状态快照，不替代下方 Acceptance Criteria。任何代码变更若影响 `Cargo.toml`、`Cargo.lock`、`crates/`、`packaging/`、`vendor/` 或 `.github/`，都必须让既有真机验收证据失效并重新验收。
 
 ## Glossary
 
@@ -62,9 +83,9 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 3. THE Rastery_System SHALL run on Linux using appropriate GPUI backend
 4. THE Rastery_System SHALL use DirectX 11 for rendering on Windows platform
 5. THE Rastery_System SHALL use DirectWrite for text shaping on Windows platform
-6. THE Core_Engine SHALL execute all basic image processing functions without network connectivity
+6. THE Core_Engine SHALL execute all v1 local image processing functions without network connectivity
 7. WHEN the system starts from a cold state, THE Rastery_System SHALL display the main interface within 1500 milliseconds
-8. THE Rastery_System SHALL have an installation package size not exceeding 30 megabytes
+8. EACH platform release artifact of THE Rastery_System SHALL NOT exceed 30 MiB
 
 ### [v1] Requirement 2: 隐私与安全
 
@@ -99,6 +120,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 7. WHEN processing 100 images in batch mode, THE UI_Layer SHALL remain responsive to user interactions
 8. THE UI_Layer SHALL update only rendering and state on the main thread
 9. THE Batch_Queue SHALL execute batch processing tasks asynchronously
+10. WHEN a native file or directory picker is opened, THE UI_Layer SHALL release mutable entity borrows before the platform dialog starts its event loop; on Windows it SHALL NOT use a synchronous nested dialog from inside a GPUI entity listener
 
 ### [v2] Requirement 4: AI 服务商管理
 
@@ -393,7 +415,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 #### Acceptance Criteria
 
 1. WHEN a user uploads a photo with clear facial features, THE UI_Layer SHALL accept the image
-2. THE UI_Layer SHALL provide 6 to 12 emotion Archive_Mode options for selection
+2. THE UI_Layer SHALL provide 6 to 12 emotion Tier（档位）choices for selection
 3. THE UI_Layer SHALL include laughing emotion as a selectable option
 4. THE UI_Layer SHALL include shocked emotion as a selectable option
 5. THE UI_Layer SHALL include eye-rolling emotion as a selectable option
@@ -537,9 +559,9 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 4. THE Rastery_System SHALL store default export format in configuration
 5. THE Rastery_System SHALL store default export quality in configuration
 6. 〔v2〕THE Rastery_System SHALL NOT store API_Key in the configuration file
-7. THE Rastery_System SHALL store generation history records locally only
-8. THE Rastery_System SHALL store recent output directory paths locally only
-9. THE UI_Layer SHALL provide a clear all history function
+7. 〔v2〕THE Rastery_System SHALL store generation history records locally only
+8. THE Rastery_System SHALL store the last output directory path locally only
+9. 〔v2〕THE UI_Layer SHALL provide a clear all history function
 
 
 ### [v2] Requirement 33: 提示词模板管理
@@ -556,7 +578,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 ### [v1] Requirement 34: 主界面导航
 
-**User Story:** 作为用户,我希望通过清晰的界面导航访问所有功能模块,包括开发中的功能预留。
+**User Story:** 作为用户,我希望通过清晰的界面导航访问所有功能,包括开发中的功能预留。
 
 #### Acceptance Criteria
 
@@ -570,6 +592,8 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 8. WHEN a user clicks on video watermark removal entry, THE UI_Layer SHALL display an under development placeholder
 9. WHEN a user clicks on video subtitle removal entry, THE UI_Layer SHALL display an under development placeholder
 10. WHEN a user clicks on video clarity enhancement entry, THE UI_Layer SHALL display an under development placeholder
+11. DURING v1, WHEN a user opens the AI generation and editing section, THE UI_Layer SHALL display an under development placeholder and SHALL NOT request network access or an API_Key
+12. DURING v1, WHEN a user opens the industry-specific AI tools section, THE UI_Layer SHALL display an under development placeholder and SHALL NOT request network access or an API_Key
 
 
 ### [v1] Requirement 35: 多语言支持
@@ -581,6 +605,8 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 1. THE UI_Layer SHALL support Simplified Chinese language
 2. THE UI_Layer SHALL support English language
 3. THE UI_Layer SHALL allow the user to switch between supported languages in settings
+4. WHEN the user switches language, THE UI_Layer and gpui-component SHALL update existing visible text without restarting the application
+5. ALL user-visible v1 UI text SHALL use i18n keys with both `en` and `zh-CN` values; user-visible strings SHALL NOT be hard-coded in Rust UI code
 
 ### [v1] Requirement 36: 错误处理与用户反馈
 
@@ -728,12 +754,16 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL provide a Windows installer package
-2. THE Windows installer package SHALL be digitally signed for security verification
-3. THE installation package SHALL contain a single self-contained binary executable
-4. THE installation package size SHALL NOT exceed 30 megabytes
-5. THE installer SHALL create application shortcuts in the Start Menu
-6. THE installer SHALL register file type associations for common image formats
+1. THE Rastery_System SHALL provide a Windows x64 MSI installer
+2. THE Windows executable and MSI installer SHALL be digitally signed for security verification
+3. THE Rastery_System SHALL provide a signed and notarized macOS application inside a DMG
+4. THE Rastery_System SHALL provide a Debian / Ubuntu amd64 DEB package with a desktop entry, application icons, and explicit native runtime dependencies
+5. THE Rastery_System SHALL ship a native compiled executable without a browser engine or bundled web runtime
+6. EACH executable and installer artifact SHALL NOT exceed 30 MiB
+7. THE Windows installer SHALL create an application shortcut in the Start Menu
+8. THE Windows installer SHALL register file type associations for PNG, JPEG, WebP, BMP, and GIF
+9. THE CI pipeline SHALL smoke-test installation structure and uninstall cleanup for every package format that its runner can install non-interactively
+10. THE release workflow SHALL reject a release when the committed desktop acceptance evidence is missing, stale, or fails any required platform, feature, performance, signing, or package check
 
 ### [v1] Requirement 47: 自定义 UI 元素
 
@@ -791,7 +821,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 8. THE Core_Engine SHALL execute EXIF cleaning without requiring network connectivity
 9. THE Core_Engine SHALL execute screenshot beautification without requiring network connectivity
 10. THE Core_Engine SHALL execute GIF creation without requiring network connectivity
-11. WHEN network connectivity is unavailable, THE UI_Layer SHALL display AI-dependent features as unavailable with clear indication
+11. 〔v2〕WHEN network connectivity is unavailable, THE UI_Layer SHALL display AI-dependent features as unavailable with clear indication
 12. WHEN network connectivity is unavailable, THE UI_Layer SHALL allow full access to all Core_Engine features
 
 
@@ -851,7 +881,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 3. WHEN a collage is composed in grid mode with N images, THE output collage SHALL contain exactly N visible image regions
 4. WHEN an image is sliced into M rows and N columns, THE Core_Engine SHALL produce exactly M × N output tiles
 5. WHEN EXIF data is cleaned from an image, THE output image pixel data SHALL remain identical to the input pixel data
-6. WHEN screenshot beautification applies rounded corners with radius R, THE output image dimensions SHALL increase by at most 2R pixels per dimension when padding is applied
+6. WHEN screenshot beautification applies inner padding P, THE output image width and height SHALL each increase by exactly 2P pixels; corner radius SHALL affect the alpha mask rather than the outer dimensions
 
 
 ### [v1] Requirement 56: 幂等性属性验证
@@ -928,9 +958,9 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 - **Feature Name**: rastery
 - **Spec Type**: Feature
-- **Document Version**: 1.0
+- **Document Version**: 1.1
 - **Total Requirements**: 60（v1: 35 / v2: 21 / removed: 4，见各条标题、ADR-0001 与 ADR-0003）
-- **Total Acceptance Criteria**: 433
-- **Last Updated**: 2026-07-17
+- **Total Acceptance Criteria**: 442
+- **Last Updated**: 2026-07-18
 - **Language**: 简体中文 + English
 - **Status**: 真相源（Source of Truth）。范围与顺序决策见 docs/adr/。

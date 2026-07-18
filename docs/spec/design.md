@@ -3,27 +3,40 @@
 > **本文档与 [`requirements.md`](./requirements.md) 是本项目的唯一真相源。** 领域词汇见 [`CONTEXT.md`](../../CONTEXT.md)，范围与顺序决策见 [`docs/adr/`](../adr/)。
 > 早期的 `rastery-spec.md` 已冻结至 [`archive/rastery-spec-v0.3.md`](./archive/rastery-spec-v0.3.md)，**不要据此写代码**。
 >
-> **v1 范围**：只做本地功能。`## Implementation Approach` 的每个 Phase / 混合 Sprint 都标了 `[v1]` / `[v2]`。**Phase 4（AI Integration）整体跳过**，`rastery-ai` 与 `rastery-presets` 两个 crate v1 不建。理由见 [ADR-0001](../adr/0001-v1-scope-local-only.md)。
+> **v1 范围**：只做本地功能。`## Implementation Approach` 以 `[v1]` / `[v2]` Stage 明确区分当前验收工作与后续规划；`rastery-ai` 与 `rastery-presets` 两个 crate v1 不建。理由见 [ADR-0001](../adr/0001-v1-scope-local-only.md)。
 >
 > **截图能力已剥离**：`rastery-capture`、屏幕截图、全局热键、屏幕取色、覆盖层与截图标注不属于当前范围。截图美化仍是导入现有图片后的纯处理能力。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
 >
-> **本文档的分期是对的，请照它执行。** 已冻结的 spec §8 主张 M1 骨架 → M2 core（UI 优先），与本文档 Phase 1–2（core）→ Phase 5（UI）相反。经 [ADR-0002](../adr/0002-core-before-ui.md) 裁定：**core 优先，本文档胜出**。原因是主开发机为 headless 云 VM，跑不了 GPUI，core 能在其上全自动收敛而 UI 每次迭代都需人工介入。
+> **建设顺序已经按 ADR-0002 执行。** 已冻结的 spec §8 曾主张 M1 骨架 → M2 core（UI 优先）；实际项目先完成 `rastery-core` 的可自动验证闭环，再接入 GPUI UI。当前不再按旧里程碑推进，而按「自动验证 → 桌面真机验收 → 发布」收敛。
 
 ## Overview
 
-Rastery is a cross-platform desktop image processing application built with Rust and GPUI framework, targeting Windows, macOS, and Linux. The system focuses on lightweight local image processing and is organized around four major functional modules:
+Rastery is a cross-platform desktop image processing application built with Rust and GPUI framework, targeting Windows, macOS, and Linux. The system focuses on lightweight local image processing and is organized around four product **板块**:
 
 1. **Basic Image Processing**: Offline-first operations including editing, collage, batch processing, slicing, QR codes, EXIF management, and screenshot beautification
 2. **AI Generation and Editing**: Text-to-image, image-to-image, and 12 preset AI editing scenarios
 3. **Industry-Specific AI Tools**: 13 specialized tools including photo restoration, ID photos, avatars, meme generation, portrait photography, model try-on, product recoloring, promotional posters, platform adaptation, cover images, article illustrations, food photography, and interior design preview
 4. **Creative Output**: GIF creation and poster design with local text rendering
 
+### Current Implementation Baseline (2026-07-18)
+
+The repository baseline was reviewed at `main@9eeff5f`. At review time, the working tree also contained an in-progress asynchronous image-picker regression fix in `shell.rs` / `workspace.rs`; the spec update does not claim that uncommitted work as part of `main`. The baseline contains the complete v1 code paths, but it is **not a release-ready declaration**:
+
+| Layer | Baseline state | Verification boundary |
+| --- | --- | --- |
+| `rastery-core` | Implemented as pure module functions over `image::RgbaImage`; no UI, network, or global state | Fully headless-testable; local quality gate and property tests pass |
+| `rastery-app` | Four-section GPUI shell, eight v1 pages, background jobs, config, i18n, drag/drop, clipboard, file export, and crop Element are wired | Type checks and headless state tests pass; rendering, interaction, file-dialog behavior, desktop integration, and performance require real machines |
+| Packaging | Windows MSI, Linux DEB, and macOS DMG pipelines are defined; Windows/Linux package smoke tests exist in CI | Signing, notarization, SmartScreen/Gatekeeper behavior, and real desktop installation remain release evidence |
+| Acceptance evidence | Deterministic test-asset generator and JSON verifier exist | `docs/testing/results/v1-desktop-acceptance.json` is not yet committed, so v1 is not release-ready |
+
+Status words used here have the meanings defined in `requirements.md` §“v1 当前验收状态”. A future change must not promote a UI item from “implemented” to “verified” using compilation alone.
+
 ### Core Design Principles
 
-- **Local-First Architecture**: All basic features work offline; AI features use BYOK (Bring Your Own Key) model
-- **Privacy by Design**: No telemetry, no embedded API keys, credentials stored in OS-native secure storage
+- **Local-First Architecture**: All v1 本地功能 work offline; AI 功能 use BYOK (Bring Your Own Key) in v2
+- **Privacy by Design**: No telemetry or embedded API keys; 〔v2〕credentials are stored in OS-native secure storage
 - **Async-First Processing**: Heavy operations run in background executors to maintain UI responsiveness
-- **Provider Abstraction**: Unified AI provider interface supporting multiple services (Seedream, Google Nano Banana, OpenAI GPT-Image). Agnes is deferred — the trait reserves extensibility only.
+- **Provider Abstraction**: 〔v2〕Unified AI provider interface supporting multiple services (Seedream, Google Nano Banana, OpenAI GPT-Image). Agnes is deferred — the trait reserves extensibility only.
 - **Multi-Crate Workspace**: Modular architecture separating concerns (app and core in v1; ai and presets planned for v2)
 
 ### Technology Stack
@@ -32,9 +45,9 @@ Rastery is a cross-platform desktop image processing application built with Rust
 - **Language**: Rust with strict quality gates (cargo check, clippy deny, all tests pass)
 - **Rendering**: DirectX 11 + DirectWrite (Windows), Metal (macOS), GPUI backend (Linux)
 - **Image Processing**: Rust image processing libraries (offline)
-- **Credential Storage**: Windows Credential Manager, macOS Keychain
+- **Credential Storage**: 〔v2〕Windows Credential Manager, macOS Keychain
 - **Configuration**: TOML format in standard app data directory
-- **Build**: Cargo workspace with 2 crates in v1; 4 planned when v2 is implemented
+- **Build**: Cargo workspace with exactly 2 crates in v1; `rastery-ai` and `rastery-presets` are v2 plans, not current packages
 
 ## Architecture
 
@@ -42,70 +55,64 @@ Rastery is a cross-platform desktop image processing application built with Rust
 
 ```mermaid
 graph TB
-    subgraph "UI Layer (GPUI)"
-        A[Main App Window]
-        B[Navigation]
-        C[Canvas Elements]
-        D[Settings Panel]
+    subgraph "v1 current workspace"
+        A["GPUI AppShell<br/>navigation + pages + settings"]
+        B["Workspace<br/>main-thread state"]
+        C["WorkspaceJob<br/>Send + background execution"]
+        D["rastery-core<br/>pure image modules"]
+        E["ConfigStore<br/>TOML in platform config dir"]
+        F["File system / clipboard / native dialogs"]
     end
-    
-    subgraph "Application Layer (rastery-app)"
-        E[App State Manager]
-        F[Background Executor Pool]
-        G[Config Manager]
+
+    subgraph "v2 planned — crates do not exist in v1"
+        G["rastery-ai<br/>Provider abstraction"]
+        H["rastery-presets<br/>locked prompt templates"]
+        I["OS credential store + AI providers"]
     end
-    
-    subgraph "Core Services"
-        H[Core Engine<br/>rastery-core]
-        I[AI Engine<br/>rastery-ai]
-        K[Preset Library<br/>rastery-presets]
-    end
-    
-    subgraph "External Systems"
-        L[OS Credential Store]
-        M[AI Providers]
-        N[File System]
-    end
-    
+
+    A --> B
+    B --> C
+    C --> D
+    D --> C
+    C --> B
     A --> E
-    B --> E
-    C --> E
-    D --> G
-    E --> F
-    E --> H
-    E --> I
-    E --> K
-    G --> L
-    I --> M
-    H --> N
-    
-    style H fill:#e1f5ff
-    style I fill:#fff4e1
-    style K fill:#f3e5f5
+    A --> F
+    G -. "v2" .-> I
+    H -. "v2" .-> G
+
+    style D fill:#e1f5ff
+    style G fill:#fff4e1,stroke-dasharray: 5 5
+    style H fill:#f3e5f5,stroke-dasharray: 5 5
 ```
 
 ### Crate Organization
 
-The v1 system is organized as a Cargo workspace with two crates. Two additional crates are planned for v2:
+The v1 system is organized as a Cargo workspace with **exactly two crates**:
 
 #### 1. **rastery-app** (Main Application)
-- GPUI application initialization and window management
-- Global state management and app lifecycle
-- UI composition and routing between feature modules
-- Integration of all service crates
+- GPUI application initialization, window identity, and four-section navigation
+- `AppShell` orchestration, feature parameters, preview state, and settings
+- `Workspace` command validation and `WorkspaceJob` / `WorkspaceOutcome` lifecycle
+- Background execution for file I/O, decoding, encoding, and image processing
+- Runtime Chinese / English switching through `rust-i18n` and `gpui_component::set_locale`
+- Platform config persistence, drag/drop, clipboard, path prompts, and output-directory reveal
+- Custom three-phase crop selection Element
 
 #### 2. **rastery-core** (Image Processing Engine)
-- Pure Rust image processing operations
-- Format encoding/decoding (PNG, JPEG, WebP, GIF, BMP)
+- Pure Rust module functions over `image::RgbaImage`
+- Content-sniffed PNG/JPEG/WebP/GIF/BMP decoding and PNG/JPEG/WebP still-image encoding
 - Transformations: crop, resize, rotate, collage, slice
 - QR code generation and recognition
 - EXIF parsing and cleaning
 - Screenshot beautification effects
 - GIF composition
 - Watermarking
-- **Key Trait**: `ImageProcessor` for processing operations
+- Config serialization and deterministic output naming
+- **No façade trait**: the public API is the set of typed module functions; async scheduling belongs to `rastery-app`
 
-#### 3. **rastery-ai** (AI Service Abstraction)
+The following packages are v2 plans and MUST NOT be created during v1:
+
+#### 3. **rastery-ai** (v2 planned AI Service Abstraction)
 - Provider trait abstraction
 - Unified request/response models
 - HTTP client with retry logic
@@ -114,7 +121,7 @@ The v1 system is organized as a Cargo workspace with two crates. Two additional 
 - Provider implementations: Seedream, Google Nano Banana, OpenAI GPT-Image（Agnes 暂不实现）
 - **Key Trait**: `Provider` with capability declarations
 
-#### 4. **rastery-presets** (Industry Tool Templates, v2)
+#### 4. **rastery-presets** (v2 planned Industry Tool Templates)
 - Locked prompt template storage
 - Compile-time embedding of prompts into binary
 - Template organization by industry tool category
@@ -126,671 +133,199 @@ The v1 system is organized as a Cargo workspace with two crates. Two additional 
 ```mermaid
 sequenceDiagram
     participant U as UI Thread
-    participant M as Main State
+    participant M as AppShell / Workspace
     participant B as Background Executor
     participant C as Core Engine
-    participant A as AI Engine
-    
-    U->>M: User Action (e.g., Batch Process)
-    M->>B: Spawn Background Task
-    B->>C: Process Images
-    C-->>B: Progress Updates
-    B-->>M: Update State
-    M-->>U: Re-render UI
-    U->>U: Remains Responsive
-    
-    Note over U,A: For AI Operations
-    U->>M: AI Generation Request
-    M->>B: Spawn Background Task
-    B->>A: HTTP Request to Provider
-    A-->>B: Response/Error
-    B-->>M: Update State
-    M-->>U: Display Results
+
+    U->>M: User action
+    M->>M: Validate and build WorkspaceJob
+    M->>B: Spawn Send task
+    B->>C: Decode / transform / encode / save
+    C-->>B: Result or CoreError
+    B-->>M: Progress and WorkspaceOutcome channel
+    M->>M: Apply state on main thread
+    M-->>U: Notify and re-render
+    U->>U: Remains responsive
 ```
 
 ### Data Flow Patterns
 
 #### Pattern 1: Offline Image Processing
 ```
-User Input → UI Layer → App State → Background Executor → Core Engine → File System
-                                                               ↓
-                                          Progress Callback ← State Update ← UI Refresh
+User Input → AppShell → Workspace::prepare → WorkspaceJob → Background Executor
+                                                           ↓
+UI refresh ← Workspace::apply ← WorkspaceOutcome / progress ← rastery-core + file system
 ```
 
-#### Pattern 2: AI Generation
+#### Pattern 2: Native Path Prompt
 ```
-User Input + API Key → UI Layer → App State → Background Executor → AI Engine → Provider API
-                                                                          ↓
-                          Credential Store ← Config Manager        Error Mapping
-                                                                          ↓
-                          UI Refresh ← State Update ← Progress/Result Callback
+GPUI listener → request asynchronous platform prompt → listener returns and entity borrow ends
+             → await selected paths → update AppShell → prepare WorkspaceJob
 ```
+
+On Windows, a synchronous native dialog can start a nested message loop and re-enter GPUI while the entity is already mutably borrowed. Therefore all file and directory pickers MUST either use GPUI's asynchronous prompt API or be scheduled only after the listener borrow has been released. This is an architectural constraint, not an optional implementation detail.
 
 ## Components and Interfaces
 
-### Core Engine Module (rastery-core)
+### Core Engine Contract (`rastery-core`)
 
-#### ImageProcessor Trait
-```rust
-pub trait ImageProcessor {
-    fn crop(&self, image: &DynamicImage, region: CropRegion) -> Result<DynamicImage>;
-    fn resize(&self, image: &DynamicImage, dimensions: (u32, u32)) -> Result<DynamicImage>;
-    fn encode(&self, image: &DynamicImage, format: OutputFormat, quality: Quality) -> Result<Vec<u8>>;
-    fn decode(&self, data: &[u8]) -> Result<DynamicImage>;
-    fn apply_watermark(&self, image: &DynamicImage, watermark: Watermark) -> Result<DynamicImage>;
-    fn beautify(&self, image: &DynamicImage, params: BeautifyParams) -> Result<DynamicImage>;
-}
-```
+The core contract is a typed module API over `image::RgbaImage`. There is no `ImageProcessor` façade, no async runtime, and no file-system-owning service object. Callers select a module function and pass explicit values; errors use `rastery_core::Result<T>` / `CoreError`.
 
-#### Collage Composer
-```rust
-pub struct CollageComposer;
+| Module | Public responsibility | Principal types / functions |
+| --- | --- | --- |
+| `format` | Content-sniffed PNG/JPEG/WebP/GIF/BMP decode; PNG/JPEG/WebP encode | `decode`, `encode`, `OutputFormat`, `EncodeSettings`, `Quality`, `PngCompression` |
+| `transform` | Exact-ratio crop, resize, fit, lossless right-angle rotation | `AspectRatio`, `CropRect`, `ResizeFilter`, `Rotation` |
+| `collage` | Vertical, horizontal, and grid composition | `CollageLayout`, `CollageOptions`, `compose` |
+| `slice` | Exact row × column slicing with remainder pixels preserved | `SliceGrid`, `Tile`, `slice` |
+| `batch` | Per-item transform with count/order preservation and isolated failures | `BatchOp`, `BatchResult`, `process` |
+| `watermark` | Image-overlay watermark at bottom-right or tiled | `Position`, `apply` |
+| `beautify` | Rounded corners, padding, background, border, and shadow | `BeautifyParams`, `Background`, `Border`, `Shadow`, `beautify` |
+| `animation` | Forward, reverse, and ping-pong GIF encoding | `GifParams`, `Playback`, `compose` |
+| `qr` | QR generation and recognition | `QrOptions`, `ErrorCorrection`, `generate`, `decode` |
+| `exif` | Human-readable EXIF view and container-level metadata stripping | `ExifData`, `GpsCoordinates`, `read`, `strip`, `has_exif` |
+| `config` | v1 TOML data model and round-trip serialization | `AppConfig`, `Language`, `to_toml`, `from_toml` |
+| `naming` | Sanitized deterministic batch and tile filenames | `sanitize_stem`, `batch_filename`, `tile_filename` |
 
-impl CollageComposer {
-    pub fn compose_vertical(&self, images: Vec<DynamicImage>) -> Result<DynamicImage>;
-    pub fn compose_horizontal(&self, images: Vec<DynamicImage>) -> Result<DynamicImage>;
-    pub fn compose_grid(&self, images: Vec<DynamicImage>, params: GridParams) -> Result<DynamicImage>;
-}
+`rastery-core` MUST remain synchronous and pure. Requirement 3 async behavior is fulfilled by the application layer scheduling these functions on GPUI's background executor; adding an async executor or UI text to the core would violate the crate boundary.
 
-pub struct GridParams {
-    pub columns: u32,
-    pub spacing: u32,
-    pub background_color: Rgba<u8>,
-}
-```
+### Application Contract (`rastery-app`)
 
-#### Slicer
-```rust
-pub struct ImageSlicer;
+| Component | Responsibility | Threading rule |
+| --- | --- | --- |
+| `AppShell` | Own active section/page, settings, controls, preview orchestration, path prompts, clipboard, and locale changes | GPUI main thread only |
+| `Workspace` | Hold source images/bytes, result, preview, status, info, and busy state; validate commands and apply outcomes | Mutated on main thread only |
+| `WorkspaceCommand` | Express user intent such as transform, collage, slice, QR, EXIF, GIF, batch, save, or open | Constructed on main thread |
+| `WorkspaceJob` | Own all data needed for file I/O, decode, transform, encode, and export | Must be safe to move to the background executor |
+| `WorkspaceOutcome` | Return result data, errors, clipboard payload, and output-directory effects | Applied to `Workspace` on main thread |
+| `Selection` / crop Element | Store normalized crop rectangle; implement GPUI `request_layout`, `prepaint`, and `paint`; support move and eight resize grips | Events and rendering on main thread |
+| `FeatureParams` | Hold bounded page parameters and translate them to core types | Main thread; pure conversion helpers are unit-tested |
+| `ConfigStore` | Resolve the platform config directory; atomically load/save TOML with corruption fallback | Short config operations may run during app lifecycle; image work never routes through it |
+| `UiMessage` / `ErrorKind` | Map internal outcomes to localized user-facing state | User text is resolved through i18n keys |
 
-impl ImageSlicer {
-    pub fn slice(&self, image: &DynamicImage, rows: u32, cols: u32) -> Result<Vec<ImageTile>>;
-}
+The job lifecycle is:
 
-pub struct ImageTile {
-    pub image: DynamicImage,
-    pub position: (u32, u32),  // row, col
-}
-```
+1. A listener converts UI input into a `WorkspaceCommand`.
+2. `Workspace::prepare` validates state and produces a self-contained `WorkspaceJob`.
+3. `AppShell` runs the job on `cx.background_executor()` and receives progress / completion through an async channel.
+4. `Workspace::apply` updates state after the job finishes; only then does GPUI re-render.
 
-#### QR Code Module
-```rust
-pub struct QrCodeGenerator;
-pub struct QrCodeParser;
+Native path prompts are outside `WorkspaceJob`: selection happens asynchronously, after the listener's mutable entity borrow is released. File reads and image decoding begin only after concrete paths have been returned.
 
-impl QrCodeGenerator {
-    pub fn generate(&self, content: &str, params: QrParams) -> Result<DynamicImage>;
-}
+### v2 Planned Interfaces
 
-impl QrCodeParser {
-    pub fn parse(&self, image: &DynamicImage) -> Result<String>;
-}
+`rastery-ai` and `rastery-presets` do not exist in v1. Their planned boundary remains:
 
-pub struct QrParams {
-    pub size: u32,
-    pub error_correction: ErrorCorrection,
-    pub foreground: Rgba<u8>,
-    pub background: Rgba<u8>,
-}
-```
+- a `Provider` abstraction with capability declarations, text-to-image, image-to-image, edit, and normalized errors;
+- provider credentials stored only in OS credential stores;
+- locked prompt templates compiled into `rastery-presets` and selected by industry-tool **档位**;
+- no v1 type may depend on either planned crate.
 
-#### EXIF Module
-```rust
-pub struct ExifReader;
-pub struct ExifCleaner;
-
-pub struct ExifData {
-    pub camera_model: Option<String>,
-    pub focal_length: Option<f32>,
-    pub aperture: Option<f32>,
-    pub shutter_speed: Option<String>,
-    pub iso: Option<u32>,
-    pub gps_coordinates: Option<(f64, f64)>,
-}
-
-impl ExifReader {
-    pub fn read(&self, image_path: &Path) -> Result<ExifData>;
-}
-
-impl ExifCleaner {
-    pub fn clean(&self, image: &DynamicImage) -> Result<DynamicImage>;
-    // Removes GPS and device identification metadata
-}
-```
-
-#### Batch Processor
-```rust
-pub struct BatchProcessor;
-
-pub enum BatchOperation {
-    FormatConversion(OutputFormat, Quality),
-    Compression(Quality),
-    Resize(ResizeMode),
-    Watermark(Watermark),
-}
-
-pub struct BatchResult {
-    pub successful: Vec<ProcessedItem>,
-    pub failed: Vec<FailedItem>,
-}
-
-impl BatchProcessor {
-    pub async fn process<F>(
-        &self,
-        images: Vec<PathBuf>,
-        operation: BatchOperation,
-        progress_callback: F,
-    ) -> Result<BatchResult>
-    where
-        F: Fn(usize, usize) + Send + 'static;
-}
-```
-
-#### GIF Composer
-```rust
-pub struct GifComposer;
-
-pub struct GifParams {
-    pub frame_delay_ms: u32,  // 100-800ms
-    pub dimensions: Option<(u32, u32)>,
-    pub playback_mode: PlaybackMode,
-}
-
-pub enum PlaybackMode {
-    Forward,
-    Reverse,
-    PingPong,
-}
-
-impl GifComposer {
-    pub fn compose(&self, frames: Vec<DynamicImage>, params: GifParams) -> Result<Vec<u8>>;
-}
-```
-
-### AI Engine Module (rastery-ai)
-
-#### Provider Trait
-```rust
-#[async_trait]
-pub trait Provider: Send + Sync {
-    fn name(&self) -> &str;
-    fn capabilities(&self) -> ProviderCapabilities;
-    
-    async fn text_to_image(&self, request: TextToImageRequest) -> Result<GenerationResponse>;
-    async fn image_to_image(&self, request: ImageToImageRequest) -> Result<GenerationResponse>;
-    async fn edit_image(&self, request: EditImageRequest) -> Result<GenerationResponse>;
-}
-
-pub struct ProviderCapabilities {
-    pub max_reference_images: u32,
-    pub supported_aspect_ratios: Vec<AspectRatio>,
-    pub max_generation_count: u32,
-    pub supports_text_to_image: bool,
-    pub supports_image_to_image: bool,
-    pub supports_region_editing: bool,
-}
-```
-
-#### Request Models
-```rust
-pub struct TextToImageRequest {
-    pub prompt: String,
-    pub aspect_ratio: AspectRatio,
-    pub count: u32,
-    pub api_key: String,
-}
-
-pub struct ImageToImageRequest {
-    pub prompt: String,
-    pub reference_images: Vec<Vec<u8>>,  // PNG/JPEG encoded
-    pub aspect_ratio: AspectRatio,
-    pub count: u32,
-    pub api_key: String,
-}
-
-pub struct EditImageRequest {
-    pub base_image: Vec<u8>,
-    pub prompt: String,
-    pub mask: Option<Vec<u8>>,  // For region-based editing
-    pub api_key: String,
-}
-
-pub struct GenerationResponse {
-    pub images: Vec<Vec<u8>>,  // PNG encoded results
-}
-```
-
-#### Error Types
-```rust
-pub enum AIError {
-    InvalidApiKey,
-    InsufficientBalance,
-    NetworkFailure(String),
-    ContentBlocked,
-    RateLimitExceeded,
-    UnsupportedOperation,
-    ProviderError(String),
-}
-```
-
-#### Provider Implementations
-```rust
-pub struct SeedreamProvider {
-    client: reqwest::Client,
-}
-
-pub struct GoogleNanoBananaProvider {
-    client: reqwest::Client,
-}
-
-pub struct OpenAIGPTImageProvider {
-    client: reqwest::Client,
-}
-
-// Each implements the Provider trait.
-// Agnes 暂不实现（spec v0.3 已确认）：Provider trait 只需保证「新增服务商不改动上层业务代码」
-// 这一扩展性，不得为 Agnes 编写适配器。
-```
-
-### Preset Library Module (rastery-presets)
-
-#### Preset API
-```rust
-pub enum IndustryTool {
-    PhotoRestoration,
-    IdPhoto,
-    Avatar,
-    MemeGenerator,
-    Portrait,
-    ModelTryOn,
-    ProductRecolor,
-    PromotionalPoster,
-    PlatformAdapter,
-    CoverImage,
-    ArticleIllustration,
-    FoodEnhancement,
-    InteriorDesign,
-}
-
-pub enum IdPhotoSpec {
-    OneInch,
-    TwoInch,
-    Visa,
-}
-
-pub enum AvatarStyle {
-    JapaneseAnime,
-    Cyberpunk,
-    ChineseInkPainting,
-    // ... 6 more styles
-}
-
-pub enum Emotion {
-    Laughing,
-    Shocked,
-    EyeRolling,
-    // ... 9 more emotions
-}
-
-pub fn get_photo_restoration_prompt() -> &'static str;
-pub fn get_id_photo_prompt(spec: IdPhotoSpec, background: Color, attire: Attire) -> &'static str;
-pub fn get_avatar_prompt(style: AvatarStyle) -> &'static str;
-pub fn get_meme_prompt(emotion: Emotion) -> &'static str;
-// ... similar functions for all 13 industry tools
-```
-
-### UI Layer Components (rastery-app)
-
-#### Main App State
-```rust
-pub struct AppState {
-    pub current_page: Page,
-    pub config: AppConfig,
-    pub providers: HashMap<ProviderId, Box<dyn Provider>>,
-    pub selected_provider: Option<ProviderId>,
-    pub core_engine: CoreEngine,
-    pub background_executor: BackgroundExecutor,
-}
-
-pub enum Page {
-    Home,
-    BasicImageProcessing(BasicProcessingState),
-    AIGeneration(AIGenerationState),
-    IndustryTools(IndustryToolState),
-    CreativeOutput(CreativeState),
-    Settings,
-}
-```
-
-#### Canvas Elements (GPUI Custom UI)
-```rust
-// Crop Frame Canvas Element
-pub struct CropFrame {
-    region: CropRegion,
-    aspect_ratio: Option<AspectRatio>,
-}
-
-impl CropFrame {
-    // Implements GPUI three-phase rendering: request_layout, prepaint, paint
-    // Supports drag gestures for position and corner handles for resize
-}
-
-// Text Layer Canvas Element (for Poster Design)
-pub struct TextLayerElement {
-    text: String,
-    position: Point,
-    size: (u32, u32),
-    font: Font,
-    color: Rgba<u8>,
-}
-
-impl TextLayerElement {
-    // Supports drag for position adjustment
-    // Supports corner handle drag for resize
-    // Renders using GPUI TextSystem + DirectWrite on Windows
-}
-```
-
-#### Configuration Manager
-```rust
-pub struct ConfigManager {
-    config_path: PathBuf,
-    credential_store: Box<dyn CredentialStore>,
-}
-
-impl ConfigManager {
-    pub fn load_config(&self) -> Result<AppConfig>;
-    pub fn save_config(&self, config: &AppConfig) -> Result<()>;
-    pub fn get_api_key(&self, provider: ProviderId) -> Result<Option<String>>;
-    pub fn set_api_key(&self, provider: ProviderId, key: String) -> Result<()>;
-}
-
-pub struct AppConfig {
-    pub default_provider: Option<ProviderId>,
-    pub default_export_format: OutputFormat,
-    pub default_export_quality: Quality,
-    pub language: Language,
-    pub last_output_dir: Option<PathBuf>,
-}
-```
+Detailed provider request schemas are intentionally deferred until v2 because vendor APIs are time-sensitive. Creating concrete request structs in v1 would be speculative coupling.
 
 ## Data Models
 
-### Core Domain Types
+### Image and Encoding Model
 
-#### Image Types
-```rust
-pub enum OutputFormat {
-    PNG,
-    JPEG,
-    WebP,
-    GIF,
-    BMP,
-}
+- Internal decoded pixels use `image::RgbaImage` (`u8` RGBA).
+- `OutputFormat` contains `Png`, `Jpeg`, and `Webp`; GIF is produced by `animation::compose`, while BMP/GIF remain readable inputs.
+- `EncodeSettings` binds legal settings to the target format: PNG compression, JPEG quality, lossy WebP quality, or lossless WebP.
+- `Quality` is validated in the inclusive range 1–100 and passed to the encoder without remapping.
+- JPEG export flattens alpha onto opaque white; PNG and lossless WebP preserve alpha.
 
-pub struct Quality {
-    pub value: u8,  // 1-100 for JPEG/WebP, compression level for PNG
-}
+### Geometry and Effect Model
 
-pub enum AspectRatio {
-    Square,      // 1:1
-    Portrait4x5, // 4:5
-    Portrait9x16,
-    Landscape16x9,
-    UltraWideBanner,
-    Custom(f32),
-}
+- `AspectRatio` stores a reduced integer pair. The five v1 presets are 1:1, 4:5, 9:16, 16:9, and 21:9.
+- `CropRect` is a checked pixel-space rectangle; the crop Element stores a normalized rectangle and converts it against current image dimensions.
+- `SliceGrid` and `CollageOptions` reject zero or invalid dimensions instead of silently changing user input.
+- Beautification and watermark parameters are explicit value types; all effects return a new image and do not mutate the source.
 
-pub struct CropRegion {
-    pub x: u32,
-    pub y: u32,
-    pub width: u32,
-    pub height: u32,
-    pub aspect_ratio: Option<AspectRatio>,
-}
-```
+### Workspace State Model
 
-#### Beautification Parameters
-```rust
-pub struct BeautifyParams {
-    pub corner_radius: u32,
-    pub inner_padding: u32,
-    pub background: BackgroundStyle,
-    pub border_stroke: Option<Stroke>,
-    pub shadow: Option<Shadow>,
-}
+`Workspace` keeps decoded inputs and names in shared immutable collections, preserves original container bytes for EXIF, and stores at most one current image result or encoded result. `busy` prevents overlapping jobs. Failures map to `UiMessage` while leaving the workspace reusable.
 
-pub enum BackgroundStyle {
-    Transparent,
-    SolidColor(Rgba<u8>),
-    Gradient { start: Rgba<u8>, end: Rgba<u8>, direction: GradientDirection },
-}
+Batch outputs retain the input index, success/failure partition, and original source stem. Naming sanitization guarantees that generated files remain inside the selected directory.
 
-pub struct Stroke {
-    pub width: u32,
-    pub color: Rgba<u8>,
-}
+### v1 Configuration Model
 
-pub struct Shadow {
-    pub offset_x: i32,
-    pub offset_y: i32,
-    pub blur_radius: u32,
-    pub color: Rgba<u8>,
-}
-```
+`AppConfig` contains only:
 
-#### Watermark Types
-```rust
-pub enum Watermark {
-    Text(TextWatermark),
-    Image(ImageWatermark),
-}
+- `default_export_format`;
+- `default_export_quality`;
+- `default_png_compression`;
+- `language` (`zh-CN` or `en` at runtime);
+- `last_output_dir: Option<PathBuf>`.
 
-pub struct TextWatermark {
-    pub text: String,
-    pub font: Font,
-    pub size: u32,
-    pub color: Rgba<u8>,
-    pub position: WatermarkPosition,
-}
+It intentionally contains no provider, API key, AI history, or credential-store fields. `ConfigStore` writes through a temporary file and backup/rename sequence, and a missing or corrupt config falls back to defaults with a localized warning.
 
-pub struct ImageWatermark {
-    pub image: DynamicImage,
-    pub opacity: f32,
-    pub position: WatermarkPosition,
-}
+### History and Credentials
 
-pub enum WatermarkPosition {
-    BottomRight { margin: u32 },
-    Tiled { spacing: u32 },
-}
-```
-
-### Configuration Data Model
-
-The configuration file uses TOML format and is stored in the standard application data directory (via `directories` crate).
-
-**Example config.toml**:
-```toml
-[general]
-language = "zh-CN"  # or "en-US"
-default_provider = "seedream"
-last_output_dir = "/Users/john/Pictures/Rastery"
-
-[export]
-default_format = "PNG"
-default_quality = 85
-
-[providers]
-# API keys are NOT stored here - they're in OS credential store
-# This section only stores non-sensitive provider preferences
-```
-
-### Credential Storage Model
-
-API keys are stored using OS-native credential managers:
-
-- **Windows**: Windows Credential Manager
-  - Target Name: `rastery.ai.{provider_id}`
-  - Username: (user's identifier or "default")
-  - Password: API key
-  
-- **macOS**: macOS Keychain
-  - Service: `dev.rastery.ai`
-  - Account: `{provider_id}`
-  - Password: API key
-
-### History and Cache Model
-
-```rust
-pub struct GenerationHistory {
-    pub entries: Vec<HistoryEntry>,
-}
-
-pub struct HistoryEntry {
-    pub timestamp: DateTime<Utc>,
-    pub operation: Operation,
-    pub provider: Option<ProviderId>,
-    pub output_paths: Vec<PathBuf>,
-}
-
-pub enum Operation {
-    BasicProcessing(String),
-    AIGeneration(String),
-    IndustryTool(IndustryTool),
-}
-```
+Generation history and provider credentials are v2 data. They MUST NOT be added to the v1 TOML schema. Any future credential model must use platform secure storage and must never serialize secrets or log values.
 
 ## Error Handling
 
-### Error Type Hierarchy
+### Error Layers
 
-```rust
-pub enum RasteryError {
-    Core(CoreError),
-    AI(AIError),
-    Config(ConfigError),
-    IO(std::io::Error),
-}
+`rastery-core` exposes one structured `CoreError` with variants for image decode/encode, WebP, disk space, I/O, QR encode/decode, EXIF, GIF encode, config parse/serialize, and invalid arguments. Public core operations return `Result` and do not panic for user input.
 
-pub enum CoreError {
-    UnsupportedFormat,
-    CorruptedFile,
-    EncodingFailed,
-    DecodingFailed,
-    InvalidDimensions,
-    InsufficientDiskSpace,
-    PermissionDenied,
-}
+`rastery-app` does not expose a speculative application-wide error enum. Background jobs convert concrete failures into semantic `ErrorKind` categories:
 
-pub enum AIError {
-    InvalidApiKey,
-    InsufficientBalance,
-    NetworkFailure(String),
-    ContentBlocked,
-    RateLimitExceeded,
-    UnsupportedOperation,
-    ImageTooLarge,
-    ProviderError(String),
-}
+- unsupported format or corrupted image;
+- encode or image operation failure;
+- EXIF or QR failure;
+- disk full, permission, or general I/O;
+- config or clipboard failure.
 
-pub enum ConfigError {
-    ParseError(String),
-    CredentialStoreUnavailable,
-    ConfigFileCorrupted,
-}
-```
+`UiMessage` stores semantic state and data, never translated strings. Rendering resolves the i18n key at display time, so an existing error changes language immediately when the locale changes.
 
-### Error Presentation Strategy
+### Recovery Rules
 
-Each error type maps to a user-friendly localized message:
-
-| Error | User Message (English) | User Message (Chinese) |
-|-------|------------------------|------------------------|
-| InvalidApiKey | "Invalid API key. Please check your settings." | "API 密钥无效，请检查设置。" |
-| InsufficientBalance | "Insufficient account balance. Please top up your account." | "账户余额不足，请充值。" |
-| NetworkFailure | "Network connection failed. Please check your internet." | "网络连接失败，请检查网络。" |
-| ContentBlocked | "Content blocked by AI provider policy." | "内容被 AI 服务商策略拦截。" |
-| UnsupportedFormat | "Unsupported image format." | "不支持的图片格式。" |
-| CorruptedFile | "Image file is corrupted or damaged." | "图片文件已损坏。" |
-| InsufficientDiskSpace | "Insufficient disk space for export." | "磁盘空间不足，无法导出。" |
-| PermissionDenied | "Permission denied. Check file permissions." | "权限不足，请检查文件权限。" |
-
-### Error Recovery Patterns
-
-1. **Batch Processing Failures**: Individual item failures don't stop the batch; failed items are marked and reported separately
-2. **AI Request Failures**: Clear error categorization with actionable remediation (e.g., link to settings for API key errors)
-3. **Config File Corruption**: Fall back to default configuration and display a reset warning
-4. **Credential Store Unavailable**: Gracefully disable AI features and inform user
+1. An individual batch item failure is recorded with its source name and does not stop remaining items.
+2. A failed `WorkspaceJob` clears the busy state and leaves the workspace usable for the next command.
+3. Missing config silently uses defaults; unreadable or invalid config uses defaults and displays a reset warning.
+4. Save failures preserve the in-memory result so the user can choose another destination.
+5. Invalid numeric or empty text input is rejected before a background job is spawned.
+6. v2 AI and credential errors are deferred with the v2 crates; they are not part of the v1 error hierarchy.
 
 ## Testing Strategy
 
-### Property-Based Testing Applicability Assessment
+### Automated Baseline
 
-**Rastery is a complex application mixing multiple paradigms**:
-- Pure functional transformations (image processing algorithms)
-- Infrastructure/configuration (GPUI UI, OS integration)
-- External service integration (AI APIs)
-- UI rendering and interaction
+At `main@9eeff5f`, `cargo test` executes 51 tests: 28 in `rastery-core` and 23 in `rastery-app`. The reviewed working tree adds one asynchronous picker path regression test and executes 52. The core suite covers the active v1 correctness properties (Properties 1–15 and 17–28); app tests cover config recovery, parameter bounds, crop geometry, filename containment, batch progress/failure state, initial paths, logging filters, packaging identity, and text-watermark validation.
 
-**PBT IS APPROPRIATE** for:
-- Core image processing algorithms (crop, resize, encode/decode, collage, slice)
-- QR code generation/parsing
-- EXIF cleaning
-- Configuration serialization/deserialization
-- Batch processing invariants
+Property-based testing is required for pure transformations and invariants. Example-based unit tests are preferred for state transitions, platform-independent orchestration, validation, and known regressions. UI pixels, interaction feel, native dialogs, clipboard interoperability, signing, and timing are desktop acceptance concerns.
 
-**PBT IS NOT APPROPRIATE** for:
-- GPUI UI rendering and canvas elements
-- AI provider API integration (mock-based tests better)
-- OS credential store integration (integration tests)
+### CI and Package Verification
 
-Given this analysis, **Property-Based Testing WILL be included** for the core image processing engine and data transformation logic. UI components, AI integration, and OS integration will use unit tests with mocks and integration tests.
+Normal CI performs:
 
-### Unit Testing Strategy
+- icon-source and generated-asset consistency checks;
+- `cargo check`, Clippy with denied warnings, and tests on Windows, macOS, and Linux;
+- unsigned Windows MSI build plus installation, association, shortcut, and uninstall smoke;
+- Linux amd64 DEB build plus content, install, and uninstall smoke.
 
-**Core Engine (rastery-core)**:
-- Unit tests for each image operation with example inputs
-- Edge cases: empty images, 1x1 pixel images, extremely large images
-- Format conversion edge cases
-- EXIF edge cases: images with no EXIF, images with GPS, images with device info
+The release workflow additionally builds signed Windows artifacts, a signed/notarized macOS DMG, and the Linux package, enforces the 30 MiB limit, and refuses to start without current desktop acceptance evidence.
 
-**AI Engine (rastery-ai)**:
-- Mock-based tests for Provider implementations
-- Error mapping tests (provider errors → app errors)
-- Capability declaration validation
-- Request serialization tests
+### Desktop Acceptance
 
-**Preset Library (rastery-presets)**:
-- Ensure all prompts are accessible
-- No runtime errors when loading embedded templates
+`docs/testing/v1-desktop-acceptance.md` is the normative procedure for work that headless tests cannot prove. The committed result must include:
 
-**UI Layer (rastery-app)**:
-- State transition tests
-- User input validation tests
-- Configuration loading/saving tests
+- Windows, macOS, Linux X11, and Linux Wayland environment details and pass results;
+- the complete common-feature and platform-specific check sets;
+- at least three samples for every performance metric;
+- deterministic generated-resource and EXIF-photo SHA-256 values;
+- package size, signing, notarization, install, uninstall, and platform security conclusions.
 
-### Integration Testing Strategy
-
-- **Batch Processing Flow**: Load images → apply operation → verify output files
-- **AI Generation Flow**: Mock provider → request → response → display
-- **Config Persistence**: Save config → restart app (simulation) → load config → verify
-
-### Performance Testing
-
-- **Startup Time**: Cold start < 1500ms
-- **Batch Processing**: 100 images, UI responsive (click response < 100ms)
-- **Real-Time Preview**: Parameter adjustment → preview update < 200ms
-- **Image Display**: 50 megapixel image opens < 2000ms
+`scripts/verify_desktop_acceptance.py` rejects missing, stale, incomplete, or out-of-budget evidence. The baseline currently has only an example JSON, so desktop acceptance remains open.
 
 ### Quality Gates
 
-All code must pass before task completion:
-1. `cargo check` (no errors)
-2. `cargo clippy --all-targets --all-features -- -D warnings` (no warnings)
-3. `cargo test --all` (all tests pass)
+Every task must pass the repository Definition of Done:
 
+1. `cargo check`
+2. `cargo clippy -- -D warnings`
+3. `cargo test`
 
+CI may add `--workspace` / `--all-targets`, but v1 MUST NOT enable `webview` or `inspector` features because they introduce a browser engine and violate the dependency boundary.
 
 ## Correctness Properties
 
@@ -798,13 +333,13 @@ All code must pass before task completion:
 
 ### Property Reflection
 
-After analyzing the 433 acceptance criteria, I identified properties suitable for property-based testing in the core image processing engine. The following reflection eliminates redundancy:
+After analyzing the 442 acceptance criteria, I identified properties suitable for property-based testing in the core image processing engine. The following reflection eliminates redundancy:
 
 **Redundancy Analysis:**
 1. **EXIF Cleaning Properties**: Requirements 2.7-2.8, 11.7-11.10, and 60.5-60.6 all specify EXIF GPS/device removal. These can be combined into a single comprehensive property.
 2. **Round-Trip Properties**: Requirements 10 (QR codes), 38 (lossless formats), 52 (explicit round-trip), and 53 (config) all specify encode-decode consistency. Each is distinct (QR vs PNG vs config) so all are retained.
 3. **Batch Invariants**: Requirements 8 and 54 both specify batch processing count/order invariants. These are overlapping and can be combined.
-4. **Coordinate Calculation**: Requirements 13 and 48 both specify DPI-aware coordinate calculations. These can be combined into one property.
+4. **Removed Capture Coordinates**: Requirements 13 and 48 were removed by ADR-0003, so no DPI capture property remains in v1.
 5. **Idempotence**: Requirement 56 lists multiple idempotent operations (EXIF clean, PNG-to-PNG, config reload). While conceptually similar, each tests different subsystems, so all are retained.
 
 ### Property 1: Lossless Image Format Round-Trip Preserves Pixels
@@ -911,7 +446,7 @@ The DPI/capture property is no longer part of the current scope (ADR-0003).
 
 ### Property 17: GIF Frame Count Matches Input
 
-*For any* list of N images composed into a GIF, the output GIF SHALL contain exactly N frames.
+*For any* non-empty list of N images composed into a GIF, forward and reverse playback SHALL contain exactly N frames; ping-pong playback SHALL contain one frame when N=1 and 2N−1 frames when N>1.
 
 **Validates: Requirements 15.6**
 
@@ -923,9 +458,9 @@ The DPI/capture property is no longer part of the current scope (ADR-0003).
 
 ### Property 19: Batch Filename Generation Is Sequential and Unique
 
-*For any* batch operation producing multiple output files from N inputs, the filenames SHALL contain sequential identifiers (1 through N) or timestamps that ensure uniqueness.
+*For any* v1 batch or slicing operation producing multiple output files from N inputs, the filenames SHALL contain sanitized source stems plus sequential identifiers, and slicing names SHALL additionally contain grid positions; every generated path SHALL remain inside the selected output directory.
 
-**Validates: Requirements 41.3, 41.4, 41.5**
+**Validates: Requirements 41.3, 41.4**
 
 ### Property 20: EXIF Cleaning Is Idempotent
 
@@ -971,23 +506,23 @@ The DPI/capture property is no longer part of the current scope (ADR-0003).
 
 ### Property 27: Error Conditions Maintain Valid Application State
 
-*For any* error condition (file I/O errors, parsing errors, network errors), the application SHALL remain in a valid state allowing continued operation after error handling.
+*For any* v1 error condition (file I/O, parsing, encoding, decoding, or image-operation errors), the application SHALL remain in a valid state allowing continued operation after error handling.
 
 **Validates: Requirements 57.7, 57.8**
 
 ### Property 28: Screenshot Beautification Padding Increases Dimensions Predictably
 
-*For any* image beautified with rounded corners of radius R and inner padding P, the output dimensions SHALL increase by at most 2(R+P) pixels per dimension.
+*For any* image beautified with inner padding P, the output width and height SHALL each increase by exactly 2P pixels. Corner radius changes the alpha mask, not the outer dimensions.
 
 **Validates: Requirements 55.6**
 
-### Property 29: Credential Storage Never Writes API Keys to Plaintext Files
+### [v2] Property 29: Credential Storage Never Writes API Keys to Plaintext Files
 
 *For any* API key storage operation, the Rastery_System SHALL NOT write the API key to the configuration file or log files.
 
 **Validates: Requirements 60.2, 60.3, 60.4**
 
-### Property 30: Network Requests to AI Providers Use HTTPS
+### [v2] Property 30: Network Requests to AI Providers Use HTTPS
 
 *For all* network requests to AI providers, the AI_Engine SHALL use HTTPS protocol.
 
@@ -995,231 +530,104 @@ The DPI/capture property is no longer part of the current scope (ADR-0003).
 
 ## Implementation Approach
 
-### [v1] Phase 1: Foundation (Core Infrastructure)
+The original sprint list described a greenfield build. The codebase has moved past that stage, so the execution plan is now organized by verification state rather than by hypothetical implementation order.
 
-**Sprint 1-2: Workspace Setup and Core Engine Basics**
-- Set up the v1 Cargo workspace with `rastery-core` and `rastery-app`
-- Implement basic image loading/saving (PNG, JPEG, WebP)
-- Implement image encoding/decoding with quality parameters
-- Write property tests for lossless round-trip (Property 1)
-- Quality gate: All tests pass, clippy clean
+### [v1] Stage A — Core Engine: Implemented and Automatically Verified
 
-**Sprint 3: Core Transformations**
-- Implement crop, resize, rotate operations
-- Implement property tests for transformations (Properties 14, 15)
-- Implement EXIF reader and cleaner
-- Write property tests for EXIF cleaning (Property 4, 20)
-- Quality gate: All tests pass, clippy clean
+Complete scope:
 
-**[v1/v2 混合] Sprint 4: Configuration and Credential Management** —— TOML 配置属 v1；Credential Manager / Keychain 是为存 API Key 服务的，属 v2
-- Implement TOML config serialization/deserialization
-- Write property tests for config round-trip (Properties 3, 23)
-- Implement Windows Credential Manager integration
-- Implement macOS Keychain integration
-- Write property test for credential storage security (Property 29)
-- Quality gate: All tests pass, clippy clean
+- workspace and two-crate boundary;
+- PNG/JPEG/WebP encoding and PNG/JPEG/WebP/GIF/BMP decoding;
+- crop, resize, rotation, collage, slice, QR, EXIF, beautification, GIF, watermark, batch, config, and naming;
+- v1 correctness properties and regression tests;
+- cross-platform CI quality jobs.
 
-### [v1] Phase 2: Advanced Processing (Core Features)
+Exit criterion: `rastery-core` remains pure, synchronous, network-free, and green under all three quality gates on Windows, macOS, and Linux.
 
-**Sprint 5: Batch Processing**
-- Implement BatchProcessor with async execution
-- Implement format conversion, compression, resize modes
-- Write property tests for batch invariants (Properties 8-13)
-- Implement filename generation with sequential numbering
-- Write property tests for filename uniqueness (Property 19)
-- Quality gate: All tests pass, clippy clean
+### [v1] Stage B — Desktop Application: Implemented, Stabilization and Real-Machine Acceptance Open
 
-**Sprint 6: Collage and Slicing**
-- Implement CollageComposer with vertical, horizontal, grid modes
-- Write property tests for collage (Properties 6, 7)
-- Implement ImageSlicer with grid configuration
-- Write property tests for slicing (Property 5)
-- Quality gate: All tests pass, clippy clean
+Implemented scope:
 
-**Sprint 7: QR Codes and Beautification**
-- Implement QR code generator and parser
-- Write property tests for QR round-trip (Properties 2, 22)
-- Implement screenshot beautification with effects
-- Write property tests for beautification (Properties 18, 28)
-- Quality gate: All tests pass, clippy clean
+- four **板块** and v2 placeholders;
+- eight v1 pages connected to the core;
+- runtime Chinese / English switching;
+- background image jobs with progress and reusable error state;
+- config persistence and recovery;
+- file open, drag/drop, clipboard paste/copy, export, and output-directory reveal;
+- crop selection custom Element with normalized geometry;
+- deterministic acceptance assets and result verifier.
 
-**Sprint 8: GIF Creation**
-- Implement GIF composer with frame delay and playback modes
-- Write property tests for GIF frame count (Property 17)
-- Implement watermarking (text and image)
-- Quality gate: All tests pass, clippy clean
+Remaining stabilization work:
 
-### [removed] Phase 3: System Integration (Capture Module)
+1. Convert every native file and directory picker to an asynchronous or post-listener flow that cannot re-enter a mutably borrowed GPUI entity on Windows. The current regression first appeared in image-open flow; save and directory flows must be audited under the same rule.
+2. Run the complete feature matrix on Windows 10/11 x64, macOS, Linux X11, and Linux Wayland.
+3. Record any rendering, focus, DPI, clipboard, dialog, drag/drop, or file-manager defects as implementation work; compilation is not evidence for these behaviors.
 
-This phase was removed from the current product scope by ADR-0003.
+Exit criterion: all common and platform-specific checks in `v1-desktop-acceptance.md` pass and are represented in the committed JSON evidence.
 
-### [v2] Phase 4: AI Integration (AI Engine) — v1 整体跳过，见 ADR-0001
+### [v1] Stage C — Performance and Release: Open
 
-**Sprint 12: AI Provider Abstraction**
-- Define Provider trait with capability declarations
-- Implement request/response models
-- Implement error mapping (AIError types)
-- Write unit tests for capability system
-- Quality gate: All tests pass, clippy clean
+1. Generate the deterministic acceptance assets and record their SHA-256.
+2. Measure at least three release-build samples for cold start, 50MP preview, beautify preview latency, 100-image click response, and progress frequency on the required platforms.
+3. Optimize any metric outside the requirement budget, then repeat the affected platform evidence.
+4. Build the Windows MSI, macOS DMG, and Linux DEB; verify size, install/uninstall, associations, shortcuts, runtime dependencies, signing, and notarization.
+5. Commit `docs/testing/results/v1-desktop-acceptance.json` for the exact release-affecting source baseline and run its verifier.
+6. Only after all gates pass may a `v*` tag create a release.
 
-**Sprint 13-14: Provider Implementations**
-- Implement SeedreamProvider
-- Implement GoogleNanoBananaProvider
-- Implement OpenAIGPTImageProvider
-- Write mock-based unit tests for each provider
-- Write property test for HTTPS usage (Property 30)
-- Quality gate: All tests pass, clippy clean
+Exit criterion: the release workflow accepts the evidence and all platform artifacts pass their jobs. Until then the product status remains pre-release even if every automated test is green.
 
-**Sprint 15: Preset Library**
-- Organize locked prompts in rastery-presets crate
-- Implement prompt template files for 13 industry tools
-- Implement compile-time embedding
-- Write smoke tests for preset accessibility
-- Quality gate: All tests pass, clippy clean
+### [v2] Stage D — AI 功能: Deferred
 
-### [v1/v2 混合] Phase 5: User Interface (GPUI App)
+A new ADR and fresh provider research are required before v2 starts. That change may create `rastery-ai` and `rastery-presets`, define the Provider contract against then-current APIs, add secure credential storage, and implement AI 功能 plus their **档位** and **保持不变项** acceptance process.
 
-**Sprint 16-17: Main App Structure**
-- Initialize GPUI application
-- Implement main window and navigation
-- Implement AppState management
-- Implement Background Executor integration
-- Integrate ConfigManager
-- Quality gate: App launches, basic navigation works
-
-**Sprint 18-19: Basic Processing UI**
-- Implement image editor page with format/quality controls
-- Implement collage page with layout controls
-- Implement batch processing page with mode selection
-- Implement slicing page with grid controls
-- Quality gate: Basic features accessible via UI
-
-**Sprint 20: Canvas Elements**
-- Implement CropFrame canvas element with drag gestures
-- Implement TextLayerElement for poster design
-- Follow GPUI three-phase rendering (request_layout, prepaint, paint)
-- Quality gate: Interactive canvas features working
-
-**[v2] Sprint 21-22: AI Features UI**
-- Implement AI generation page (text-to-image, image-to-image)
-- Implement AI editing page with 12 presets
-- Implement provider selection and settings integration
-- Implement progress indicators and error displays
-- Quality gate: AI features accessible (with mock providers)
-
-**[v2] Sprint 23-24: Industry Tools UI**
-- Implement 13 industry tool pages with parameter controls
-- Integrate with Preset_Library for locked prompts
-- Implement multi-style selection for applicable tools
-- Quality gate: All industry tools accessible
-
-**[v1/v2 混合] Sprint 25: Creative Output UI** —— GIF 制作（FR-10）属 v1；海报设计（FR-11）依赖 AI 底图，属 v2
-- Implement GIF creation page with frame management
-- Implement poster design page with AI background + text layers
-- Integrate TextSystem rendering for poster text
-- Quality gate: Creative features working end-to-end
-
-**[v1/v2 混合] Sprint 26: Settings and Localization** —— 设置页、语言切换属 v1；API key management 属 v2
-- Implement settings page with all config options
-- Integrate API key management with credential store
-- Implement language switching (Chinese/English)
-- Quality gate: All settings functional
-
-### [v1] Phase 6: Polish and Release
-
-**Sprint 27: Error Handling and Validation**
-- Implement user-friendly error messages (localized)
-- Implement input validation with helpful hints
-- Write property tests for error handling (Properties 24-27)
-- Quality gate: Graceful error handling throughout
-
-**Sprint 28: Performance Optimization**
-- Profile startup time, target < 1500ms
-- Profile batch processing, ensure UI responsive
-- Profile real-time preview, target < 200ms updates
-- Optimize image loading for large files (< 2000ms for 50MP)
-- Quality gate: Performance benchmarks met
-
-**Sprint 29: Integration Testing**
-- Write end-to-end integration tests for key flows
-- 〔v2〕Test AI integration with mock servers
-- Test config persistence across restarts
-- Quality gate: All integration tests pass
-
-**Sprint 30: Build and Distribution**
-- Create Windows installer with digital signature
-- Implement file type associations
-- Verify installation package size < 30MB
-- Create macOS and Linux distribution packages
-- Quality gate: Clean installation on all platforms
+v2 MUST NOT weaken the v1 guarantees: every 本地功能 remains usable without network connectivity, API keys, provider initialization, or telemetry.
 
 ## Maintenance and Evolution
 
-### Version Control Strategy
-- Lock GPUI and gpui-component to specific versions in Cargo.toml
-- Document locked versions in project README
-- Treat GPUI upgrades as independent tasks with full regression testing
+### Dependency and Version Strategy
+
+- Keep `gpui = "=0.2.2"` and `gpui-component = "=0.5.1"` exactly locked.
+- Treat a synchronized GPUI / gpui-component upgrade as its own change with regenerated `vendor-docs/`, full CI, and repeated desktop acceptance.
+- Do not enable `webview` or `inspector` features.
+- Keep the local `proc-macro-error2` compatibility patch documented and remove it only when a verified synchronized upgrade makes it unnecessary.
+- Use `PathBuf` for platform paths and preserve the two-crate v1 workspace boundary.
 
 ### Code Quality Standards
-- All code must pass `cargo check` without errors
-- All code must pass `cargo clippy --all-targets --all-features -- -D warnings`
-- All code must pass `cargo test --all`
-- Property tests must run minimum 100 iterations
-- Each property test must include a comment tag: `// Feature: rastery, Property X: [property text]`
+
+- All tasks pass `cargo check`, `cargo clippy -- -D warnings`, and `cargo test`.
+- CI runs the workspace and all targets on Windows, macOS, and Linux.
+- `rastery-core` public operations return structured errors for invalid user input and contain no user-visible localized text.
+- Property tests run at least 100 cases, keep shrinking enabled, and preserve generated regression cases for deterministic replay.
+- Every property test identifies the corresponding property number in a nearby comment.
+- Existing user changes in a dirty worktree are never overwritten as part of unrelated work.
 
 ### Property-Based Testing Configuration
 
-The project will use the appropriate PBT library for Rust:
-- **Library**: `proptest` or `quickcheck` (to be selected based on team preference)
-- **Iteration Count**: Minimum 100 iterations per property test
-- **Shrinking**: Enabled to find minimal failing cases
-- **Seed Control**: Support deterministic replay for CI/CD
+- **Library**: `proptest` (currently 1.11.x).
+- **Scope**: pure core transformations, serialization, naming, and state invariants that can be expressed without a desktop.
+- **Cases**: at least 100 per property; the library default may be higher.
+- **Shrinking**: enabled.
+- **Replay**: committed `*.proptest-regressions` cases and explicit seeds when diagnosing CI-only failures.
 
-Example property test structure:
-```rust
-// Feature: rastery, Property 1: Lossless Image Format Round-Trip Preserves Pixels
-#[test]
-fn prop_lossless_png_roundtrip() {
-    proptest!(|(image in arb_image())| {
-        let encoded = encode_png_lossless(&image)?;
-        let decoded = decode_png(&encoded)?;
-        prop_assert_eq!(image.pixels(), decoded.pixels());
-    });
-}
-```
+The v1 baseline implements Properties 1–15 and 17–28. Property 16 was removed with screen capture; Properties 29–30 are v2 and must not cause v1 credential or network code to be created.
 
-### Testing Pyramid
+### Verification Layers
 
-```
-         /\
-        /AI\       Integration Tests (Mock Providers, E2E Flows)
-       /----\
-      / UI + \     UI Tests (State Transitions, Canvas Interactions)
-     / System \
-    /----------\
-   / Property  \   Property-Based Tests (Core Engine, 30 properties)
-  /-Based Tests-\
- /----------------\
-/ Unit Tests       \ Unit Tests (Individual Functions, Edge Cases)
---------------------
-```
-
-**Test Distribution Target**:
-- Unit Tests: ~200 tests (specific examples, edge cases, mocks)
-- Property Tests: 30 tests with 100 iterations each = 3000 executions
-- Integration Tests: ~50 tests (E2E flows, multi-component)
-- UI Tests: ~30 tests (GPUI state transitions, canvas rendering)
+| Layer | Purpose | Current mechanism |
+| --- | --- | --- |
+| Pure behavior | Pixel, count, order, round-trip, idempotence, and error invariants | `rastery-core` unit and property tests |
+| Headless app state | Parameters, config, job outcomes, naming containment, and crop math | `rastery-app` unit tests |
+| Cross-platform build | API use, cfg paths, linking, package structure | GitHub Actions on three operating systems |
+| Desktop behavior | Rendering, interaction, dialogs, clipboard, drag/drop, file manager, performance | Four-environment desktop acceptance JSON |
+| Release trust | Signing, notarization, installation, uninstall, artifact size | release workflow plus real-machine checks |
 
 ### Future Extensions (Out of Scope for V1)
 
-The following features are reserved for future versions:
-- Optional screen capture integration (subject to a new size/dependency review)
-- Video watermark removal (UI placeholder exists)
-- Video subtitle removal (UI placeholder exists)
-- Video clarity enhancement (UI placeholder exists)
-- Additional AI providers beyond the initial 4
-- Cloud sync for history and presets
-- Plugin system for community extensions
+- AI 功能 and their Provider / preset / credential infrastructure;
+- the three video placeholders;
+- optional screen capture only after a new ADR re-evaluates package size and platform dependencies;
+- AI providers beyond the three initially planned providers;
+- cloud sync or a plugin system.
 
 ---
 
@@ -1228,9 +636,10 @@ The following features are reserved for future versions:
 - **Feature Name**: rastery
 - **Spec Type**: Feature
 - **Workflow Type**: Requirements-First
-- **Document Version**: 1.0
+- **Document Version**: 1.1
 - **Total Requirements Covered**: 60
-- **Total Acceptance Criteria Addressed**: 433
-- **Property-Based Tests Defined**: 29
-- **Last Updated**: 2026-07-17
-- **Status**: Ready for Review
+- **Total Acceptance Criteria Addressed**: 442
+- **Correctness Properties Defined**: 29 active (27 v1 + 2 v2), plus removed Property 16 placeholder
+- **Automated Baseline**: 51 tests at `main@9eeff5f` (28 core + 23 app); 52 in the reviewed working tree after the async-picker regression test
+- **Last Updated**: 2026-07-18
+- **Status**: v1 implementation baseline complete; stabilization and desktop acceptance open; not release-ready
