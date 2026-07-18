@@ -61,6 +61,9 @@ dialog:
   images:
     en: Images
     zh-CN: 图片
+  output_filename:
+    en: rastery-output.%{extension}
+    zh-CN: rastery-output.%{extension}
 action:
   open:
     en: Open image

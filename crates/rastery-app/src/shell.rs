@@ -3,6 +3,7 @@
 //! GPUI 主线程只更新状态和渲染；文件读取、编解码及图像变换通过 background
 //! executor 执行。渲染和交互仍须按 ADR-0002 在桌面真机验收。
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -10,9 +11,9 @@ use std::time::Duration;
 use gpui::{
     AnyElement, AppContext, ClipboardEntry, ClipboardItem, Context, Entity, ExternalPaths, Hsla,
     Image as ClipboardImage, ImageFormat as ClipboardImageFormat, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Subscription, Timer, Window, black, div, img,
-    prelude::FluentBuilder, px, white,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Timer, Window, black,
+    div, img, prelude::FluentBuilder, px, white,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
@@ -31,8 +32,9 @@ use crate::feature_params::{BatchMode, FeatureParams, ParamAction, ParamEffect, 
 use crate::section::{Feature, Section};
 use crate::ui_message::{ErrorKind, UiMessage};
 use crate::workspace::{
-    BatchRequest, ClipboardFormat, ClipboardPayload, TransformOperation, Workspace,
-    WorkspaceCommand, WorkspaceJob, WorkspaceOutcome, is_supported_image_path,
+    BatchRequest, ClipboardFormat, ClipboardPayload, OutputDirectoryCommand, TransformOperation,
+    Workspace, WorkspaceCommand, WorkspaceCommandRoute, WorkspaceJob, WorkspaceOutcome,
+    is_supported_image_path,
 };
 
 fn tr(key: &str) -> SharedString {
@@ -42,6 +44,41 @@ fn tr(key: &str) -> SharedString {
 enum WorkspaceEvent {
     Progress { completed: usize, total: usize },
     Finished(Box<WorkspaceOutcome>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathPromptFailure {
+    Platform,
+    ChannelClosed,
+}
+
+enum PathPromptResult<T> {
+    Selected(T),
+    Cancelled,
+    Failed(PathPromptFailure),
+}
+
+fn classify_path_prompt_result<T, PlatformError, ChannelError>(
+    result: Result<Result<Option<T>, PlatformError>, ChannelError>,
+) -> PathPromptResult<T> {
+    match result {
+        Ok(Ok(Some(selected))) => PathPromptResult::Selected(selected),
+        Ok(Ok(None)) => PathPromptResult::Cancelled,
+        Ok(Err(_)) => PathPromptResult::Failed(PathPromptFailure::Platform),
+        Err(_) => PathPromptResult::Failed(PathPromptFailure::ChannelClosed),
+    }
+}
+
+fn first_path_prompt_result(result: PathPromptResult<Vec<PathBuf>>) -> PathPromptResult<PathBuf> {
+    match result {
+        PathPromptResult::Selected(paths) => paths
+            .into_iter()
+            .next()
+            .map(PathPromptResult::Selected)
+            .unwrap_or(PathPromptResult::Cancelled),
+        PathPromptResult::Cancelled => PathPromptResult::Cancelled,
+        PathPromptResult::Failed(failure) => PathPromptResult::Failed(failure),
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -500,16 +537,228 @@ impl AppShell {
     }
 
     fn start_workspace_command(&mut self, command: WorkspaceCommand, cx: &mut Context<Self>) {
-        let export = default_export_settings(&self.config);
-        let directory = self.config.last_output_dir.clone();
-        if let Some(job) = self
-            .workspace
-            .prepare(command, directory.as_deref(), export)
-        {
-            self.spawn_workspace_job(job, cx);
-        } else {
-            cx.notify();
+        match command.route() {
+            WorkspaceCommandRoute::OpenImages { multiple } => {
+                self.prompt_for_images(multiple, cx);
+            }
+            WorkspaceCommandRoute::SaveResult => {
+                self.prompt_for_save(default_export_settings(&self.config), cx);
+            }
+            WorkspaceCommandRoute::OutputDirectory(command) => {
+                self.prompt_for_output_directory(command, cx);
+            }
+            WorkspaceCommandRoute::Direct(operation) => {
+                if let Some(job) = self.workspace.prepare(operation) {
+                    self.spawn_workspace_job(job, cx);
+                } else {
+                    cx.notify();
+                }
+            }
         }
+    }
+
+    /// 使用 GPUI 自带的异步平台对话框选择图片。
+    ///
+    /// 同步文件对话框会在 Windows 上启动嵌套消息循环；若它仍处于 `cx.listener`
+    /// 对 `AppShell` 的可变借用期间，重入的 GPUI 事件就会触发 `RefCell already
+    /// borrowed`。GPUI 的路径 prompt 会先返回 receiver，等当前事件回调释放借用后才
+    /// 展示系统对话框。
+    fn prompt_for_images(&mut self, multiple: bool, cx: &mut Context<Self>) {
+        if self.workspace.is_busy() {
+            self.workspace.set_status(UiMessage::Busy);
+            cx.notify();
+            return;
+        }
+
+        let paths_receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple,
+            prompt: Some(tr(if multiple {
+                "action.open_multi"
+            } else {
+                "action.open"
+            })),
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result = classify_path_prompt_result(paths_receiver.await);
+            let _ = this.update(cx, |this, cx| {
+                let Some(paths) =
+                    this.resolve_path_prompt(result, UiMessage::CancelledOpen, "image", cx)
+                else {
+                    return;
+                };
+                if let Some(job) = this.workspace.prepare_paths(paths, multiple) {
+                    this.spawn_workspace_job(job, cx);
+                } else {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn prompt_for_save(&mut self, export: EncodeSettings, cx: &mut Context<Self>) {
+        if self.workspace.is_busy() {
+            self.workspace.set_status(UiMessage::Busy);
+            cx.notify();
+            return;
+        }
+
+        let directory = self.path_prompt_directory();
+        let suggested_name = self.workspace.suggested_save_name(export);
+        let path_receiver = cx.prompt_for_new_path(&directory, Some(&suggested_name));
+
+        cx.spawn(async move |this, cx| {
+            let result = classify_path_prompt_result(path_receiver.await);
+            let _ = this.update(cx, |this, cx| {
+                let Some(path) =
+                    this.resolve_path_prompt(result, UiMessage::CancelledSave, "save", cx)
+                else {
+                    return;
+                };
+                if let Some(job) = this.workspace.prepare_save_path(path, export) {
+                    this.spawn_workspace_job(job, cx);
+                } else {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn prompt_for_output_directory(
+        &mut self,
+        command: OutputDirectoryCommand,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.is_busy() {
+            self.workspace.set_status(UiMessage::Busy);
+            cx.notify();
+            return;
+        }
+
+        let paths_receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("action.save")),
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result =
+                first_path_prompt_result(classify_path_prompt_result(paths_receiver.await));
+            let _ = this.update(cx, |this, cx| {
+                let Some(directory) = this.resolve_path_prompt(
+                    result,
+                    UiMessage::CancelledSave,
+                    "output directory",
+                    cx,
+                ) else {
+                    return;
+                };
+                match command {
+                    OutputDirectoryCommand::Slice(grid) => {
+                        if let Some(job) = this.workspace.prepare_slice_directory(grid, directory) {
+                            this.spawn_workspace_job(job, cx);
+                        } else {
+                            cx.notify();
+                        }
+                    }
+                    OutputDirectoryCommand::Batch(request)
+                        if matches!(
+                            request,
+                            BatchRequest::Watermark {
+                                source: WatermarkSource::Image,
+                                ..
+                            }
+                        ) =>
+                    {
+                        this.prompt_for_watermark_image(request, directory, cx);
+                    }
+                    OutputDirectoryCommand::Batch(request) => {
+                        if let Some(job) =
+                            this.workspace.prepare_batch_paths(request, directory, None)
+                        {
+                            this.spawn_workspace_job(job, cx);
+                        } else {
+                            cx.notify();
+                        }
+                    }
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn prompt_for_watermark_image(
+        &mut self,
+        request: BatchRequest,
+        directory: PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let paths_receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: false,
+            prompt: Some(tr("action.open")),
+        });
+
+        cx.spawn(async move |this, cx| {
+            let result =
+                first_path_prompt_result(classify_path_prompt_result(paths_receiver.await));
+            let _ = this.update(cx, |this, cx| {
+                let Some(path) = this.resolve_path_prompt(
+                    result,
+                    UiMessage::CancelledOpen,
+                    "watermark image",
+                    cx,
+                ) else {
+                    return;
+                };
+                if let Some(job) =
+                    this.workspace
+                        .prepare_batch_paths(request, directory, Some(path))
+                {
+                    this.spawn_workspace_job(job, cx);
+                } else {
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn resolve_path_prompt<T>(
+        &mut self,
+        result: PathPromptResult<T>,
+        cancelled: UiMessage,
+        operation: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Option<T> {
+        match result {
+            PathPromptResult::Selected(selected) => Some(selected),
+            PathPromptResult::Cancelled => {
+                self.workspace.set_status(cancelled);
+                cx.notify();
+                None
+            }
+            PathPromptResult::Failed(failure) => {
+                log::error!("{operation} path prompt failed: {failure:?}");
+                self.workspace.set_status(UiMessage::Error(ErrorKind::Io));
+                cx.notify();
+                None
+            }
+        }
+    }
+
+    fn path_prompt_directory(&self) -> PathBuf {
+        self.config
+            .last_output_dir
+            .clone()
+            .or_else(|| std::env::current_dir().ok())
+            .unwrap_or_else(|| PathBuf::from("."))
     }
 
     fn paste_image(&mut self, cx: &mut Context<Self>) {
@@ -1791,6 +2040,27 @@ impl Render for AppShell {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn path_prompt_result_distinguishes_cancel_from_channel_failure() {
+        let cancelled = classify_path_prompt_result::<PathBuf, (), ()>(Ok(Ok(None)));
+        assert!(matches!(cancelled, PathPromptResult::Cancelled));
+
+        let channel_closed = classify_path_prompt_result::<PathBuf, (), ()>(Err(()));
+        assert!(matches!(
+            channel_closed,
+            PathPromptResult::Failed(PathPromptFailure::ChannelClosed)
+        ));
+    }
+
+    #[test]
+    fn path_prompt_result_distinguishes_platform_failure() {
+        let failed = classify_path_prompt_result::<PathBuf, (), ()>(Ok(Err(())));
+        assert!(matches!(
+            failed,
+            PathPromptResult::Failed(PathPromptFailure::Platform)
+        ));
+    }
 
     #[test]
     fn file_size_format_uses_readable_binary_units() {

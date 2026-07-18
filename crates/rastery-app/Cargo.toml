@@ -24,7 +24,6 @@ gpui-component = "=0.5.1"
 image = "=0.25.8"
 log = "0.4.33"
 rastery-core = { path = "../rastery-core" }
-rfd = "0.17.2"
 rust-i18n = "3"
 
 [dev-dependencies]

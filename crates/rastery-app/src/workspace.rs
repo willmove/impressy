@@ -62,6 +62,65 @@ pub(crate) enum WorkspaceCommand {
     Batch(BatchRequest),
 }
 
+pub(crate) enum WorkspaceCommandRoute {
+    OpenImages { multiple: bool },
+    SaveResult,
+    OutputDirectory(OutputDirectoryCommand),
+    Direct(WorkspaceOperation),
+}
+
+pub(crate) enum OutputDirectoryCommand {
+    Slice(SliceGrid),
+    Batch(BatchRequest),
+}
+
+pub(crate) enum WorkspaceOperation {
+    Transform(TransformOperation),
+    ReadExif,
+    StripExif,
+    GenerateQr {
+        text: String,
+        options: QrOptions,
+    },
+    DecodeQr,
+    Collage {
+        layout: CollageLayout,
+        options: CollageOptions,
+    },
+    MakeGif(GifParams),
+}
+
+impl WorkspaceCommand {
+    pub fn route(self) -> WorkspaceCommandRoute {
+        match self {
+            Self::OpenSingle => WorkspaceCommandRoute::OpenImages { multiple: false },
+            Self::OpenMultiple => WorkspaceCommandRoute::OpenImages { multiple: true },
+            Self::SaveResult => WorkspaceCommandRoute::SaveResult,
+            Self::Slice(grid) => {
+                WorkspaceCommandRoute::OutputDirectory(OutputDirectoryCommand::Slice(grid))
+            }
+            Self::Batch(request) => {
+                WorkspaceCommandRoute::OutputDirectory(OutputDirectoryCommand::Batch(request))
+            }
+            Self::Transform(operation) => {
+                WorkspaceCommandRoute::Direct(WorkspaceOperation::Transform(operation))
+            }
+            Self::ReadExif => WorkspaceCommandRoute::Direct(WorkspaceOperation::ReadExif),
+            Self::StripExif => WorkspaceCommandRoute::Direct(WorkspaceOperation::StripExif),
+            Self::GenerateQr { text, options } => {
+                WorkspaceCommandRoute::Direct(WorkspaceOperation::GenerateQr { text, options })
+            }
+            Self::DecodeQr => WorkspaceCommandRoute::Direct(WorkspaceOperation::DecodeQr),
+            Self::Collage { layout, options } => {
+                WorkspaceCommandRoute::Direct(WorkspaceOperation::Collage { layout, options })
+            }
+            Self::MakeGif(params) => {
+                WorkspaceCommandRoute::Direct(WorkspaceOperation::MakeGif(params))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum BatchRequest {
     Convert {
@@ -163,69 +222,18 @@ impl Workspace {
         self.status = status;
     }
 
-    /// 在主线程完成输入校验和路径选择，返回可安全发送到后台的纯任务。
-    pub fn prepare(
-        &mut self,
-        command: WorkspaceCommand,
-        last_output_dir: Option<&Path>,
-        default_export: EncodeSettings,
-    ) -> Option<WorkspaceJob> {
+    /// 在主线程完成输入校验，返回可安全发送到后台的纯任务。
+    ///
+    /// 需要系统路径选择器的命令必须先由 `AppShell` 异步解析为具体路径，再调用下方
+    /// 对应的 `prepare_*` 方法。这里不会启动原生对话框。
+    pub fn prepare(&mut self, operation: WorkspaceOperation) -> Option<WorkspaceJob> {
         if self.busy {
             self.status = UiMessage::Busy;
             return None;
         }
 
-        let job = match command {
-            WorkspaceCommand::OpenSingle => {
-                let Some(path) = pick_open_file(last_output_dir) else {
-                    self.status = UiMessage::CancelledOpen;
-                    return None;
-                };
-                WorkspaceJob::LoadPaths {
-                    paths: vec![path],
-                    single: true,
-                }
-            }
-            WorkspaceCommand::OpenMultiple => {
-                let Some(paths) = pick_open_files(last_output_dir) else {
-                    self.status = UiMessage::CancelledOpen;
-                    return None;
-                };
-                WorkspaceJob::LoadPaths {
-                    paths,
-                    single: false,
-                }
-            }
-            WorkspaceCommand::SaveResult => {
-                let (extension, job) = if let Some(result) = &self.result_bytes {
-                    let extension = result.extension;
-                    (
-                        extension,
-                        SaveSource::Bytes {
-                            bytes: Arc::clone(result),
-                        },
-                    )
-                } else if let Some(image) = self.current_image_source() {
-                    let extension = default_export.format().extension();
-                    (
-                        extension,
-                        SaveSource::Image {
-                            image,
-                            settings: default_export,
-                        },
-                    )
-                } else {
-                    self.status = UiMessage::NeedResult;
-                    return None;
-                };
-
-                let Some(path) = pick_save_file(extension, last_output_dir) else {
-                    self.status = UiMessage::CancelledSave;
-                    return None;
-                };
-                WorkspaceJob::Save { source: job, path }
-            }
-            WorkspaceCommand::Transform(operation) => {
+        let job = match operation {
+            WorkspaceOperation::Transform(operation) => {
                 let image = if matches!(operation, TransformOperation::Beautify(_)) {
                     self.source_image_or_status(UiMessage::NeedImage)?
                 } else {
@@ -233,7 +241,7 @@ impl Workspace {
                 };
                 WorkspaceJob::Transform { image, operation }
             }
-            WorkspaceCommand::ReadExif => {
+            WorkspaceOperation::ReadExif => {
                 let Some(bytes) = &self.source_bytes else {
                     self.status = UiMessage::NeedExifImage;
                     return None;
@@ -242,7 +250,7 @@ impl Workspace {
                     bytes: Arc::clone(bytes),
                 }
             }
-            WorkspaceCommand::StripExif => {
+            WorkspaceOperation::StripExif => {
                 let Some(bytes) = &self.source_bytes else {
                     self.status = UiMessage::NeedExifImage;
                     return None;
@@ -251,101 +259,24 @@ impl Workspace {
                     bytes: Arc::clone(bytes),
                 }
             }
-            WorkspaceCommand::GenerateQr { text, options } => {
+            WorkspaceOperation::GenerateQr { text, options } => {
                 WorkspaceJob::GenerateQr { text, options }
             }
-            WorkspaceCommand::DecodeQr => WorkspaceJob::DecodeQr {
+            WorkspaceOperation::DecodeQr => WorkspaceJob::DecodeQr {
                 images: self.first_images_with(UiMessage::NeedQrImage)?,
             },
-            WorkspaceCommand::Collage { layout, options } => WorkspaceJob::Collage {
+            WorkspaceOperation::Collage { layout, options } => WorkspaceJob::Collage {
                 images: self.all_images()?,
                 layout,
                 options,
             },
-            WorkspaceCommand::Slice(grid) => {
-                let images = self.first_images()?;
-                let Some(directory) = pick_folder(last_output_dir) else {
-                    self.status = UiMessage::CancelledSave;
-                    return None;
-                };
-                WorkspaceJob::Slice {
-                    images,
-                    grid,
-                    directory,
-                }
-            }
-            WorkspaceCommand::MakeGif(params) => WorkspaceJob::Gif {
+            WorkspaceOperation::MakeGif(params) => WorkspaceJob::Gif {
                 images: self.all_images()?,
                 params,
             },
-            WorkspaceCommand::Batch(request) => {
-                let images = self.all_images()?;
-                let Some(directory) = pick_folder(last_output_dir) else {
-                    self.status = UiMessage::CancelledSave;
-                    return None;
-                };
-                let names = Arc::clone(&self.source_names);
-                match request {
-                    BatchRequest::Convert { format, settings } => WorkspaceJob::Batch {
-                        images,
-                        names,
-                        operation: BatchOperation::Ready(BatchOp::Convert { format, settings }),
-                        directory,
-                    },
-                    BatchRequest::Resize { width, height } => WorkspaceJob::Batch {
-                        images,
-                        names,
-                        operation: BatchOperation::Ready(BatchOp::Resize {
-                            width,
-                            height,
-                            filter: ResizeFilter::default(),
-                        }),
-                        directory,
-                    },
-                    BatchRequest::Watermark {
-                        source,
-                        text,
-                        opacity,
-                        placement,
-                    } => {
-                        let position = match placement {
-                            WatermarkPlacement::BottomRight => {
-                                watermark::Position::BottomRight { margin: 24 }
-                            }
-                            WatermarkPlacement::Tiled => watermark::Position::Tiled { spacing: 64 },
-                        };
-                        let operation = match source {
-                            WatermarkSource::Text => BatchOperation::TextWatermark {
-                                text,
-                                opacity,
-                                position,
-                            },
-                            WatermarkSource::Image => {
-                                let Some(path) = pick_open_file(last_output_dir) else {
-                                    self.status = UiMessage::CancelledOpen;
-                                    return None;
-                                };
-                                BatchOperation::ImageWatermark {
-                                    path,
-                                    opacity,
-                                    position,
-                                }
-                            }
-                        };
-                        WorkspaceJob::Batch {
-                            images,
-                            names,
-                            operation,
-                            directory,
-                        }
-                    }
-                }
-            }
         };
 
-        self.busy = true;
-        self.status = UiMessage::Processing;
-        Some(job)
+        self.start_job(job)
     }
 
     /// 从系统剪贴板取得编码字节后，准备后台解码任务。
@@ -373,12 +304,128 @@ impl Workspace {
             self.status = UiMessage::NeedImage;
             return None;
         }
-        self.busy = true;
-        self.status = UiMessage::Processing;
-        Some(WorkspaceJob::LoadPaths {
+        self.start_job(WorkspaceJob::LoadPaths {
             paths,
             single: !multiple,
         })
+    }
+
+    /// 用异步保存 prompt 返回的具体路径准备保存任务。
+    pub fn prepare_save_path(
+        &mut self,
+        path: PathBuf,
+        default_export: EncodeSettings,
+    ) -> Option<WorkspaceJob> {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return None;
+        }
+        let source = if let Some(result) = &self.result_bytes {
+            SaveSource::Bytes {
+                bytes: Arc::clone(result),
+            }
+        } else if let Some(image) = self.current_image_source() {
+            SaveSource::Image {
+                image,
+                settings: default_export,
+            }
+        } else {
+            self.status = UiMessage::NeedResult;
+            return None;
+        };
+        self.start_job(WorkspaceJob::Save { source, path })
+    }
+
+    /// 用异步目录 prompt 返回的具体路径准备切图任务。
+    pub fn prepare_slice_directory(
+        &mut self,
+        grid: SliceGrid,
+        directory: PathBuf,
+    ) -> Option<WorkspaceJob> {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return None;
+        }
+        let images = self.first_images()?;
+        self.start_job(WorkspaceJob::Slice {
+            images,
+            grid,
+            directory,
+        })
+    }
+
+    /// 用异步 prompt 返回的输出目录和可选图片水印路径准备批处理任务。
+    pub fn prepare_batch_paths(
+        &mut self,
+        request: BatchRequest,
+        directory: PathBuf,
+        watermark_path: Option<PathBuf>,
+    ) -> Option<WorkspaceJob> {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return None;
+        }
+        let images = self.all_images()?;
+        let names = Arc::clone(&self.source_names);
+        let operation = match request {
+            BatchRequest::Convert { format, settings } => {
+                BatchOperation::Ready(BatchOp::Convert { format, settings })
+            }
+            BatchRequest::Resize { width, height } => BatchOperation::Ready(BatchOp::Resize {
+                width,
+                height,
+                filter: ResizeFilter::default(),
+            }),
+            BatchRequest::Watermark {
+                source,
+                text,
+                opacity,
+                placement,
+            } => {
+                let position = match placement {
+                    WatermarkPlacement::BottomRight => {
+                        watermark::Position::BottomRight { margin: 24 }
+                    }
+                    WatermarkPlacement::Tiled => watermark::Position::Tiled { spacing: 64 },
+                };
+                match source {
+                    WatermarkSource::Text => BatchOperation::TextWatermark {
+                        text,
+                        opacity,
+                        position,
+                    },
+                    WatermarkSource::Image => {
+                        let Some(path) =
+                            watermark_path.filter(|path| is_supported_image_path(path))
+                        else {
+                            self.status = UiMessage::NeedImage;
+                            return None;
+                        };
+                        BatchOperation::ImageWatermark {
+                            path,
+                            opacity,
+                            position,
+                        }
+                    }
+                }
+            }
+        };
+        self.start_job(WorkspaceJob::Batch {
+            images,
+            names,
+            operation,
+            directory,
+        })
+    }
+
+    /// 当前结果建议使用的保存文件名。
+    pub fn suggested_save_name(&self, default_export: EncodeSettings) -> String {
+        let extension = self
+            .result_bytes
+            .as_deref()
+            .map(|result| result.extension)
+            .unwrap_or_else(|| default_export.format().extension());
+        t!("dialog.output_filename", extension = extension).to_string()
     }
 
     /// 准备把当前结果编码后复制到系统剪贴板。
@@ -528,6 +575,12 @@ impl Workspace {
             self.status = missing;
         }
         image
+    }
+
+    fn start_job(&mut self, job: WorkspaceJob) -> Option<WorkspaceJob> {
+        self.busy = true;
+        self.status = UiMessage::Processing;
+        Some(job)
     }
 }
 
@@ -1104,40 +1157,6 @@ fn detect_ext(bytes: &[u8]) -> &'static str {
     }
 }
 
-fn pick_open_file(directory: Option<&Path>) -> Option<PathBuf> {
-    let mut dialog = rfd::FileDialog::new().add_filter(t!("dialog.images"), IMAGE_EXTS);
-    if let Some(directory) = directory {
-        dialog = dialog.set_directory(directory);
-    }
-    dialog.pick_file()
-}
-
-fn pick_open_files(directory: Option<&Path>) -> Option<Vec<PathBuf>> {
-    let mut dialog = rfd::FileDialog::new().add_filter(t!("dialog.images"), IMAGE_EXTS);
-    if let Some(directory) = directory {
-        dialog = dialog.set_directory(directory);
-    }
-    dialog.pick_files()
-}
-
-fn pick_save_file(extension: &str, directory: Option<&Path>) -> Option<PathBuf> {
-    let mut dialog = rfd::FileDialog::new()
-        .add_filter(extension, &[extension])
-        .set_file_name(format!("rastery-output.{extension}"));
-    if let Some(directory) = directory {
-        dialog = dialog.set_directory(directory);
-    }
-    dialog.save_file()
-}
-
-fn pick_folder(directory: Option<&Path>) -> Option<PathBuf> {
-    let mut dialog = rfd::FileDialog::new();
-    if let Some(directory) = directory {
-        dialog = dialog.set_directory(directory);
-    }
-    dialog.pick_folder()
-}
-
 /// 把 `rastery-core` 的 RGBA 图转成 GPUI 的 [`RenderImage`]（BGRA 序）。
 pub(crate) fn to_render_image(img: &RgbaImage) -> Arc<RenderImage> {
     let mut bgra = img.clone();
@@ -1165,6 +1184,159 @@ mod tests {
         assert!(is_supported_image_path(Path::new("sample.WebP")));
         assert!(!is_supported_image_path(Path::new("notes.txt")));
         assert!(!is_supported_image_path(Path::new("no-extension")));
+    }
+
+    #[test]
+    fn async_picker_paths_keep_all_supported_collage_inputs() {
+        let mut workspace = Workspace::default();
+        let job = workspace
+            .prepare_paths(
+                vec![
+                    PathBuf::from("first.PNG"),
+                    PathBuf::from("notes.txt"),
+                    PathBuf::from("second.webp"),
+                ],
+                true,
+            )
+            .expect("supported paths should create a load job");
+
+        match job {
+            WorkspaceJob::LoadPaths { paths, single } => {
+                assert!(!single);
+                assert_eq!(
+                    paths,
+                    vec![PathBuf::from("first.PNG"), PathBuf::from("second.webp")]
+                );
+            }
+            _ => panic!("image picker paths should create a load-paths job"),
+        }
+    }
+
+    #[test]
+    fn async_picker_with_no_supported_images_keeps_workspace_reusable() {
+        let mut workspace = Workspace::default();
+
+        assert!(
+            workspace
+                .prepare_paths(vec![PathBuf::from("notes.txt")], true)
+                .is_none()
+        );
+        assert_eq!(workspace.status, UiMessage::NeedImage);
+        assert!(!workspace.is_busy());
+        assert!(
+            workspace
+                .prepare_paths(vec![PathBuf::from("photo.png")], false)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn cancelled_and_failed_prompts_leave_workspace_ready_for_the_next_command() {
+        for status in [UiMessage::CancelledOpen, UiMessage::Error(ErrorKind::Io)] {
+            let mut workspace = Workspace::default();
+            workspace.set_status(status);
+
+            assert!(!workspace.is_busy());
+            assert!(
+                workspace
+                    .prepare_paths(vec![PathBuf::from("photo.png")], false)
+                    .is_some()
+            );
+        }
+    }
+
+    #[test]
+    fn concrete_save_path_prepares_save_job_without_opening_a_dialog() {
+        let mut workspace = workspace_with_images(1);
+        let path = PathBuf::from("result.png");
+
+        let job = workspace
+            .prepare_save_path(
+                path.clone(),
+                EncodeSettings::Png {
+                    compression: PngCompression::Default,
+                },
+            )
+            .expect("a selected path should prepare the save job");
+
+        assert!(matches!(job, WorkspaceJob::Save { path: job_path, .. } if job_path == path));
+        assert!(workspace.is_busy());
+    }
+
+    #[test]
+    fn concrete_directory_prepares_slice_job_without_opening_a_dialog() {
+        let mut workspace = workspace_with_images(1);
+        let directory = PathBuf::from("tiles");
+        let grid = SliceGrid::new(2, 3).expect("valid slice grid");
+
+        let job = workspace
+            .prepare_slice_directory(grid, directory.clone())
+            .expect("a selected directory should prepare the slice job");
+
+        assert!(matches!(
+            job,
+            WorkspaceJob::Slice {
+                grid: job_grid,
+                directory: job_directory,
+                ..
+            } if job_grid == grid && job_directory == directory
+        ));
+    }
+
+    #[test]
+    fn concrete_paths_prepare_image_watermark_batch_without_dialogs() {
+        let mut workspace = workspace_with_images(2);
+        let directory = PathBuf::from("batch-output");
+        let watermark = PathBuf::from("watermark.png");
+        let request = BatchRequest::Watermark {
+            source: WatermarkSource::Image,
+            text: String::new(),
+            opacity: 0.5,
+            placement: WatermarkPlacement::BottomRight,
+        };
+
+        let job = workspace
+            .prepare_batch_paths(request, directory.clone(), Some(watermark.clone()))
+            .expect("selected output and watermark paths should prepare the batch job");
+
+        assert!(matches!(
+            job,
+            WorkspaceJob::Batch {
+                operation: BatchOperation::ImageWatermark { path, .. },
+                directory: job_directory,
+                ..
+            } if path == watermark && job_directory == directory
+        ));
+    }
+
+    #[test]
+    fn concrete_path_preparation_respects_busy_state() {
+        let mut workspace = workspace_with_images(1);
+        workspace.busy = true;
+
+        assert!(
+            workspace
+                .prepare_save_path(
+                    PathBuf::from("result.png"),
+                    EncodeSettings::Png {
+                        compression: PngCompression::Default,
+                    },
+                )
+                .is_none()
+        );
+        assert_eq!(workspace.status, UiMessage::Busy);
+    }
+
+    fn workspace_with_images(count: usize) -> Workspace {
+        Workspace {
+            images: Arc::new(
+                (0..count)
+                    .map(|_| RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])))
+                    .collect(),
+            ),
+            source_names: Arc::new((0..count).map(|index| format!("image-{index}")).collect()),
+            ..Workspace::default()
+        }
     }
 
     #[test]
