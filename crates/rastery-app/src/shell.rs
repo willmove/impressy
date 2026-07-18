@@ -81,6 +81,26 @@ fn first_path_prompt_result(result: PathPromptResult<Vec<PathBuf>>) -> PathPromp
     }
 }
 
+fn resolve_path_prompt<T>(
+    workspace: &mut Workspace,
+    result: PathPromptResult<T>,
+    cancelled: UiMessage,
+    operation: &'static str,
+) -> Option<T> {
+    match result {
+        PathPromptResult::Selected(selected) => Some(selected),
+        PathPromptResult::Cancelled => {
+            workspace.set_status(cancelled);
+            None
+        }
+        PathPromptResult::Failed(failure) => {
+            log::error!("{operation} path prompt failed: {failure:?}");
+            workspace.set_status(UiMessage::Error(ErrorKind::Io));
+            None
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum EstimateState {
     #[default]
@@ -584,9 +604,13 @@ impl AppShell {
         cx.spawn(async move |this, cx| {
             let result = classify_path_prompt_result(paths_receiver.await);
             let _ = this.update(cx, |this, cx| {
-                let Some(paths) =
-                    this.resolve_path_prompt(result, UiMessage::CancelledOpen, "image", cx)
-                else {
+                let Some(paths) = resolve_path_prompt(
+                    &mut this.workspace,
+                    result,
+                    UiMessage::CancelledOpen,
+                    "image",
+                ) else {
+                    cx.notify();
                     return;
                 };
                 if let Some(job) = this.workspace.prepare_paths(paths, multiple) {
@@ -613,9 +637,13 @@ impl AppShell {
         cx.spawn(async move |this, cx| {
             let result = classify_path_prompt_result(path_receiver.await);
             let _ = this.update(cx, |this, cx| {
-                let Some(path) =
-                    this.resolve_path_prompt(result, UiMessage::CancelledSave, "save", cx)
-                else {
+                let Some(path) = resolve_path_prompt(
+                    &mut this.workspace,
+                    result,
+                    UiMessage::CancelledSave,
+                    "save",
+                ) else {
+                    cx.notify();
                     return;
                 };
                 if let Some(job) = this.workspace.prepare_save_path(path, export) {
@@ -650,12 +678,13 @@ impl AppShell {
             let result =
                 first_path_prompt_result(classify_path_prompt_result(paths_receiver.await));
             let _ = this.update(cx, |this, cx| {
-                let Some(directory) = this.resolve_path_prompt(
+                let Some(directory) = resolve_path_prompt(
+                    &mut this.workspace,
                     result,
                     UiMessage::CancelledSave,
                     "output directory",
-                    cx,
                 ) else {
+                    cx.notify();
                     return;
                 };
                 match command {
@@ -709,12 +738,13 @@ impl AppShell {
             let result =
                 first_path_prompt_result(classify_path_prompt_result(paths_receiver.await));
             let _ = this.update(cx, |this, cx| {
-                let Some(path) = this.resolve_path_prompt(
+                let Some(path) = resolve_path_prompt(
+                    &mut this.workspace,
                     result,
                     UiMessage::CancelledOpen,
                     "watermark image",
-                    cx,
                 ) else {
+                    cx.notify();
                     return;
                 };
                 if let Some(job) =
@@ -728,29 +758,6 @@ impl AppShell {
             });
         })
         .detach();
-    }
-
-    fn resolve_path_prompt<T>(
-        &mut self,
-        result: PathPromptResult<T>,
-        cancelled: UiMessage,
-        operation: &'static str,
-        cx: &mut Context<Self>,
-    ) -> Option<T> {
-        match result {
-            PathPromptResult::Selected(selected) => Some(selected),
-            PathPromptResult::Cancelled => {
-                self.workspace.set_status(cancelled);
-                cx.notify();
-                None
-            }
-            PathPromptResult::Failed(failure) => {
-                log::error!("{operation} path prompt failed: {failure:?}");
-                self.workspace.set_status(UiMessage::Error(ErrorKind::Io));
-                cx.notify();
-                None
-            }
-        }
     }
 
     fn path_prompt_directory(&self) -> PathBuf {
@@ -2042,24 +2049,46 @@ mod tests {
     use super::*;
 
     #[test]
-    fn path_prompt_result_distinguishes_cancel_from_channel_failure() {
-        let cancelled = classify_path_prompt_result::<PathBuf, (), ()>(Ok(Ok(None)));
-        assert!(matches!(cancelled, PathPromptResult::Cancelled));
+    fn path_prompt_resolver_maps_cancel_and_leaves_workspace_reusable() {
+        let mut workspace = Workspace::default();
+        let result = classify_path_prompt_result::<PathBuf, (), ()>(Ok(Ok(None)));
 
-        let channel_closed = classify_path_prompt_result::<PathBuf, (), ()>(Err(()));
-        assert!(matches!(
-            channel_closed,
-            PathPromptResult::Failed(PathPromptFailure::ChannelClosed)
-        ));
+        let selected =
+            resolve_path_prompt(&mut workspace, result, UiMessage::CancelledOpen, "image");
+
+        assert!(selected.is_none());
+        assert_eq!(workspace.status_text(), UiMessage::CancelledOpen.text());
+        assert!(!workspace.is_busy());
+        assert!(
+            workspace
+                .prepare_paths(vec![PathBuf::from("photo.png")], false)
+                .is_some()
+        );
     }
 
     #[test]
-    fn path_prompt_result_distinguishes_platform_failure() {
-        let failed = classify_path_prompt_result::<PathBuf, (), ()>(Ok(Err(())));
-        assert!(matches!(
-            failed,
-            PathPromptResult::Failed(PathPromptFailure::Platform)
-        ));
+    fn path_prompt_resolver_maps_failures_and_leaves_workspace_reusable() {
+        for result in [
+            classify_path_prompt_result::<PathBuf, (), ()>(Ok(Err(()))),
+            classify_path_prompt_result::<PathBuf, (), ()>(Err(())),
+        ] {
+            let mut workspace = Workspace::default();
+
+            let selected =
+                resolve_path_prompt(&mut workspace, result, UiMessage::CancelledOpen, "image");
+
+            assert!(selected.is_none());
+            assert_eq!(
+                workspace.status_text(),
+                UiMessage::Error(ErrorKind::Io).text()
+            );
+            assert!(!workspace.is_busy());
+            assert!(
+                workspace
+                    .prepare_paths(vec![PathBuf::from("photo.png")], false)
+                    .is_some()
+            );
+        }
     }
 
     #[test]
