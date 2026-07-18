@@ -26,7 +26,7 @@ The current candidate implementation baseline is `fffdb2c`, one local commit ahe
 | --- | --- | --- |
 | `rastery-core` | Implemented as pure module functions over `image::RgbaImage`; no UI, network, or global state | Fully headless-testable; local quality gate and property tests pass |
 | `rastery-app` | Four-section GPUI shell, eight v1 pages, background jobs, config, i18n, drag/drop, clipboard, file export, and crop Element are wired | Type checks and headless state tests pass; Windows 11 release rendering, runtime locale switching, the native picker matrix, and all five performance metrics have partial real-machine evidence; the complete desktop matrix remains open |
-| Packaging | Windows MSI, Linux DEB, and macOS DMG pipelines are defined; Windows/Linux package smoke tests exist in CI | Signing, notarization, SmartScreen/Gatekeeper behavior, and real desktop installation remain release evidence |
+| Packaging | Windows MSI, Linux DEB, and macOS DMG pipelines are defined; Windows/Linux package smoke tests exist in CI; the exact local candidate produced a 5.10MiB unsigned MSI whose administratively extracted EXE matched the release SHA-256 | Elevated Windows install/association/upgrade/uninstall, signing, notarization, and SmartScreen/Gatekeeper behavior remain release evidence |
 | Acceptance evidence | Deterministic test-asset generator and JSON verifier exist; Windows 11 build 26200 partial evidence is recorded on issue #2 | `docs/testing/results/v1-desktop-acceptance.json` is not yet committed, Windows 10/macOS/Linux and package-security checks remain open, so v1 is not release-ready |
 
 Status words used here have the meanings defined in `requirements.md` §“v1 当前验收状态”. A future change must not promote a UI item from “implemented” to “verified” using compilation alone.
@@ -315,7 +315,7 @@ The release workflow additionally builds signed Windows artifacts, a signed/nota
 - deterministic generated-resource and EXIF-photo SHA-256 values;
 - package size, signing, notarization, install, uninstall, and platform security conclusions.
 
-`scripts/verify_desktop_acceptance.py` rejects missing, stale, incomplete, or out-of-budget evidence. Windows 11 build 26200 has partial release-build evidence for DirectWrite Chinese/English rendering, the complete native picker path matrix, cold start, 50MP preview, beautify preview, and 100-image responsiveness/progress. The baseline still has only an example JSON, and Windows 10, macOS, Linux, full feature/system-integration checks, and signed package checks remain open, so desktop acceptance is not complete.
+`scripts/verify_desktop_acceptance.py` rejects missing, stale, incomplete, or out-of-budget evidence. Windows 11 build 26200 has partial release-build evidence for DirectWrite Chinese/English rendering, the complete native picker path matrix, cold start, 50MP preview, beautify preview, and 100-image responsiveness/progress. The exact-candidate unsigned MSI also builds within budget and passes administrative extraction with a byte-identical release EXE; a non-elevated per-machine install was intentionally stopped by Windows Error 1925 without leaving installed state. The baseline still has only an example JSON, and Windows 10, macOS, Linux, elevated package integration, and signed package checks remain open, so desktop acceptance is not complete.
 
 ### Quality Gates
 
@@ -571,7 +571,7 @@ Exit criterion: all common and platform-specific checks in `v1-desktop-acceptanc
 1. Generate the deterministic acceptance assets and record their SHA-256. Completed reference: `b3f147092b8ca40044d4ba9dbb7c29f595038ff85de80c232332506adf5d2133`.
 2. Measure at least three release-build samples for cold start, 50MP preview, beautify preview latency, 100-image click response, and progress frequency on the required platforms. Windows 11 is complete and within budget; Windows 10, macOS, and Linux remain open.
 3. Optimize any metric outside the requirement budget, then repeat the affected platform evidence.
-4. Build the Windows MSI, macOS DMG, and Linux DEB; verify size, install/uninstall, associations, shortcuts, runtime dependencies, signing, and notarization.
+4. Build the Windows MSI, macOS DMG, and Linux DEB; verify size, install/uninstall, associations, shortcuts, runtime dependencies, signing, and notarization. The exact-candidate Windows MSI build, size, and extracted payload integrity pass; elevated install integration and signing remain open.
 5. Commit `docs/testing/results/v1-desktop-acceptance.json` for the exact release-affecting source baseline and run its verifier.
 6. Only after all gates pass may a `v*` tag create a release.
 

@@ -48,7 +48,7 @@ Linux 质量任务以及 Windows MSI、Linux DEB 冒烟均通过；`fffdb2c` 尚
 | --- | --- | --- |
 | `rastery-core` 本地引擎 | 自动验证通过 | 本地质量门禁全绿；Requirement 52–57 的 v1 property 覆盖已落地 |
 | `rastery-app` 八个 v1 功能页 | 已实现；Windows 11 部分真机验证通过 | Windows 11 build 26200 已验证 release 渲染、中英运行时切换，以及单选 / 多选 / 保存 / 目录 / 图片水印两阶段 picker 的选择、取消和恢复路径，未复现重入借用；完整八功能矩阵、拖放、跨应用剪贴板、Windows 10 与其他桌面仍待验收 |
-| 三平台编译与安装包结构 | 已实现 | `origin/main@f88a939` 的 Windows、macOS、Linux 质量任务及 Windows MSI、Linux DEB 冒烟均通过；`fffdb2c` 本地门禁通过，但精确候选跨平台 CI、签名、公证与真机安装仍待完成 |
+| 三平台编译与安装包结构 | 已实现 | `origin/main@f88a939` 的 Windows、macOS、Linux 质量任务及 Windows MSI、Linux DEB 冒烟均通过；`fffdb2c` 的本地未签名 MSI 为 5.10MiB，administrative extraction 成功且 payload EXE 摘要与 release 构建一致；精确候选跨平台 CI、管理员权限下的安装 / 关联 / 升级 / 卸载、签名与公证仍待完成 |
 | 性能指标 | Windows 11 真机验证通过；其他平台待验收 | release 构建三次样本均达标：冷启动最大 539.36ms、50MP 预览最大 1047.66ms、美化预览最大 198.56ms、100 张批处理点击响应最大 33.59ms、进度频率最小 1.97Hz；Windows 10、macOS 与 Linux 仍须按同一清单测量 |
 | v1 发布状态 | **不可标记为可发布** | 正式桌面验收结果文件尚未提交；缺失或过期会被发布工作流阻止 |
 
