@@ -36,13 +36,16 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 - **待真机验收**：代码已实现且能类型检查，但渲染、交互手感、系统集成或性能只能在桌面真机上判断。
 - **可发布**：自动验证与 [`v1-desktop-acceptance.md`](../testing/v1-desktop-acceptance.md) 全部通过，正式结果文件 `docs/testing/results/v1-desktop-acceptance.json` 存在且通过验证器，安装包签名 / 公证及平台专项均通过。
 
-截至 2026-07-18，基线代码为 `main@9eeff5f`：
+截至 2026-07-18，当前候选实现基线为 `377d62c`。该提交在
+`origin/main@9eeff5f` 之后完成了全部原生路径 prompt 的异步化；本地质量门禁执行
+60 个测试（`rastery-core` 28 个、`rastery-app` 32 个）并通过。候选提交尚未推送，
+因此远端三平台 CI 的最近证据仍是 `9eeff5f`，必须在候选分支推送后重跑：
 
 | 范围 | 当前状态 | 证据 / 剩余门禁 |
 | --- | --- | --- |
 | `rastery-core` 本地引擎 | 自动验证通过 | 本地质量门禁全绿；Requirement 52–57 的 v1 property 覆盖已落地 |
-| `rastery-app` 八个 v1 功能页 | 已实现，待真机验收 | 工作区、后台任务、i18n、拖放 / 剪贴板、自定义裁剪 Element 已接入；必须按桌面验收清单验证 |
-| 三平台编译与安装包结构 | 自动验证通过 | `main@9eeff5f` 的 Windows、macOS、Linux 质量任务及 Windows MSI、Linux DEB 冒烟均通过；签名、公证与真机安装仍需正式发布流程 |
+| `rastery-app` 八个 v1 功能页 | 已实现，待真机验收 | 工作区、后台任务、i18n、拖放 / 剪贴板、自定义裁剪 Element 与异步原生路径 prompt 已接入；Windows 仍须复核所有 picker 路径不再触发重入借用 |
+| 三平台编译与安装包结构 | 已实现 | `origin/main@9eeff5f` 的 Windows、macOS、Linux 质量任务及 Windows MSI、Linux DEB 冒烟均通过；`377d62c` 本地门禁通过，但候选跨平台 CI、签名、公证与真机安装仍待完成 |
 | 性能指标 | 待真机验收 | 冷启动、50MP 预览、美化预览、100 张批处理响应与进度频率均不能由 headless 测试替代 |
 | v1 发布状态 | **不可标记为可发布** | 正式桌面验收结果文件尚未提交；缺失或过期会被发布工作流阻止 |
 
@@ -958,7 +961,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 - **Feature Name**: rastery
 - **Spec Type**: Feature
-- **Document Version**: 1.1
+- **Document Version**: 1.2
 - **Total Requirements**: 60（v1: 35 / v2: 21 / removed: 4，见各条标题、ADR-0001 与 ADR-0003）
 - **Total Acceptance Criteria**: 442
 - **Last Updated**: 2026-07-18

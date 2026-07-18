@@ -20,7 +20,7 @@ Rastery is a cross-platform desktop image processing application built with Rust
 
 ### Current Implementation Baseline (2026-07-18)
 
-The repository baseline was reviewed at `main@9eeff5f`. At review time, the working tree also contained an in-progress asynchronous image-picker regression fix in `shell.rs` / `workspace.rs`; the spec update does not claim that uncommitted work as part of `main`. The baseline contains the complete v1 code paths, but it is **not a release-ready declaration**:
+The current candidate implementation baseline is `377d62c`, two local commits ahead of `origin/main@9eeff5f`. It includes the complete asynchronous native path-prompt change for image open, multi-image open, result save, output-directory selection, and image-watermark selection. The local quality gate executes 60 tests and passes. Because the candidate has not been pushed, the latest remote three-platform CI evidence still belongs to `9eeff5f`; this remains **not a release-ready declaration**:
 
 | Layer | Baseline state | Verification boundary |
 | --- | --- | --- |
@@ -290,7 +290,7 @@ Generation history and provider credentials are v2 data. They MUST NOT be added 
 
 ### Automated Baseline
 
-At `main@9eeff5f`, `cargo test` executes 51 tests: 28 in `rastery-core` and 23 in `rastery-app`. The reviewed working tree adds one asynchronous picker path regression test and executes 52. The core suite covers the active v1 correctness properties (Properties 1–15 and 17–28); app tests cover config recovery, parameter bounds, crop geometry, filename containment, batch progress/failure state, initial paths, logging filters, packaging identity, and text-watermark validation.
+At candidate `377d62c`, `cargo test` executes 60 tests: 28 in `rastery-core` and 32 in `rastery-app`. The nine picker regressions cover result classification, supported-path filtering and order, cancellation/failure reuse, concrete save/directory/watermark path preparation, and busy state. The core suite covers the active v1 correctness properties (Properties 1–15 and 17–28); app tests also cover config recovery, parameter bounds, crop geometry, filename containment, batch progress/failure state, initial paths, logging filters, packaging identity, and text-watermark validation.
 
 Property-based testing is required for pure transformations and invariants. Example-based unit tests are preferred for state transitions, platform-independent orchestration, validation, and known regressions. UI pixels, interaction feel, native dialogs, clipboard interoperability, signing, and timing are desktop acceptance concerns.
 
@@ -554,12 +554,13 @@ Implemented scope:
 - background image jobs with progress and reusable error state;
 - config persistence and recovery;
 - file open, drag/drop, clipboard paste/copy, export, and output-directory reveal;
+- all native open/save/directory flows use GPUI asynchronous path prompts, with selected paths passed to `Workspace` before file I/O or codec work begins;
 - crop selection custom Element with normalized geometry;
 - deterministic acceptance assets and result verifier.
 
 Remaining stabilization work:
 
-1. Convert every native file and directory picker to an asynchronous or post-listener flow that cannot re-enter a mutably borrowed GPUI entity on Windows. The current regression first appeared in image-open flow; save and directory flows must be audited under the same rule.
+1. On Windows, run the complete picker regression matrix and confirm that open, multi-open, save, output-directory, and image-watermark flows no longer trigger `RefCell already borrowed`.
 2. Run the complete feature matrix on Windows 10/11 x64, macOS, Linux X11, and Linux Wayland.
 3. Record any rendering, focus, DPI, clipboard, dialog, drag/drop, or file-manager defects as implementation work; compilation is not evidence for these behaviors.
 
@@ -636,10 +637,10 @@ The v1 baseline implements Properties 1–15 and 17–28. Property 16 was remove
 - **Feature Name**: rastery
 - **Spec Type**: Feature
 - **Workflow Type**: Requirements-First
-- **Document Version**: 1.1
+- **Document Version**: 1.2
 - **Total Requirements Covered**: 60
 - **Total Acceptance Criteria Addressed**: 442
 - **Correctness Properties Defined**: 29 active (27 v1 + 2 v2), plus removed Property 16 placeholder
-- **Automated Baseline**: 51 tests at `main@9eeff5f` (28 core + 23 app); 52 in the reviewed working tree after the async-picker regression test
+- **Automated Baseline**: 60 tests at candidate `377d62c` (28 core + 32 app); latest remote three-platform CI evidence remains `origin/main@9eeff5f`
 - **Last Updated**: 2026-07-18
 - **Status**: v1 implementation baseline complete; stabilization and desktop acceptance open; not release-ready
