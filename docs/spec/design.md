@@ -20,14 +20,14 @@ Rastery is a cross-platform desktop image processing application built with Rust
 
 ### Current Implementation Baseline (2026-07-18)
 
-The current candidate implementation baseline is `377d62c`, two local commits ahead of `origin/main@9eeff5f`. It includes the complete asynchronous native path-prompt change for image open, multi-image open, result save, output-directory selection, and image-watermark selection. The local quality gate executes 60 tests and passes. Because the candidate has not been pushed, the latest remote three-platform CI evidence still belongs to `9eeff5f`; this remains **not a release-ready declaration**:
+The current candidate implementation baseline is `fffdb2c`, one local commit ahead of `origin/main@f88a939`. It includes the complete asynchronous native path-prompt change for image open, multi-image open, result save, output-directory selection, and image-watermark selection, plus direct regression coverage through the production `resolve_path_prompt` seam for cancellation, platform failure, channel closure, non-busy recovery, and immediate reuse. The local quality gate executes 60 tests and passes. Remote `f88a939` passed the Windows, macOS, and Linux quality jobs plus Windows MSI and Linux DEB smoke tests; because `fffdb2c` has not been pushed, exact-candidate CI evidence remains open. This is **not a release-ready declaration**:
 
 | Layer | Baseline state | Verification boundary |
 | --- | --- | --- |
 | `rastery-core` | Implemented as pure module functions over `image::RgbaImage`; no UI, network, or global state | Fully headless-testable; local quality gate and property tests pass |
-| `rastery-app` | Four-section GPUI shell, eight v1 pages, background jobs, config, i18n, drag/drop, clipboard, file export, and crop Element are wired | Type checks and headless state tests pass; rendering, interaction, file-dialog behavior, desktop integration, and performance require real machines |
+| `rastery-app` | Four-section GPUI shell, eight v1 pages, background jobs, config, i18n, drag/drop, clipboard, file export, and crop Element are wired | Type checks and headless state tests pass; Windows 11 release rendering, runtime locale switching, the native picker matrix, and all five performance metrics have partial real-machine evidence; the complete desktop matrix remains open |
 | Packaging | Windows MSI, Linux DEB, and macOS DMG pipelines are defined; Windows/Linux package smoke tests exist in CI | Signing, notarization, SmartScreen/Gatekeeper behavior, and real desktop installation remain release evidence |
-| Acceptance evidence | Deterministic test-asset generator and JSON verifier exist | `docs/testing/results/v1-desktop-acceptance.json` is not yet committed, so v1 is not release-ready |
+| Acceptance evidence | Deterministic test-asset generator and JSON verifier exist; Windows 11 build 26200 partial evidence is recorded on issue #2 | `docs/testing/results/v1-desktop-acceptance.json` is not yet committed, Windows 10/macOS/Linux and package-security checks remain open, so v1 is not release-ready |
 
 Status words used here have the meanings defined in `requirements.md` §“v1 当前验收状态”. A future change must not promote a UI item from “implemented” to “verified” using compilation alone.
 
@@ -290,7 +290,7 @@ Generation history and provider credentials are v2 data. They MUST NOT be added 
 
 ### Automated Baseline
 
-At candidate `377d62c`, `cargo test` executes 60 tests: 28 in `rastery-core` and 32 in `rastery-app`. The nine picker regressions cover result classification, supported-path filtering and order, cancellation/failure reuse, concrete save/directory/watermark path preparation, and busy state. The core suite covers the active v1 correctness properties (Properties 1–15 and 17–28); app tests also cover config recovery, parameter bounds, crop geometry, filename containment, batch progress/failure state, initial paths, logging filters, packaging identity, and text-watermark validation.
+At candidate `fffdb2c`, `cargo test` executes 60 tests: 28 in `rastery-core` and 32 in `rastery-app`. Picker regressions cover supported-path filtering and order, concrete save/directory/watermark path preparation, busy state, and the production `resolve_path_prompt` seam for cancellation, platform failure, channel closure, non-busy recovery, and immediate reuse. The core suite covers the active v1 correctness properties (Properties 1–15 and 17–28); app tests also cover config recovery, parameter bounds, crop geometry, filename containment, batch progress/failure state, initial paths, logging filters, packaging identity, and text-watermark validation.
 
 Property-based testing is required for pure transformations and invariants. Example-based unit tests are preferred for state transitions, platform-independent orchestration, validation, and known regressions. UI pixels, interaction feel, native dialogs, clipboard interoperability, signing, and timing are desktop acceptance concerns.
 
@@ -315,7 +315,7 @@ The release workflow additionally builds signed Windows artifacts, a signed/nota
 - deterministic generated-resource and EXIF-photo SHA-256 values;
 - package size, signing, notarization, install, uninstall, and platform security conclusions.
 
-`scripts/verify_desktop_acceptance.py` rejects missing, stale, incomplete, or out-of-budget evidence. The baseline currently has only an example JSON, so desktop acceptance remains open.
+`scripts/verify_desktop_acceptance.py` rejects missing, stale, incomplete, or out-of-budget evidence. Windows 11 build 26200 has partial release-build evidence for DirectWrite Chinese/English rendering, the complete native picker path matrix, cold start, 50MP preview, beautify preview, and 100-image responsiveness/progress. The baseline still has only an example JSON, and Windows 10, macOS, Linux, full feature/system-integration checks, and signed package checks remain open, so desktop acceptance is not complete.
 
 ### Quality Gates
 
@@ -560,16 +560,16 @@ Implemented scope:
 
 Remaining stabilization work:
 
-1. On Windows, run the complete picker regression matrix and confirm that open, multi-open, save, output-directory, and image-watermark flows no longer trigger `RefCell already borrowed`.
-2. Run the complete feature matrix on Windows 10/11 x64, macOS, Linux X11, and Linux Wayland.
-3. Record any rendering, focus, DPI, clipboard, dialog, drag/drop, or file-manager defects as implementation work; compilation is not evidence for these behaviors.
+1. Repeat the now-passing Windows 11 picker regression matrix on Windows 10; the Windows 11 release build covered open, multi-open, save, output-directory, and image-watermark flows without `RefCell already borrowed`.
+2. Run the complete feature matrix on Windows 10/11 x64, macOS, Linux X11, and Linux Wayland. The current Windows 11 evidence is partial and does not replace the full matrix.
+3. Record any rendering, focus, DPI, clipboard, dialog, drag/drop, or file-manager defects as implementation work; compilation and partial Windows evidence are not proof for untested behaviors.
 
 Exit criterion: all common and platform-specific checks in `v1-desktop-acceptance.md` pass and are represented in the committed JSON evidence.
 
 ### [v1] Stage C — Performance and Release: Open
 
-1. Generate the deterministic acceptance assets and record their SHA-256.
-2. Measure at least three release-build samples for cold start, 50MP preview, beautify preview latency, 100-image click response, and progress frequency on the required platforms.
+1. Generate the deterministic acceptance assets and record their SHA-256. Completed reference: `b3f147092b8ca40044d4ba9dbb7c29f595038ff85de80c232332506adf5d2133`.
+2. Measure at least three release-build samples for cold start, 50MP preview, beautify preview latency, 100-image click response, and progress frequency on the required platforms. Windows 11 is complete and within budget; Windows 10, macOS, and Linux remain open.
 3. Optimize any metric outside the requirement budget, then repeat the affected platform evidence.
 4. Build the Windows MSI, macOS DMG, and Linux DEB; verify size, install/uninstall, associations, shortcuts, runtime dependencies, signing, and notarization.
 5. Commit `docs/testing/results/v1-desktop-acceptance.json` for the exact release-affecting source baseline and run its verifier.
@@ -637,10 +637,10 @@ The v1 baseline implements Properties 1–15 and 17–28. Property 16 was remove
 - **Feature Name**: rastery
 - **Spec Type**: Feature
 - **Workflow Type**: Requirements-First
-- **Document Version**: 1.2
+- **Document Version**: 1.3
 - **Total Requirements Covered**: 60
 - **Total Acceptance Criteria Addressed**: 442
 - **Correctness Properties Defined**: 29 active (27 v1 + 2 v2), plus removed Property 16 placeholder
-- **Automated Baseline**: 60 tests at candidate `377d62c` (28 core + 32 app); latest remote three-platform CI evidence remains `origin/main@9eeff5f`
+- **Automated Baseline**: 60 tests at candidate `fffdb2c` (28 core + 32 app); latest remote three-platform CI evidence is `origin/main@f88a939`
 - **Last Updated**: 2026-07-18
 - **Status**: v1 implementation baseline complete; stabilization and desktop acceptance open; not release-ready

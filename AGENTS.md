@@ -41,15 +41,15 @@ v1 阶段：
 
 i18n 随 UI 走，不随库走——`rastery-core` 是库，没有用户可见文本。
 
-## 环境约束：本机跑不了 GPUI
+## 环境约束：当前工作站是 Windows 真机
 
-主开发机是 **headless 云 VM**：无 `DISPLAY`、无显示服务器、0 个显示器、模拟显卡（Cirrus GD 5446，无硬件加速）。已装 rustup target 只有 `x86_64-unknown-linux-gnu`，无 mingw / cargo-xwin，**无法 check Windows target**。
+当前主开发机是 **Windows 11 x64 桌面真机**，有真实显示器、DirectX 11 / DirectWrite 与硬件加速，能够编译并运行 GPUI release 构建。此前 headless 云 VM 的限制只解释 [ADR-0002](./docs/adr/0002-core-before-ui.md) 的历史建设顺序，**不再是当前工作站能力边界**。
 
 因此：
 
 - **`rastery-core` 在本机全自动收敛**：写 → `cargo test` → 绿。无需人工介入。这是首选工作方式。
-- **UI 代码在本机能类型检查、不能运行**。已实测：`gpui 0.2.2` + `gpui-component 0.5.1` 在本机 `cargo check` 干净通过（3m14s，756 依赖，无缺失系统库）。**写完 GPUI 代码必须先在本机 `cargo check`**——它能自动抓住幻觉 API，那正是 GPUI pre-1.0 的主要风险形态。
-- **但「能编译」≠「已验证」**。渲染正确性、自定义 Element 手感、冷启动耗时，本机一律测不了，必须由开发者在真机（Windows / macOS / Linux 桌面）上验收。**涉及这些的改动，如实说明「本机只做了类型检查」，不要声称已验证。**
+- **UI 代码既要类型检查，也要在本机运行 release 构建验证。** `cargo check` 负责抓 GPUI pre-1.0 的 API 误用；Windows 真机验收按 [`docs/testing/v1-desktop-acceptance.md`](./docs/testing/v1-desktop-acceptance.md) 执行并记录精确候选 SHA、系统、GPU、DPI 与性能样本。
+- **Windows 11 实测不能外推到其他桌面。** Windows 10、macOS、Linux X11 / Wayland 的渲染、系统集成、安装包和性能仍须在对应真机验收；三平台 CI 编译通过也不能替代这些证据。
 
 ## 质量门禁（每个任务的 Definition of Done）
 
