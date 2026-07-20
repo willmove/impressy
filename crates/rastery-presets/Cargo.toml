@@ -1,0 +1,10 @@
+[package]
+name = "rastery-presets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Compile-time locked prompt templates and tiers for Rastery AI tools."
+
+[lints]
+workspace = true
+

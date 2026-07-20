@@ -1,0 +1,1 @@
+Retouch the portrait naturally while preserving the person's identity, facial geometry, age, expression, hairstyle, pose, clothing, and background composition. Improve lighting and minor temporary blemishes only. Keep real skin texture; no face reshaping, whitening, or cosmetic redesign. Tier: {{tier}}. Detail: {{user_instruction}}.

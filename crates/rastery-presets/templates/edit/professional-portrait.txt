@@ -1,0 +1,1 @@
+Transform the supplied portrait into a professional studio portrait. Preserve identity, facial geometry, age, expression, hairstyle, and body proportions. Use restrained studio lighting, a clean backdrop, realistic skin texture, and appropriate professional styling without changing the person. Tier: {{tier}}. Direction: {{user_instruction}}.

@@ -1,0 +1,1 @@
+Remove only the user-selected object or region from the reference image. Reconstruct the hidden background with consistent geometry, texture, lighting, grain, and shadows. Do not change any unselected person, product, text, framing, color grade, or camera perspective. Tier: {{tier}}. Selection detail: {{user_instruction}}.

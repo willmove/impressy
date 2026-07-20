@@ -1,0 +1,1 @@
+Generate a text-free editorial illustration for the supplied theme. Maintain a repeatable series art direction, palette, lighting, line language, and visual metaphor suitable for the selected usage. The image must contain no words, letters, watermarks, UI, or logos. Usage/style tier: {{tier}}. Theme detail: {{user_instruction}}.

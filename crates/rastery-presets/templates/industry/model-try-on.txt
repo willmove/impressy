@@ -1,0 +1,1 @@
+Generate a realistic model try-on image from the supplied garment reference. The garment is a strict keep-unchanged item: preserve its cut, silhouette, color, pattern, fabric, texture, seams, buttons, logos, and accessories. Fit it naturally to the selected model and scene with correct drape and occlusion. Tier: {{tier}}. Detail: {{user_instruction}}.

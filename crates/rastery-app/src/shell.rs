@@ -3,10 +3,11 @@
 //! GPUI 主线程只更新状态和渲染；文件读取、编解码及图像变换通过 background
 //! executor 执行。渲染和交互仍须按 ADR-0002 在桌面真机验收。
 
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{
     AnyElement, AppContext, ClipboardEntry, ClipboardItem, Context, Entity, ExternalPaths, Hsla,
@@ -19,16 +20,27 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_component::input::{Input, InputState};
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
+use gpui_component::spinner::Spinner;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{ActiveTheme, Disableable, h_flex, v_flex};
+use gpui_component::{ActiveTheme, Colorize, Disableable, h_flex, v_flex};
+use rastery_ai::{
+    AiError, ApiKey, AspectRatio as AiAspectRatio, CredentialStore, GeneratedImage,
+    GenerationQuality, GenerationRequest, ImageInput, ProviderId, ProviderRegistry,
+    SystemCredentialStore,
+};
 use rastery_core::config::{AppConfig, Language};
 use rastery_core::format::{self, EncodeSettings, OutputFormat, PngCompression, Quality};
 use rastery_core::transform::Rotation;
+use rastery_presets::{AiEditPreset, IndustryTool};
 use rust_i18n::t;
 
+use crate::ai_state::{AiErrorKind, AiStatus, AiUiState, RenderedAiImage};
 use crate::config_store::ConfigStore;
-use crate::crop_frame::{Selection, selection_overlay};
+use crate::crop_frame::{NormRect, Selection, selection_overlay};
 use crate::feature_params::{BatchMode, FeatureParams, ParamAction, ParamEffect, WatermarkSource};
+use crate::poster_canvas::{
+    POSTER_HEIGHT, POSTER_WIDTH, PosterLayout, PosterTextLayer, bounds_capture,
+};
 use crate::section::{Feature, Section};
 use crate::ui_message::{ErrorKind, UiMessage};
 use crate::workspace::{
@@ -44,6 +56,30 @@ fn tr(key: &str) -> SharedString {
 enum WorkspaceEvent {
     Progress { completed: usize, total: usize },
     Finished(Box<WorkspaceOutcome>),
+}
+
+#[derive(Clone)]
+struct AiPromptTask {
+    tier_id: String,
+    prompt: String,
+}
+
+enum AiTaskOutcome {
+    Finished(Vec<RenderedAiImage>),
+    Failed(AiErrorKind),
+}
+
+struct AiTaskRequest {
+    registry: ProviderRegistry,
+    credentials: Arc<dyn CredentialStore>,
+    provider: ProviderId,
+    feature: Feature,
+    prompts: Vec<AiPromptTask>,
+    images: Arc<Vec<rastery_core::RgbaImage>>,
+    mask_rect: Option<NormRect>,
+    aspect_ratio: AiAspectRatio,
+    count: u8,
+    quality: GenerationQuality,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -119,12 +155,24 @@ pub struct AppShell {
     workspace: Workspace,
     params: FeatureParams,
     crop_selection: Entity<Selection>,
+    poster_layout: Entity<PosterLayout>,
     qr_input: Entity<InputState>,
     watermark_input: Entity<InputState>,
+    ai_prompt: Entity<InputState>,
+    poster_title: Entity<InputState>,
+    poster_subtitle: Entity<InputState>,
+    poster_corner_label: Entity<InputState>,
+    seedream_key: Entity<InputState>,
+    nano_banana_key: Entity<InputState>,
+    openai_key: Entity<InputState>,
+    ai_state: AiUiState,
+    provider_registry: ProviderRegistry,
+    credential_store: Arc<dyn CredentialStore>,
     quality_slider: Entity<SliderState>,
     batch_quality_slider: Entity<SliderState>,
     qr_foreground: Entity<ColorPickerState>,
     qr_background: Entity<ColorPickerState>,
+    ai_custom_color: Entity<ColorPickerState>,
     estimate_state: EstimateState,
     estimate_generation: Arc<AtomicU64>,
     _subscriptions: Vec<Subscription>,
@@ -145,10 +193,36 @@ impl AppShell {
         }
         let params = FeatureParams::default();
         let crop_selection = cx.new(|_| Selection::new(Some(params.edit.ratio())));
+        let poster_layout = cx.new(|_| PosterLayout::default());
         let qr_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("placeholder.qr_text")));
         let watermark_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("placeholder.watermark_text")));
+        let ai_prompt =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("ai.placeholder.prompt")));
+        let poster_title =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("ai.placeholder.poster_title")));
+        let poster_subtitle = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(tr("ai.placeholder.poster_subtitle"))
+        });
+        let poster_corner_label = cx
+            .new(|cx| InputState::new(window, cx).placeholder(tr("ai.placeholder.poster_corner")));
+        let seedream_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(tr("ai.placeholder.api_key"))
+                .masked(true)
+        });
+        let nano_banana_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(tr("ai.placeholder.api_key"))
+                .masked(true)
+        });
+        let openai_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(tr("ai.placeholder.api_key"))
+                .masked(true)
+        });
+        let configured_provider = provider_from_config(&config.default_provider);
         let quality_slider = cx.new(|_| {
             SliderState::new()
                 .min(1.0)
@@ -165,6 +239,8 @@ impl AppShell {
         });
         let qr_foreground = cx.new(|cx| ColorPickerState::new(window, cx).default_value(black()));
         let qr_background = cx.new(|cx| ColorPickerState::new(window, cx).default_value(white()));
+        let ai_custom_color =
+            cx.new(|cx| ColorPickerState::new(window, cx).default_value(cx.theme().blue));
 
         let _subscriptions = vec![
             cx.subscribe(&quality_slider, |this, _, event: &SliderEvent, cx| {
@@ -207,12 +283,24 @@ impl AppShell {
             workspace,
             params,
             crop_selection,
+            poster_layout,
             qr_input,
             watermark_input,
+            ai_prompt,
+            poster_title,
+            poster_subtitle,
+            poster_corner_label,
+            seedream_key,
+            nano_banana_key,
+            openai_key,
+            ai_state: AiUiState::new(configured_provider),
+            provider_registry: ProviderRegistry::default(),
+            credential_store: Arc::new(SystemCredentialStore),
             quality_slider,
             batch_quality_slider,
             qr_foreground,
             qr_background,
+            ai_custom_color,
             estimate_state: EstimateState::Unavailable,
             estimate_generation: Arc::new(AtomicU64::new(0)),
             _subscriptions,
@@ -264,6 +352,23 @@ impl AppShell {
         self.watermark_input.update(cx, |input, input_cx| {
             input.set_placeholder(tr("placeholder.watermark_text"), window, input_cx);
         });
+        self.ai_prompt.update(cx, |input, input_cx| {
+            input.set_placeholder(tr("ai.placeholder.prompt"), window, input_cx);
+        });
+        self.poster_title.update(cx, |input, input_cx| {
+            input.set_placeholder(tr("ai.placeholder.poster_title"), window, input_cx);
+        });
+        self.poster_subtitle.update(cx, |input, input_cx| {
+            input.set_placeholder(tr("ai.placeholder.poster_subtitle"), window, input_cx);
+        });
+        self.poster_corner_label.update(cx, |input, input_cx| {
+            input.set_placeholder(tr("ai.placeholder.poster_corner"), window, input_cx);
+        });
+        for input in [&self.seedream_key, &self.nano_banana_key, &self.openai_key] {
+            input.update(cx, |input, input_cx| {
+                input.set_placeholder(tr("ai.placeholder.api_key"), window, input_cx);
+            });
+        }
         self.persist_config(true);
         cx.notify();
     }
@@ -397,8 +502,10 @@ impl AppShell {
         let is_v1 = feature.is_v1();
         let badge = if is_v1 {
             tr("placeholder.local_badge")
+        } else if feature.is_ai() {
+            tr("ai.badge")
         } else {
-            SharedString::from("v2")
+            tr("placeholder.dev_badge")
         };
         let badge_color = if is_v1 {
             theme.primary
@@ -438,6 +545,16 @@ impl AppShell {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open = Some(feature);
                 this.settings_open = false;
+                if let Some(spec) = feature.ai_spec() {
+                    this.ai_state.aspect_ratio = spec.default_ratio;
+                    this.ai_state.selected_tiers.clear();
+                    this.ai_state.selected_tiers.insert(0);
+                }
+                if feature == Feature::ImageEdit {
+                    this.crop_selection.update(cx, |selection, selection_cx| {
+                        selection.set_ratio(None, selection_cx);
+                    });
+                }
                 cx.notify();
             }))
     }
@@ -487,6 +604,8 @@ impl AppShell {
 
         let body = if feature.is_v1() {
             self.v1_page(feature, cx).into_any_element()
+        } else if feature.is_ai() {
+            self.ai_page(feature, cx).into_any_element()
         } else {
             div()
                 .text_color(muted)
@@ -1732,8 +1851,904 @@ impl AppShell {
             .when_some(preview, |this, preview| this.child(preview))
     }
 
+    fn cycle_ai_provider(&mut self, cx: &mut Context<Self>) {
+        self.ai_state.cycle_provider();
+        if let Some(capabilities) = self.provider_registry.capabilities(self.ai_state.provider) {
+            self.ai_state.apply_capabilities(capabilities);
+        }
+        self.config.default_provider = self.ai_state.provider.as_str().to_string();
+        self.persist_config(false);
+        cx.notify();
+    }
+
+    fn cycle_ai_ratio(&mut self, cx: &mut Context<Self>) {
+        if let Some(capabilities) = self.provider_registry.capabilities(self.ai_state.provider) {
+            self.ai_state.cycle_ratio(capabilities);
+        }
+        cx.notify();
+    }
+
+    fn cycle_ai_count(&mut self, cx: &mut Context<Self>) {
+        let maximum = self
+            .provider_registry
+            .capabilities(self.ai_state.provider)
+            .map_or(1, |capabilities| capabilities.max_generation_count);
+        self.ai_state.count = if self.ai_state.count >= maximum {
+            1
+        } else {
+            self.ai_state.count + 1
+        };
+        cx.notify();
+    }
+
+    fn cycle_ai_quality(&mut self, cx: &mut Context<Self>) {
+        self.ai_state.cycle_quality();
+        cx.notify();
+    }
+
+    fn cycle_edit_preset(&mut self, cx: &mut Context<Self>) {
+        self.ai_state.edit_preset_index =
+            (self.ai_state.edit_preset_index + 1) % AiEditPreset::ALL.len();
+        cx.notify();
+    }
+
+    fn api_key_input(&self, provider: ProviderId) -> &Entity<InputState> {
+        match provider {
+            ProviderId::Seedream => &self.seedream_key,
+            ProviderId::NanoBanana => &self.nano_banana_key,
+            ProviderId::OpenAi => &self.openai_key,
+        }
+    }
+
+    fn save_api_key(&mut self, provider: ProviderId, window: &mut Window, cx: &mut Context<Self>) {
+        let value = self
+            .api_key_input(provider)
+            .read(cx)
+            .value()
+            .trim()
+            .to_string();
+        let result = ApiKey::new(value).and_then(|key| self.credential_store.set(provider, &key));
+        match result {
+            Ok(()) => {
+                self.ai_state.status = AiStatus::Idle;
+                self.api_key_input(provider).update(cx, |input, input_cx| {
+                    input.set_value("", window, input_cx);
+                });
+                self.workspace.set_status(UiMessage::SettingsSaved);
+            }
+            Err(error) => self.ai_state.status = AiStatus::Error(error.into()),
+        }
+        cx.notify();
+    }
+
+    fn delete_api_key(&mut self, provider: ProviderId, cx: &mut Context<Self>) {
+        self.ai_state.status = match self.credential_store.delete(provider) {
+            Ok(()) => AiStatus::Idle,
+            Err(error) => AiStatus::Error(error.into()),
+        };
+        cx.notify();
+    }
+
+    fn clear_ai_history(&mut self, cx: &mut Context<Self>) {
+        self.config.generation_history.clear();
+        self.persist_config(true);
+        cx.notify();
+    }
+
+    fn ai_prompts(
+        &self,
+        feature: Feature,
+        cx: &Context<Self>,
+    ) -> Result<Vec<AiPromptTask>, AiErrorKind> {
+        let mut instruction = self.ai_prompt.read(cx).value().trim().to_string();
+        if feature == Feature::TextToImage && instruction.is_empty() {
+            return Err(AiErrorKind::InvalidRequest);
+        }
+        if matches!(
+            feature,
+            Feature::CoverFactory | Feature::ArticleIllustration
+        ) && instruction.is_empty()
+        {
+            return Err(AiErrorKind::InvalidRequest);
+        }
+        if feature == Feature::ImageEdit {
+            let preset = AiEditPreset::ALL[self.ai_state.edit_preset_index];
+            let prompt = rastery_presets::render_edit_prompt(preset, preset.id(), &instruction)
+                .unwrap_or(instruction);
+            if prompt.trim().is_empty() {
+                return Err(AiErrorKind::InvalidRequest);
+            }
+            return Ok(vec![AiPromptTask {
+                tier_id: preset.id().to_string(),
+                prompt,
+            }]);
+        }
+        if feature == Feature::Poster {
+            let spec = feature.ai_spec().ok_or(AiErrorKind::Unsupported)?;
+            let tier = self
+                .ai_state
+                .selected_tiers
+                .iter()
+                .next()
+                .and_then(|index| spec.tiers.get(*index))
+                .copied()
+                .unwrap_or("tech-launch");
+            return Ok(vec![AiPromptTask {
+                tier_id: tier.to_string(),
+                prompt: rastery_presets::render_poster_background_prompt(tier, &instruction),
+            }]);
+        }
+        if let Some(tool) = industry_tool(feature) {
+            if feature == Feature::PromotionalPoster {
+                let title = self.poster_title.read(cx).value().trim().to_string();
+                if !title.is_empty() {
+                    instruction = format!("Main title: {title}. {instruction}");
+                }
+            }
+            let spec = feature.ai_spec().ok_or(AiErrorKind::Unsupported)?;
+            return Ok(self
+                .ai_state
+                .selected_tiers
+                .iter()
+                .filter_map(|index| spec.tiers.get(*index))
+                .map(|tier| {
+                    let instruction = if feature == Feature::ProductRecolor && *tier == "custom" {
+                        let color = self
+                            .ai_custom_color
+                            .read(cx)
+                            .value()
+                            .map(|color| color.to_hex())
+                            .unwrap_or_else(|| "#000000".into());
+                        format!("Requested custom color: {color}. {instruction}")
+                    } else {
+                        instruction.clone()
+                    };
+                    AiPromptTask {
+                        tier_id: (*tier).to_string(),
+                        prompt: rastery_presets::render_industry_prompt(tool, tier, &instruction),
+                    }
+                })
+                .collect());
+        }
+        Ok(vec![AiPromptTask {
+            tier_id: "prompt".into(),
+            prompt: instruction,
+        }])
+    }
+
+    fn start_ai_generation(&mut self, feature: Feature, cx: &mut Context<Self>) {
+        if matches!(self.ai_state.status, AiStatus::Generating) {
+            return;
+        }
+        let Some(spec) = feature.ai_spec() else {
+            self.ai_state.status = AiStatus::Error(AiErrorKind::Unsupported);
+            cx.notify();
+            return;
+        };
+        let prompts = match self.ai_prompts(feature, cx) {
+            Ok(prompts) if !prompts.is_empty() => prompts,
+            Ok(_) | Err(_) => {
+                self.ai_state.status = AiStatus::Error(AiErrorKind::InvalidRequest);
+                cx.notify();
+                return;
+            }
+        };
+        let images = self.workspace.ai_reference_images();
+        if spec.needs_image && images.is_empty() {
+            self.ai_state.status = AiStatus::Error(AiErrorKind::InvalidRequest);
+            cx.notify();
+            return;
+        }
+        let provider = self.ai_state.provider;
+        let Some(capabilities) = self.provider_registry.capabilities(provider) else {
+            self.ai_state.status = AiStatus::Error(AiErrorKind::Provider);
+            cx.notify();
+            return;
+        };
+        if images.len() > usize::from(capabilities.max_reference_images) {
+            self.ai_state.status = AiStatus::Error(AiErrorKind::Unsupported);
+            cx.notify();
+            return;
+        }
+        let aspect_ratio = if feature == Feature::Poster {
+            AiAspectRatio::PortraitNineSixteen
+        } else {
+            self.ai_state.aspect_ratio
+        };
+        let count = if prompts.len() == 1 {
+            self.ai_state.count
+        } else {
+            1
+        };
+        let quality = self.ai_state.quality;
+        let mask_rect = if feature == Feature::ImageEdit
+            && AiEditPreset::ALL[self.ai_state.edit_preset_index] == AiEditPreset::Removal
+        {
+            if !capabilities.region_edit {
+                self.ai_state.status = AiStatus::Error(AiErrorKind::Unsupported);
+                cx.notify();
+                return;
+            }
+            Some(self.crop_selection.read(cx).rect)
+        } else {
+            None
+        };
+        let registry = self.provider_registry.clone();
+        let credentials = Arc::clone(&self.credential_store);
+        self.ai_state.status = AiStatus::Generating;
+        self.ai_state.results.clear();
+        self.ai_state.selected_results.clear();
+
+        let task = cx.background_executor().spawn(async move {
+            run_ai_task(AiTaskRequest {
+                registry,
+                credentials,
+                provider,
+                feature,
+                prompts,
+                images,
+                mask_rect,
+                aspect_ratio,
+                count,
+                quality,
+            })
+        });
+        cx.spawn(async move |this, cx| {
+            let outcome = task.await;
+            let _ = this.update(cx, |this, cx| {
+                match outcome {
+                    AiTaskOutcome::Finished(results) => {
+                        let count = results.len();
+                        this.ai_state.set_results(results);
+                        this.config.generation_history.push(
+                            rastery_core::config::GenerationHistoryRecord {
+                                created_at_unix_ms: unix_time_ms(),
+                                provider: provider.as_str().to_string(),
+                                feature: feature.id().to_string(),
+                                output_count: count,
+                                saved_paths: Vec::new(),
+                            },
+                        );
+                        this.persist_config(false);
+                    }
+                    AiTaskOutcome::Failed(error) => {
+                        this.ai_state.status = AiStatus::Error(error);
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn prompt_for_ai_output_directory(&mut self, feature: Feature, cx: &mut Context<Self>) {
+        if self.ai_state.selected_results.is_empty() {
+            self.ai_state.status = AiStatus::Error(AiErrorKind::InvalidRequest);
+            cx.notify();
+            return;
+        }
+        let paths_receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(tr("ai.action.save_selected")),
+        });
+        cx.spawn(async move |this, cx| {
+            let result =
+                first_path_prompt_result(classify_path_prompt_result(paths_receiver.await));
+            let _ = this.update(cx, |this, cx| {
+                let PathPromptResult::Selected(directory) = result else {
+                    this.ai_state.status = AiStatus::Idle;
+                    cx.notify();
+                    return;
+                };
+                let selected = this
+                    .ai_state
+                    .selected_results
+                    .iter()
+                    .filter_map(|index| this.ai_state.results.get(*index))
+                    .map(|result| result.generated.clone())
+                    .collect::<Vec<_>>();
+                let poster = (feature == Feature::Poster).then(|| {
+                    (
+                        [
+                            this.poster_title.read(cx).value().to_string(),
+                            this.poster_subtitle.read(cx).value().to_string(),
+                            this.poster_corner_label.read(cx).value().to_string(),
+                        ],
+                        this.poster_layout.read(cx).layers(),
+                    )
+                });
+                let task = cx.background_executor().spawn(async move {
+                    let paths = if let Some((texts, layout)) = poster {
+                        write_poster_results(&directory, &selected, &texts, layout)
+                    } else {
+                        write_ai_results(&directory, &selected)
+                    }?;
+                    Ok::<_, std::io::Error>((directory, paths))
+                });
+                cx.spawn(async move |this, cx| {
+                    let outcome = task.await;
+                    let _ = this.update(cx, |this, cx| {
+                        match outcome {
+                            Ok((directory, paths)) => {
+                                this.config.last_output_dir = Some(directory);
+                                if let Some(record) = this.config.generation_history.last_mut() {
+                                    record.saved_paths = paths.clone();
+                                }
+                                this.persist_config(false);
+                                this.ai_state.status = AiStatus::Saved(paths.len());
+                            }
+                            Err(error) => {
+                                log::error!("AI result save failed: {error}");
+                                this.ai_state.status = AiStatus::Error(AiErrorKind::Io);
+                            }
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            });
+        })
+        .detach();
+    }
+
+    fn ai_status_text(&self) -> SharedString {
+        match self.ai_state.status {
+            AiStatus::Idle => SharedString::default(),
+            AiStatus::Generating => tr("ai.status.generating"),
+            AiStatus::Ready(count) => format!("{}: {count}", t!("ai.status.ready")).into(),
+            AiStatus::Saved(count) => format!("{}: {count}", t!("ai.status.saved")).into(),
+            AiStatus::Error(error) => tr(error.i18n_key()),
+        }
+    }
+
+    fn poster_canvas(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        const PREVIEW_WIDTH: f32 = 270.0;
+        const PREVIEW_HEIGHT: f32 = 480.0;
+        let theme = cx.theme();
+        let layout = self.poster_layout.read(cx).layers();
+        let values = [
+            self.poster_title.read(cx).value().to_string(),
+            self.poster_subtitle.read(cx).value().to_string(),
+            self.poster_corner_label.read(cx).value().to_string(),
+        ];
+        let empty_keys = [
+            "ai.poster.empty_title",
+            "ai.poster.empty_subtitle",
+            "ai.poster.empty_corner",
+        ];
+        let layers = layout
+            .into_iter()
+            .enumerate()
+            .flat_map(|(index, layer)| {
+                let text = if values[index].trim().is_empty() {
+                    tr(empty_keys[index])
+                } else {
+                    values[index].clone().into()
+                };
+                let moving = self.poster_layout.clone();
+                let resizing = self.poster_layout.clone();
+                let handle_x = (layer.x * PREVIEW_WIDTH + 82.0).min(PREVIEW_WIDTH - 18.0);
+                let handle_y =
+                    (layer.y * PREVIEW_HEIGHT + layer.font_size / 4.0).min(PREVIEW_HEIGHT - 18.0);
+                vec![
+                    div()
+                        .id(SharedString::from(format!("poster-layer-{index}")))
+                        .absolute()
+                        .left(px(layer.x * PREVIEW_WIDTH))
+                        .top(px(layer.y * PREVIEW_HEIGHT))
+                        .max_w(px(PREVIEW_WIDTH * 0.84))
+                        .text_size(px(layer.font_size / 4.0))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(white())
+                        .cursor_pointer()
+                        .child(text)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_, event: &MouseDownEvent, _, cx| {
+                                moving.update(cx, |layout, layout_cx| {
+                                    layout.begin_move(index, event.position, layout_cx);
+                                });
+                            }),
+                        )
+                        .into_any_element(),
+                    div()
+                        .id(SharedString::from(format!("poster-resize-{index}")))
+                        .absolute()
+                        .left(px(handle_x))
+                        .top(px(handle_y))
+                        .w(px(18.0))
+                        .h(px(18.0))
+                        .rounded_sm()
+                        .bg(theme.primary)
+                        .text_color(theme.primary_foreground)
+                        .text_xs()
+                        .cursor_pointer()
+                        .child("↘")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_, event: &MouseDownEvent, _, cx| {
+                                resizing.update(cx, |layout, layout_cx| {
+                                    layout.begin_resize(index, event.position, layout_cx);
+                                });
+                            }),
+                        )
+                        .into_any_element(),
+                ]
+            })
+            .collect::<Vec<_>>();
+        let moving = self.poster_layout.clone();
+        let up = self.poster_layout.clone();
+        let up_out = self.poster_layout.clone();
+
+        v_flex()
+            .gap_2()
+            .child(
+                div()
+                    .id("poster-canvas")
+                    .relative()
+                    .w(px(PREVIEW_WIDTH))
+                    .h(px(PREVIEW_HEIGHT))
+                    .overflow_hidden()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(black())
+                    .when_some(self.ai_state.results.first(), |this, result| {
+                        this.child(img(result.preview.clone()).size_full())
+                    })
+                    .child(
+                        div()
+                            .absolute()
+                            .top_0()
+                            .left_0()
+                            .size_full()
+                            .child(bounds_capture(self.poster_layout.clone())),
+                    )
+                    .children(layers)
+                    .on_mouse_move(cx.listener(move |_, event: &MouseMoveEvent, _, cx| {
+                        moving.update(cx, |layout, layout_cx| {
+                            layout.on_move(event.position, layout_cx);
+                        });
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(move |_, _: &MouseUpEvent, _, cx| {
+                            up.update(cx, |layout, layout_cx| layout.on_up(layout_cx));
+                        }),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(move |_, _: &MouseUpEvent, _, cx| {
+                            up_out.update(cx, |layout, layout_cx| layout.on_up(layout_cx));
+                        }),
+                    ),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(tr("ai.poster.drag_help")),
+            )
+    }
+
+    fn ai_reference_panel(
+        &self,
+        selectable_region: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let image = self.workspace.preview()?;
+        let (width, height) = self.workspace.preview_size(520.0, 320.0)?;
+        let preview = div()
+            .relative()
+            .w(px(width))
+            .h(px(height))
+            .child(img(image).size_full());
+        let preview = if selectable_region {
+            let down = self.crop_selection.clone();
+            let moving = self.crop_selection.clone();
+            let up = self.crop_selection.clone();
+            let up_out = self.crop_selection.clone();
+            preview.child(
+                div()
+                    .id("ai-region-overlay")
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |_, event: &MouseDownEvent, _, cx| {
+                            down.update(cx, |selection, selection_cx| {
+                                selection.on_down(event.position, selection_cx);
+                            });
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(move |_, event: &MouseMoveEvent, _, cx| {
+                        moving.update(cx, |selection, selection_cx| {
+                            selection.on_move(event.position, selection_cx);
+                        });
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(move |_, _: &MouseUpEvent, _, cx| {
+                            up.update(cx, |selection, selection_cx| {
+                                selection.on_up(selection_cx);
+                            });
+                        }),
+                    )
+                    .on_mouse_up_out(
+                        MouseButton::Left,
+                        cx.listener(move |_, _: &MouseUpEvent, _, cx| {
+                            up_out.update(cx, |selection, selection_cx| {
+                                selection.on_up(selection_cx);
+                            });
+                        }),
+                    )
+                    .child(selection_overlay(self.crop_selection.clone())),
+            )
+        } else {
+            preview
+        };
+        Some(
+            v_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .p_2()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().secondary)
+                        .child(preview),
+                )
+                .when(selectable_region, |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(tr("ai.edit.region_help")),
+                    )
+                })
+                .into_any_element(),
+        )
+    }
+
+    fn ai_page(&self, feature: Feature, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let (primary, muted, border) = (theme.primary, theme.muted_foreground, theme.border);
+        let spec = feature.ai_spec().expect("AI page must have a feature spec");
+        let capabilities = self
+            .provider_registry
+            .capabilities(self.ai_state.provider)
+            .expect("registered provider");
+        let busy = matches!(self.ai_state.status, AiStatus::Generating);
+        let region_edit = feature == Feature::ImageEdit
+            && AiEditPreset::ALL[self.ai_state.edit_preset_index] == AiEditPreset::Removal;
+        let region_supported = !region_edit || capabilities.region_edit;
+        let reference = self.ai_reference_panel(region_edit, cx);
+        let poster =
+            (feature == Feature::Poster).then(|| self.poster_canvas(cx).into_any_element());
+        let tier_buttons = spec
+            .tiers
+            .iter()
+            .enumerate()
+            .map(|(index, tier)| {
+                let selected = self.ai_state.selected_tiers.contains(&index);
+                Button::new(SharedString::from(format!("ai-tier-{index}")))
+                    .label(tr(&format!("ai.tier.{tier}")))
+                    .when(selected, |button| button.primary())
+                    .when(!selected, |button| button.outline())
+                    .disabled(busy)
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.ai_state.toggle_tier(feature, index);
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+        let original_preview = self.workspace.preview();
+        let original_dimensions = self.workspace.current_dimensions();
+        let results = self
+            .ai_state
+            .results
+            .iter()
+            .enumerate()
+            .map(|(index, result)| {
+                let selected = self.ai_state.selected_results.contains(&index);
+                let show_original = feature == Feature::OldPhotoRestoration
+                    && self.ai_state.compare_original
+                    && original_preview.is_some()
+                    && original_dimensions.is_some();
+                let (preview, preview_width, preview_height) = if show_original {
+                    let (width, height) = original_dimensions.expect("checked above");
+                    (
+                        original_preview.clone().expect("checked above"),
+                        width,
+                        height,
+                    )
+                } else {
+                    (result.preview.clone(), result.width, result.height)
+                };
+                let scale = (240.0 / preview_width as f32)
+                    .min(180.0 / preview_height as f32)
+                    .min(1.0);
+                v_flex()
+                    .id(SharedString::from(format!("ai-result-{index}")))
+                    .gap_2()
+                    .p_2()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(if selected { primary } else { border })
+                    .cursor_pointer()
+                    .child(
+                        img(preview)
+                            .w(px(preview_width as f32 * scale))
+                            .h(px(preview_height as f32 * scale)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(tr(&format!("ai.tier.{}", result.tier_id))),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.ai_state.toggle_result(index);
+                        cx.notify();
+                    }))
+                    .when(feature == Feature::OldPhotoRestoration, |this| {
+                        this.on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                                this.ai_state.compare_original = true;
+                                cx.notify();
+                            }),
+                        )
+                        .on_mouse_up(
+                            MouseButton::Left,
+                            cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                                this.ai_state.compare_original = false;
+                                cx.notify();
+                            }),
+                        )
+                        .on_mouse_up_out(
+                            MouseButton::Left,
+                            cx.listener(|this, _: &MouseUpEvent, _, cx| {
+                                this.ai_state.compare_original = false;
+                                cx.notify();
+                            }),
+                        )
+                    })
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+
+        v_flex()
+            .id("ai-workspace")
+            .flex_1()
+            .overflow_y_scroll()
+            .pb_6()
+            .gap_4()
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                this.handle_drop(paths.paths().to_vec(), cx);
+            }))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .p_3()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(border)
+                    .child(Input::new(&self.ai_prompt).cleanable(true))
+                    .when(feature == Feature::Poster, |this| {
+                        this.child(Input::new(&self.poster_title).cleanable(true))
+                            .child(Input::new(&self.poster_subtitle).cleanable(true))
+                            .child(Input::new(&self.poster_corner_label).cleanable(true))
+                    })
+                    .when(feature == Feature::PromotionalPoster, |this| {
+                        this.child(Input::new(&self.poster_title).cleanable(true))
+                    })
+                    .when(feature == Feature::ImageEdit, |this| {
+                        this.child(
+                            Button::new("ai-edit-preset")
+                                .outline()
+                                .label(tr(&format!(
+                                    "ai.edit.{}",
+                                    AiEditPreset::ALL[self.ai_state.edit_preset_index].id()
+                                )))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.cycle_edit_preset(cx);
+                                })),
+                        )
+                    })
+                    .child(
+                        h_flex()
+                            .flex_wrap()
+                            .gap_2()
+                            .child(
+                                Button::new("ai-provider")
+                                    .outline()
+                                    .label(tr(provider_label_key(self.ai_state.provider)))
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cycle_ai_provider(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("ai-ratio")
+                                    .outline()
+                                    .label(self.ai_state.aspect_ratio.to_string())
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cycle_ai_ratio(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("ai-count")
+                                    .outline()
+                                    .label(format!(
+                                        "{}: {}",
+                                        t!("ai.parameter.count"),
+                                        self.ai_state.count
+                                    ))
+                                    .disabled(busy || capabilities.max_generation_count == 1)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cycle_ai_count(cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("ai-quality")
+                                    .outline()
+                                    .label(tr(quality_label_key(self.ai_state.quality)))
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.cycle_ai_quality(cx);
+                                    })),
+                            ),
+                    )
+                    .when(!tier_buttons.is_empty(), |this| {
+                        this.child(h_flex().flex_wrap().gap_2().children(tier_buttons))
+                    })
+                    .when(
+                        feature == Feature::ProductRecolor
+                            && self.ai_state.selected_tiers.contains(&3),
+                        |this| {
+                            this.child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(tr("ai.parameter.custom_color"))
+                                    .child(ColorPicker::new(&self.ai_custom_color)),
+                            )
+                        },
+                    )
+                    .child(div().text_xs().text_color(muted).child(format!(
+                        "{} {} · {} {}",
+                        t!("ai.capability.references"),
+                        capabilities.max_reference_images,
+                        t!("ai.capability.outputs"),
+                        capabilities.max_generation_count
+                    ))),
+            )
+            .when_some(reference, |this, reference| this.child(reference))
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_2()
+                    .when(
+                        spec.needs_image || feature == Feature::TextToImage,
+                        |this| {
+                            this.child(
+                                Button::new("ai-open-reference")
+                                    .outline()
+                                    .label(tr("ai.action.open_reference"))
+                                    .disabled(busy)
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.prompt_for_images(true, cx);
+                                    })),
+                            )
+                        },
+                    )
+                    .child(
+                        Button::new("ai-generate")
+                            .primary()
+                            .label(tr("ai.action.generate"))
+                            .disabled(busy || !region_supported)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.start_ai_generation(feature, cx);
+                            })),
+                    )
+                    .when(!results.is_empty(), |this| {
+                        this.child(
+                            Button::new("ai-save-selected")
+                                .outline()
+                                .label(tr("ai.action.save_selected"))
+                                .disabled(self.ai_state.selected_results.is_empty())
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.prompt_for_ai_output_directory(feature, cx);
+                                })),
+                        )
+                    }),
+            )
+            .when(!self.ai_status_text().is_empty(), |this| {
+                this.child(
+                    h_flex()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(primary)
+                        .when(busy, |this| this.child(Spinner::new()))
+                        .child(self.ai_status_text()),
+                )
+            })
+            .when(!region_supported, |this| {
+                this.child(
+                    div()
+                        .text_sm()
+                        .text_color(muted)
+                        .child(tr("ai.edit.region_provider_required")),
+                )
+            })
+            .when_some(poster, |this, poster| this.child(poster))
+            .when(
+                feature == Feature::OldPhotoRestoration && !results.is_empty(),
+                |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(tr("ai.comparison.hold_original")),
+                    )
+                },
+            )
+            .when(!results.is_empty(), |this| {
+                this.child(h_flex().flex_wrap().gap_3().children(results))
+            })
+    }
+
     fn settings_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let credential_rows =
+            ProviderId::ALL
+                .into_iter()
+                .map(|provider| {
+                    v_flex()
+                        .gap_2()
+                        .child(tr(provider_label_key(provider)))
+                        .child(
+                            Input::new(self.api_key_input(provider))
+                                .mask_toggle()
+                                .cleanable(true),
+                        )
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "settings-save-key-{}",
+                                        provider.as_str()
+                                    )))
+                                    .primary()
+                                    .label(tr("ai.settings.save_key"))
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.save_api_key(provider, window, cx);
+                                    })),
+                                )
+                                .child(
+                                    Button::new(SharedString::from(format!(
+                                        "settings-delete-key-{}",
+                                        provider.as_str()
+                                    )))
+                                    .outline()
+                                    .label(tr("ai.settings.delete_key"))
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.delete_api_key(provider, cx);
+                                    })),
+                                ),
+                        )
+                        .into_any_element()
+                })
+                .collect::<Vec<_>>();
         let output_dir: SharedString = self
             .config
             .last_output_dir
@@ -1749,8 +2764,12 @@ impl AppShell {
         let estimate = estimate_text(self.estimate_state);
 
         v_flex()
-            .size_full()
+            .id("settings-workspace")
+            .w_full()
+            .flex_1()
+            .overflow_y_scroll()
             .p_6()
+            .pb_8()
             .gap_5()
             .child(
                 div()
@@ -1818,6 +2837,52 @@ impl AppShell {
             )
             .child(
                 v_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(tr("ai.settings.title")),
+                    )
+                    .child(
+                        Button::new("settings-default-provider")
+                            .outline()
+                            .label(format!(
+                                "{}: {}",
+                                t!("ai.settings.default_provider"),
+                                t!(provider_label_key(self.ai_state.provider))
+                            ))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.cycle_ai_provider(cx);
+                            })),
+                    )
+                    .children(credential_rows)
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(tr("ai.settings.key_security")),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(format!(
+                                "{}: {}",
+                                t!("ai.settings.history"),
+                                self.config.generation_history.len()
+                            ))
+                            .child(
+                                Button::new("settings-clear-ai-history")
+                                    .outline()
+                                    .label(tr("ai.settings.clear_history"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.clear_ai_history(cx);
+                                    })),
+                            ),
+                    ),
+            )
+            .child(
+                v_flex()
                     .gap_1()
                     .child(tr("settings.output_directory"))
                     .child(
@@ -1839,6 +2904,357 @@ impl AppShell {
                 this.child(div().text_sm().text_color(theme.primary).child(status))
             })
     }
+}
+
+fn provider_from_config(value: &str) -> ProviderId {
+    match value {
+        "nano-banana" => ProviderId::NanoBanana,
+        "openai" => ProviderId::OpenAi,
+        _ => ProviderId::Seedream,
+    }
+}
+
+fn provider_label_key(provider: ProviderId) -> &'static str {
+    match provider {
+        ProviderId::Seedream => "ai.provider.seedream",
+        ProviderId::NanoBanana => "ai.provider.nano_banana",
+        ProviderId::OpenAi => "ai.provider.openai",
+    }
+}
+
+fn quality_label_key(quality: GenerationQuality) -> &'static str {
+    match quality {
+        GenerationQuality::Low => "ai.quality.low",
+        GenerationQuality::Medium => "ai.quality.medium",
+        GenerationQuality::High => "ai.quality.high",
+    }
+}
+
+fn industry_tool(feature: Feature) -> Option<IndustryTool> {
+    match feature {
+        Feature::OldPhotoRestoration => Some(IndustryTool::OldPhotoRestoration),
+        Feature::IdPhoto => Some(IndustryTool::IdPhoto),
+        Feature::AvatarStudio => Some(IndustryTool::AvatarStudio),
+        Feature::MemeGenerator => Some(IndustryTool::MemeGenerator),
+        Feature::AiPortrait => Some(IndustryTool::AiPortrait),
+        Feature::ModelTryOn => Some(IndustryTool::ModelTryOn),
+        Feature::ProductRecolor => Some(IndustryTool::ProductRecolor),
+        Feature::PromotionalPoster => Some(IndustryTool::PromotionalPoster),
+        Feature::PlatformAdaptation => Some(IndustryTool::PlatformAdaptation),
+        Feature::CoverFactory => Some(IndustryTool::CoverFactory),
+        Feature::ArticleIllustration => Some(IndustryTool::ArticleIllustration),
+        Feature::FoodEnhancement => Some(IndustryTool::FoodEnhancement),
+        Feature::InteriorPreview => Some(IndustryTool::InteriorPreview),
+        _ => None,
+    }
+}
+
+fn unix_time_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .try_into()
+        .unwrap_or(u64::MAX)
+}
+
+fn run_ai_task(task_request: AiTaskRequest) -> AiTaskOutcome {
+    let AiTaskRequest {
+        registry,
+        credentials,
+        provider,
+        feature,
+        prompts,
+        images,
+        mask_rect,
+        aspect_ratio,
+        count,
+        quality,
+    } = task_request;
+    let references = match images
+        .iter()
+        .map(|image| {
+            format::encode(
+                image,
+                EncodeSettings::Png {
+                    compression: PngCompression::Default,
+                },
+            )
+            .map_err(|_| AiError::InvalidRequest("reference image encoding failed".into()))
+            .and_then(|bytes| ImageInput::new(bytes, "image/png"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+    {
+        Ok(references) => references,
+        Err(error) => return AiTaskOutcome::Failed(error.into()),
+    };
+    let mask = match mask_rect {
+        Some(rect) => match images.first() {
+            Some(image) => match selection_mask(image.width(), image.height(), rect) {
+                Ok(mask) => Some(mask),
+                Err(error) => return AiTaskOutcome::Failed(error.into()),
+            },
+            None => return AiTaskOutcome::Failed(AiErrorKind::InvalidRequest),
+        },
+        None => None,
+    };
+
+    let mut key = None;
+    let mut rendered = Vec::new();
+    for task in prompts {
+        if feature == Feature::PlatformAdaptation
+            && let (Some(source), Some((width, height))) = (
+                images.first(),
+                exact_output_dimensions(feature, &task.tier_id),
+            )
+            && aspect_ratio_is_close(source.width(), source.height(), width, height)
+        {
+            match exact_cover(source, width, height).and_then(|image| {
+                format::encode(
+                    &image,
+                    EncodeSettings::Png {
+                        compression: PngCompression::Default,
+                    },
+                )
+                .map(|bytes| (image, bytes))
+            }) {
+                Ok((image, bytes)) => {
+                    rendered.push(RenderedAiImage {
+                        generated: GeneratedImage {
+                            bytes,
+                            mime_type: "image/png".into(),
+                        },
+                        preview: crate::workspace::to_render_image(&image),
+                        width,
+                        height,
+                        tier_id: task.tier_id,
+                    });
+                    continue;
+                }
+                Err(_) => return AiTaskOutcome::Failed(AiErrorKind::Provider),
+            }
+        }
+
+        if key.is_none() {
+            key = match credentials.get(provider) {
+                Ok(key) => Some(key),
+                Err(error) => return AiTaskOutcome::Failed(error.into()),
+            };
+        }
+        let request = GenerationRequest {
+            prompt: task.prompt,
+            reference_images: references.clone(),
+            mask: mask.clone(),
+            aspect_ratio,
+            count,
+            quality,
+        };
+        let response = match registry.generate(
+            provider,
+            &request,
+            key.as_ref().expect("credential initialized above"),
+        ) {
+            Ok(response) => response,
+            Err(error) => return AiTaskOutcome::Failed(error.into()),
+        };
+        if response.images.is_empty() {
+            return AiTaskOutcome::Failed(AiErrorKind::Provider);
+        }
+        for generated in response.images {
+            let image = match format::decode(&generated.bytes) {
+                Ok(image) => image,
+                Err(_) => return AiTaskOutcome::Failed(AiErrorKind::Provider),
+            };
+            let (image, generated) =
+                match normalize_ai_output(feature, &task.tier_id, image, generated) {
+                    Ok(output) => output,
+                    Err(_) => return AiTaskOutcome::Failed(AiErrorKind::Provider),
+                };
+            let (width, height) = image.dimensions();
+            rendered.push(RenderedAiImage {
+                generated,
+                preview: crate::workspace::to_render_image(&image),
+                width,
+                height,
+                tier_id: task.tier_id.clone(),
+            });
+        }
+    }
+
+    AiTaskOutcome::Finished(rendered)
+}
+
+fn selection_mask(width: u32, height: u32, rect: NormRect) -> Result<ImageInput, AiError> {
+    let mut mask =
+        rastery_core::RgbaImage::from_pixel(width, height, image::Rgba([255, 255, 255, 255]));
+    let left = (rect.x.clamp(0.0, 1.0) * width as f32).round() as u32;
+    let top = (rect.y.clamp(0.0, 1.0) * height as f32).round() as u32;
+    let right = ((rect.x + rect.w).clamp(0.0, 1.0) * width as f32).round() as u32;
+    let bottom = ((rect.y + rect.h).clamp(0.0, 1.0) * height as f32).round() as u32;
+    for y in top.min(height)..bottom.min(height) {
+        for x in left.min(width)..right.min(width) {
+            mask.put_pixel(x, y, image::Rgba([0, 0, 0, 0]));
+        }
+    }
+    let bytes = format::encode(
+        &mask,
+        EncodeSettings::Png {
+            compression: PngCompression::Default,
+        },
+    )
+    .map_err(|_| AiError::InvalidRequest("region mask encoding failed".into()))?;
+    ImageInput::new(bytes, "image/png")
+}
+
+fn normalize_ai_output(
+    feature: Feature,
+    tier_id: &str,
+    image: rastery_core::RgbaImage,
+    generated: GeneratedImage,
+) -> rastery_core::Result<(rastery_core::RgbaImage, GeneratedImage)> {
+    let Some((width, height)) = exact_output_dimensions(feature, tier_id) else {
+        return Ok((image, generated));
+    };
+    let image = exact_cover(&image, width, height)?;
+    let bytes = format::encode(
+        &image,
+        EncodeSettings::Png {
+            compression: PngCompression::Default,
+        },
+    )?;
+    Ok((
+        image,
+        GeneratedImage {
+            bytes,
+            mime_type: "image/png".into(),
+        },
+    ))
+}
+
+fn exact_output_dimensions(feature: Feature, tier_id: &str) -> Option<(u32, u32)> {
+    match feature {
+        Feature::Poster => Some((POSTER_WIDTH, POSTER_HEIGHT)),
+        Feature::IdPhoto if tier_id.starts_with("one-inch-") => Some((295, 413)),
+        Feature::IdPhoto if tier_id.starts_with("two-inch-") => Some((413, 579)),
+        Feature::IdPhoto if tier_id.starts_with("visa-") => Some((600, 600)),
+        Feature::AvatarStudio | Feature::MemeGenerator => Some((1024, 1024)),
+        Feature::PromotionalPoster => Some((1200, 1600)),
+        Feature::PlatformAdaptation => match tier_id {
+            "taobao-main-800x800" => Some((800, 800)),
+            "xiaohongshu-1242x1656" => Some((1242, 1656)),
+            "wechat-cover-900x383" => Some((900, 383)),
+            "douyin-1080x1920" => Some((1080, 1920)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn aspect_ratio_is_close(source_width: u32, source_height: u32, width: u32, height: u32) -> bool {
+    let source = f64::from(source_width) / f64::from(source_height.max(1));
+    let target = f64::from(width) / f64::from(height.max(1));
+    ((source - target) / target).abs() <= 0.08
+}
+
+fn exact_cover(
+    image: &rastery_core::RgbaImage,
+    width: u32,
+    height: u32,
+) -> rastery_core::Result<rastery_core::RgbaImage> {
+    use rastery_core::transform::{CropRect, ResizeFilter};
+
+    let source_ratio = f64::from(image.width()) / f64::from(image.height());
+    let target_ratio = f64::from(width) / f64::from(height);
+    let crop = if source_ratio > target_ratio {
+        let crop_width = (f64::from(image.height()) * target_ratio).round() as u32;
+        CropRect {
+            x: (image.width() - crop_width) / 2,
+            y: 0,
+            width: crop_width,
+            height: image.height(),
+        }
+    } else {
+        let crop_height = (f64::from(image.width()) / target_ratio).round() as u32;
+        CropRect {
+            x: 0,
+            y: (image.height() - crop_height) / 2,
+            width: image.width(),
+            height: crop_height,
+        }
+    };
+    let cropped = rastery_core::transform::crop(image, crop)?;
+    rastery_core::transform::resize(&cropped, width, height, ResizeFilter::Lanczos3)
+}
+
+fn write_ai_results(directory: &Path, images: &[GeneratedImage]) -> std::io::Result<Vec<PathBuf>> {
+    fs::create_dir_all(directory)?;
+    let timestamp = unix_time_ms();
+    images
+        .iter()
+        .enumerate()
+        .map(|(index, image)| {
+            let extension = match image.mime_type.as_str() {
+                "image/jpeg" => "jpg",
+                "image/webp" => "webp",
+                _ => "png",
+            };
+            let path = directory.join(rastery_core::naming::ai_filename(
+                timestamp,
+                index + 1,
+                extension,
+            ));
+            fs::write(&path, &image.bytes)?;
+            Ok(path)
+        })
+        .collect()
+}
+
+fn write_poster_results(
+    directory: &Path,
+    backgrounds: &[GeneratedImage],
+    texts: &[String; 3],
+    layout: [PosterTextLayer; 3],
+) -> std::io::Result<Vec<PathBuf>> {
+    fs::create_dir_all(directory)?;
+    let timestamp = unix_time_ms();
+    backgrounds
+        .iter()
+        .enumerate()
+        .map(|(index, background)| {
+            let background = format::decode(&background.bytes)
+                .and_then(|image| exact_cover(&image, POSTER_WIDTH, POSTER_HEIGHT))
+                .map_err(std::io::Error::other)?;
+            let layers = texts
+                .iter()
+                .zip(layout)
+                .filter(|(text, _)| !text.trim().is_empty())
+                .map(|(text, layout)| {
+                    crate::text_watermark::rasterize_with_size(text, layout.font_size)
+                        .map(|image| rastery_core::poster::RasterLayer {
+                            image,
+                            x: (layout.x * POSTER_WIDTH as f32).round() as u32,
+                            y: (layout.y * POSTER_HEIGHT as f32).round() as u32,
+                        })
+                        .map_err(std::io::Error::other)
+                })
+                .collect::<std::io::Result<Vec<_>>>()?;
+            let output = rastery_core::poster::compose(&background, &layers);
+            let bytes = format::encode(
+                &output,
+                EncodeSettings::Png {
+                    compression: PngCompression::Default,
+                },
+            )
+            .map_err(std::io::Error::other)?;
+            let path = directory.join(rastery_core::naming::ai_filename(
+                timestamp,
+                index + 1,
+                "png",
+            ));
+            fs::write(&path, bytes)?;
+            Ok(path)
+        })
+        .collect()
 }
 
 fn default_export_settings(config: &AppConfig) -> EncodeSettings {
@@ -2126,5 +3542,49 @@ mod tests {
         assert_eq!(initial_paths_feature(1), Feature::Edit);
         assert_eq!(initial_paths_feature(2), Feature::Batch);
         assert_eq!(initial_paths_feature(100), Feature::Batch);
+    }
+
+    #[test]
+    fn ai_region_mask_is_transparent_only_inside_selection() {
+        let input = selection_mask(
+            10,
+            10,
+            NormRect {
+                x: 0.2,
+                y: 0.3,
+                w: 0.4,
+                h: 0.2,
+            },
+        )
+        .expect("mask");
+        let mask = format::decode(&input.bytes).expect("decode mask");
+        assert_eq!(mask.get_pixel(0, 0).0[3], 255);
+        assert_eq!(mask.get_pixel(3, 4).0[3], 0);
+        assert_eq!(mask.get_pixel(8, 8).0[3], 255);
+    }
+
+    #[test]
+    fn ai_output_postprocessing_uses_exact_business_dimensions() {
+        assert_eq!(
+            exact_output_dimensions(Feature::IdPhoto, "one-inch-blue-suit"),
+            Some((295, 413))
+        );
+        assert_eq!(
+            exact_output_dimensions(Feature::PromotionalPoster, "new-arrival"),
+            Some((1200, 1600))
+        );
+        assert_eq!(
+            exact_output_dimensions(Feature::PlatformAdaptation, "wechat-cover-900x383"),
+            Some((900, 383))
+        );
+    }
+
+    #[test]
+    fn local_platform_crop_has_exact_dimensions_without_stretching() {
+        let source = rastery_core::RgbaImage::from_pixel(1_000, 1_000, image::Rgba([1, 2, 3, 255]));
+        let output = exact_cover(&source, 800, 800).expect("local crop");
+        assert_eq!(output.dimensions(), (800, 800));
+        assert!(aspect_ratio_is_close(1_000, 1_000, 800, 800));
+        assert!(!aspect_ratio_is_close(1_000, 1_000, 900, 383));
     }
 }

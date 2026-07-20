@@ -40,6 +40,7 @@ pub mod error;
 pub mod exif;
 pub mod format;
 pub mod naming;
+pub mod poster;
 pub mod qr;
 pub mod slice;
 pub mod transform;

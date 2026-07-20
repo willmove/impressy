@@ -5,14 +5,14 @@ Rastery 是一款跨平台原生桌面图像工具箱（Rust + GPUI），聚焦�
 ## 工具链与 workspace
 
 - **Rust**：stable（本机 1.96.1）。`gpui 0.2.2` 与 `gpui-component 0.5.1` 均为 **edition 2024**，Rastery 的 crate 一律用 `edition = "2024"`（需 Rust ≥ 1.85）。两者都未声明 MSRV。
-- **Workspace crate 职责**（v1 只建前两个，见 [ADR-0001](./docs/adr/0001-v1-scope-local-only.md) 与 [ADR-0003](./docs/adr/0003-remove-screen-capture.md)）：
+- **Workspace crate 职责**（v1 先建前两个；v2 已按 [ADR-0004](./docs/adr/0004-v2-provider-contract.md) 启动后两个）：
 
 | crate | 职责 | v1 |
 | --- | --- | --- |
 | `rastery-core` | 本地图像引擎：裁剪/压缩/拼接/切图/GIF/二维码/EXIF/水印。**纯函数，无 UI 无网络**，可完全 headless 测试 | ✅ |
 | `rastery-app` | GPUI UI 层：四大板块导航 + 各功能页面 + 自定义 Element | ✅ |
-| `rastery-ai` | AI Provider 抽象层与各家适配器 | ❌ v2 |
-| `rastery-presets` | 行业工具锁定提示词模板库 | ❌ v2 |
+| `rastery-ai` | AI Provider 抽象层与各家适配器 | ✅ v2 |
+| `rastery-presets` | 行业工具锁定提示词模板库 | ✅ v2 |
 
 ## 动工前先读
 
@@ -22,7 +22,7 @@ Rastery 是一款跨平台原生桌面图像工具箱（Rust + GPUI），聚焦�
 
 `docs/spec/archive/rastery-spec-v0.3.md` **已冻结**，仅作历史参考，**不要据此写代码**——它描述的是 v1+v2 全量，且里程碑顺序已被推翻。
 
-## v1 只做本地功能（硬约束）
+## v1 本地功能边界与 v2 当前状态（硬约束）
 
 **v1 = 本地功能**：完全离线、不需要 API Key 的图片处理功能集合。FR-08 屏幕截图、FR-09 屏幕取色及其支撑需求已按 ADR-0003 从当前范围剥离。
 **v2 = AI 功能**：Requirement 4、5、16、17、18、19–31、33、50、59，以及所有标 `〔v2〕` 的 AC。
@@ -32,6 +32,8 @@ v1 阶段：
 - **不建 `rastery-capture`、`rastery-ai`、`rastery-presets`。** workspace 只有 `rastery-app`、`rastery-core`。
 - **不实现** Provider trait、BYOK、keyring / Credential Store、FR-11 海报设计。
 - 主界面上「AI 生成与改图」与「行业定制 AI 工具」两个板块**是空的**，做「开发中」占位即可（与三个视频功能一样）。
+
+上述为 v1 的历史边界。**当前 v2 已由 ADR-0004 启动**：workspace 有四个 crate，两个 AI 板块与海报设计实现完整图片功能；只有三个视频入口继续为「开发中」。任何后续修改都不得让 `rastery-core` 依赖网络、API Key 或 Provider 初始化。
 
 理由见 [ADR-0001](./docs/adr/0001-v1-scope-local-only.md)：代码主要由 AI 生成，瓶颈在验收不在写码；AI 功能的验收标准是人眼主观判断的「保持不变项」，最好写、最难验。
 

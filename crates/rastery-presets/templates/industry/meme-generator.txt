@@ -1,0 +1,1 @@
+Convert the supplied person into a clean Q-style chat sticker expressing the selected emotion. Preserve recognizable facial identity, hairstyle, signature clothing colors, and accessories. Use a transparent or simple sticker background, readable silhouette, bold expression, and no text unless explicitly supplied. Emotion tier: {{tier}}. Detail: {{user_instruction}}.

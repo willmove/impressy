@@ -577,6 +577,9 @@ exif:
     en: Privacy-sensitive device or location metadata is present.
     zh-CN: 检测到设备或位置隐私信息。
 placeholder:
+  dev_badge:
+    en: Planned
+    zh-CN: 规划中
   dev:
     en: Under development (v2). This feature ships in a later release.
     zh-CN: 开发中（v2）。该功能将在后续版本提供。
@@ -731,3 +734,534 @@ feature:
     desc:
       en: "13 industry tools: ID photos, avatars, product shots, and more."
       zh-CN: 13 项行业工具：证件照、头像、商品图等。
+  old_photo:
+    name:
+      en: Old Photo Restoration
+      zh-CN: 老照片修复
+    desc:
+      en: Repair damage, colorize, and enhance clarity while preserving identity.
+      zh-CN: 修复破损、上色并增强清晰度，同时保持人物特征。
+  id_photo:
+    name:
+      en: AI ID Photo
+      zh-CN: AI 证件照
+    desc:
+      en: Create one-inch, two-inch, or visa photos with standard backgrounds.
+      zh-CN: 生成一寸、二寸或签证规格的标准背景证件照。
+  avatar:
+    name:
+      en: Avatar Studio
+      zh-CN: 头像工坊
+    desc:
+      en: Turn a selfie into up to six selected 1:1 styles.
+      zh-CN: 将自拍转换为最多六种选定的 1:1 风格头像。
+  meme:
+    name:
+      en: Meme Generator
+      zh-CN: 表情包生成器
+    desc:
+      en: Batch-create Q-style stickers in 12 emotions.
+      zh-CN: 批量生成 12 种情绪的 Q 版表情包。
+  ai_portrait:
+    name:
+      en: AI Portrait
+      zh-CN: AI 写真
+    desc:
+      en: Create themed portraits while preserving facial identity.
+      zh-CN: 保持人物相貌特征，生成主题写真。
+  try_on:
+    name:
+      en: Model Try-on
+      zh-CN: 模特试穿
+    desc:
+      en: Put flat-lay garments on a selected model and scene.
+      zh-CN: 将平铺服装生成指定模特和场景的上身效果。
+  recolor:
+    name:
+      en: Product Recolor
+      zh-CN: 商品改色
+    desc:
+      en: Generate color variants while preserving shape and material.
+      zh-CN: 保持商品外形与材质，生成多种配色版本。
+  promo_poster:
+    name:
+      en: Promotional Poster
+      zh-CN: 促销海报
+    desc:
+      en: Generate a vertical 3:4 campaign poster from a product image.
+      zh-CN: 基于商品图生成竖版 3:4 活动海报。
+  platform_adapt:
+    name:
+      en: Platform Adaptation
+      zh-CN: 平台尺寸适配
+    desc:
+      en: Adapt one image to exact commerce and social platform sizes.
+      zh-CN: 将一张图片精确适配电商与社交平台尺寸。
+  cover_factory:
+    name:
+      en: Cover Factory
+      zh-CN: 封面图工厂
+    desc:
+      en: Generate platform cover art from a title.
+      zh-CN: 根据标题生成各平台封面图。
+  article_illustration:
+    name:
+      en: Article Illustration
+      zh-CN: 文章配图
+    desc:
+      en: Generate business and editorial illustrations from a topic.
+      zh-CN: 根据主题生成商务或编辑风格文章配图。
+  food:
+    name:
+      en: Food Enhancement
+      zh-CN: 美食图片优化
+    desc:
+      en: Improve lighting, color, and texture without altering the dish.
+      zh-CN: 在不改变菜品内容的前提下优化光线、色彩与质感。
+  interior:
+    name:
+      en: Interior Preview
+      zh-CN: 室内装修预览
+    desc:
+      en: Preview multiple decor styles while preserving room structure.
+      zh-CN: 保持房间结构，预览多种装修风格。
+ai:
+  badge:
+    en: AI · BYOK
+    zh-CN: AI · 自备密钥
+  placeholder:
+    prompt:
+      en: Describe the image or add optional details
+      zh-CN: 描述图片，或补充可选细节
+    poster_title:
+      en: Main title
+      zh-CN: 主标题
+    poster_subtitle:
+      en: Subtitle
+      zh-CN: 副标题
+    poster_corner:
+      en: Corner label
+      zh-CN: 角标
+    api_key:
+      en: Enter API key (stored only in the system credential manager)
+      zh-CN: 输入 API Key（仅存入系统凭据管理器）
+  provider:
+    seedream:
+      en: Seedream
+      zh-CN: Seedream
+    nano_banana:
+      en: Nano Banana
+      zh-CN: Nano Banana
+    openai:
+      en: OpenAI
+      zh-CN: OpenAI
+  quality:
+    low:
+      en: Low quality
+      zh-CN: 低质量
+    medium:
+      en: Medium quality
+      zh-CN: 中等质量
+    high:
+      en: High quality
+      zh-CN: 高质量
+  parameter:
+    count:
+      en: Count
+      zh-CN: 数量
+    custom_color:
+      en: Custom color
+      zh-CN: 自定义颜色
+  capability:
+    references:
+      en: Max references
+      zh-CN: 最多参考图
+    outputs:
+      en: Max outputs
+      zh-CN: 最多结果
+  action:
+    open_reference:
+      en: Open reference image
+      zh-CN: 打开参考图
+    generate:
+      en: Generate
+      zh-CN: 生成
+    save_selected:
+      en: Save selected results
+      zh-CN: 保存选中结果
+  status:
+    generating:
+      en: Generating in the background…
+      zh-CN: 正在后台生成…
+    ready:
+      en: Results ready
+      zh-CN: 结果已就绪
+    saved:
+      en: Results saved
+      zh-CN: 结果已保存
+  error:
+    key_required:
+      en: Add an API key for the selected provider in Settings.
+      zh-CN: 请先在设置中添加所选服务商的 API Key。
+    invalid_key:
+      en: The provider rejected this API key.
+      zh-CN: 服务商拒绝了该 API Key。
+    insufficient_balance:
+      en: The provider account has insufficient balance.
+      zh-CN: 服务商账户余额不足。
+    rate_limited:
+      en: The provider rate limit was reached. Try again later.
+      zh-CN: 已达到服务商限流，请稍后重试。
+    network:
+      en: The provider could not be reached. Check the network and retry.
+      zh-CN: 无法连接服务商，请检查网络后重试。
+    content_blocked:
+      en: The provider blocked this request under its content policy.
+      zh-CN: 服务商依据内容政策阻止了本次请求。
+    image_too_large:
+      en: A reference image exceeds this provider's size limit.
+      zh-CN: 参考图超过了该服务商的大小限制。
+    unsupported:
+      en: The selected provider does not support this request.
+      zh-CN: 所选服务商不支持本次请求。
+    invalid_request:
+      en: Complete the required input and selection before generating.
+      zh-CN: 请补全生成所需的输入和选项。
+    provider:
+      en: The provider returned an invalid or unavailable response.
+      zh-CN: 服务商返回了无效响应或暂时不可用。
+    credential:
+      en: The system credential manager is unavailable.
+      zh-CN: 系统凭据管理器不可用。
+    io:
+      en: The generated image could not be saved.
+      zh-CN: 无法保存生成的图片。
+  settings:
+    title:
+      en: AI providers
+      zh-CN: AI 服务商
+    default_provider:
+      en: Default provider
+      zh-CN: 默认服务商
+    save_key:
+      en: Save key
+      zh-CN: 保存密钥
+    delete_key:
+      en: Delete stored key
+      zh-CN: 删除已存密钥
+    key_security:
+      en: Keys are stored by Windows Credential Manager, macOS Keychain, or Linux Secret Service and never written to app config or logs.
+      zh-CN: 密钥仅由 Windows 凭据管理器、macOS 钥匙串或 Linux Secret Service 保存，绝不写入应用配置或日志。
+    history:
+      en: Local generation history
+      zh-CN: 本地生成历史
+    clear_history:
+      en: Clear history
+      zh-CN: 清除历史
+  poster:
+    empty_title:
+      en: Main title
+      zh-CN: 主标题
+    empty_subtitle:
+      en: Subtitle
+      zh-CN: 副标题
+    empty_corner:
+      en: Label
+      zh-CN: 角标
+    drag_help:
+      en: Drag a text layer to move it; drag its blue handle to resize it. Text is rendered by GPUI's platform text system.
+      zh-CN: 拖动文字图层可调整位置；拖动蓝色把手可缩放。文字由 GPUI 平台文字系统渲染。
+  edit:
+    region_help:
+      en: Drag and resize the frame to mark the region that should be removed.
+      zh-CN: 拖动并缩放选框，标记需要消除的区域。
+    region_provider_required:
+      en: Region editing requires a provider that declares mask support (currently OpenAI).
+      zh-CN: 局部消除需要服务商声明掩码编辑能力（当前为 OpenAI）。
+    removal:
+      en: Remove selected object
+      zh-CN: 局部消除
+    background-replacement:
+      en: Replace background
+      zh-CN: 更换背景
+    expansion:
+      en: Expand image
+      zh-CN: 扩图
+    clarity-enhancement:
+      en: Enhance clarity
+      zh-CN: 清晰度增强
+    background-removal:
+      en: Remove background
+      zh-CN: 抠图去背景
+    ecommerce-white-background:
+      en: E-commerce white background
+      zh-CN: 电商白底图
+    portrait-enhancement:
+      en: Portrait enhancement
+      zh-CN: 人像美化
+    text-replacement:
+      en: Replace text
+      zh-CN: 文字替换
+    sticker-application:
+      en: Apply sticker
+      zh-CN: 贴纸应用
+    product-photo-set:
+      en: Product photo set
+      zh-CN: 商品图套装
+    professional-portrait:
+      en: Professional portrait
+      zh-CN: 职业形象照
+    freeform:
+      en: Freeform edit
+      zh-CN: 自由改图
+  comparison:
+    hold_original:
+      en: Press and hold a restoration result to compare it with the original.
+      zh-CN: 按住修复结果可与原图对比。
+  tier:
+    prompt:
+      en: Prompt
+      zh-CN: 提示词
+    tech-launch:
+      en: Tech launch
+      zh-CN: 科技发布
+    minimal:
+      en: Minimal
+      zh-CN: 极简
+    luxury:
+      en: Luxury
+      zh-CN: 高级奢华
+    playful:
+      en: Playful
+      zh-CN: 活泼趣味
+    repair:
+      en: Damage repair
+      zh-CN: 破损修复
+    colorize:
+      en: Colorize
+      zh-CN: 黑白上色
+    clarity:
+      en: Clarity enhancement
+      zh-CN: 清晰度增强
+    one-inch-blue-suit:
+      en: One-inch · blue · suit
+      zh-CN: 一寸 · 蓝底 · 正装
+    one-inch-red-suit:
+      en: One-inch · red · suit
+      zh-CN: 一寸 · 红底 · 正装
+    one-inch-white-suit:
+      en: One-inch · white · suit
+      zh-CN: 一寸 · 白底 · 正装
+    two-inch-blue-suit:
+      en: Two-inch · blue · suit
+      zh-CN: 二寸 · 蓝底 · 正装
+    two-inch-red-suit:
+      en: Two-inch · red · suit
+      zh-CN: 二寸 · 红底 · 正装
+    two-inch-white-suit:
+      en: Two-inch · white · suit
+      zh-CN: 二寸 · 白底 · 正装
+    visa-white-suit:
+      en: Visa · white · suit
+      zh-CN: 签证照 · 白底 · 正装
+    japanese-anime:
+      en: Japanese anime
+      zh-CN: 日漫风
+    cyberpunk:
+      en: Cyberpunk
+      zh-CN: 赛博朋克
+    chinese-ink:
+      en: Chinese ink
+      zh-CN: 国风水墨
+    clay-3d:
+      en: 3D clay
+      zh-CN: 3D 黏土
+    pixel-art:
+      en: Pixel art
+      zh-CN: 像素艺术
+    watercolor:
+      en: Watercolor
+      zh-CN: 水彩
+    comic:
+      en: Comic
+      zh-CN: 漫画
+    minimal-flat:
+      en: Minimal flat
+      zh-CN: 极简扁平
+    photorealistic-studio:
+      en: Photorealistic studio
+      zh-CN: 写实棚拍
+    laughing:
+      en: Laughing
+      zh-CN: 大笑
+    shocked:
+      en: Shocked
+      zh-CN: 震惊
+    eye-rolling:
+      en: Eye-rolling
+      zh-CN: 翻白眼
+    crying:
+      en: Crying
+      zh-CN: 哭泣
+    angry:
+      en: Angry
+      zh-CN: 生气
+    cheering:
+      en: Cheering
+      zh-CN: 欢呼
+    confused:
+      en: Confused
+      zh-CN: 困惑
+    sleepy:
+      en: Sleepy
+      zh-CN: 困倦
+    proud:
+      en: Proud
+      zh-CN: 得意
+    awkward:
+      en: Awkward
+      zh-CN: 尴尬
+    love:
+      en: Love
+      zh-CN: 爱心
+    speechless:
+      en: Speechless
+      zh-CN: 无语
+    wedding:
+      en: Wedding
+      zh-CN: 婚纱
+    hanfu:
+      en: Hanfu
+      zh-CN: 汉服
+    graduation:
+      en: Graduation
+      zh-CN: 毕业
+    travel:
+      en: Travel
+      zh-CN: 旅行
+    professional:
+      en: Professional
+      zh-CN: 职业
+    cinematic:
+      en: Cinematic
+      zh-CN: 电影感
+    retro:
+      en: Retro
+      zh-CN: 复古
+    fashion:
+      en: Fashion
+      zh-CN: 时尚
+    asian-female-cafe:
+      en: Asian female · cafe
+      zh-CN: 亚洲女模特 · 咖啡馆
+    asian-male-studio:
+      en: Asian male · studio
+      zh-CN: 亚洲男模特 · 摄影棚
+    burgundy:
+      en: Burgundy
+      zh-CN: 酒红
+    navy:
+      en: Navy
+      zh-CN: 藏青
+    haze-blue:
+      en: Haze blue
+      zh-CN: 雾霾蓝
+    custom:
+      en: Custom color
+      zh-CN: 自定义颜色
+    limited-time-discount:
+      en: Limited-time discount
+      zh-CN: 限时折扣
+    new-arrival:
+      en: New arrival
+      zh-CN: 新品上市
+    clearance:
+      en: Clearance
+      zh-CN: 清仓促销
+    member-day:
+      en: Member day
+      zh-CN: 会员日
+    taobao-main-800x800:
+      en: Taobao main · 800×800
+      zh-CN: 淘宝主图 · 800×800
+    xiaohongshu-1242x1656:
+      en: Xiaohongshu · 1242×1656
+      zh-CN: 小红书 · 1242×1656
+    wechat-cover-900x383:
+      en: WeChat cover · 900×383
+      zh-CN: 微信封面 · 900×383
+    douyin-1080x1920:
+      en: Douyin · 1080×1920
+      zh-CN: 抖音竖版 · 1080×1920
+    wechat-bold:
+      en: WeChat Official Account
+      zh-CN: 微信公众号
+    xiaohongshu-bold:
+      en: Xiaohongshu
+      zh-CN: 小红书
+    bilibili-bold:
+      en: Bilibili
+      zh-CN: 哔哩哔哩
+    douyin-bold:
+      en: Douyin
+      zh-CN: 抖音
+    ppt-business-gradient:
+      en: Business gradient
+      zh-CN: 商务渐变
+    editorial-flat:
+      en: Editorial flat
+      zh-CN: 编辑扁平风
+    delivery-standard:
+      en: Delivery standard
+      zh-CN: 外卖标准图
+    menu-premium:
+      en: Premium menu
+      zh-CN: 高级菜单图
+    scandinavian:
+      en: Scandinavian
+      zh-CN: 北欧
+    modern-chinese:
+      en: Modern Chinese
+      zh-CN: 现代中式
+    light-luxury:
+      en: Light luxury
+      zh-CN: 轻奢
+    warm-minimal:
+      en: Warm minimal
+      zh-CN: 暖系极简
+    removal:
+      en: Remove selected object
+      zh-CN: 局部消除
+    background-replacement:
+      en: Replace background
+      zh-CN: 更换背景
+    expansion:
+      en: Expand image
+      zh-CN: 扩图
+    clarity-enhancement:
+      en: Enhance clarity
+      zh-CN: 清晰度增强
+    background-removal:
+      en: Remove background
+      zh-CN: 抠图去背景
+    ecommerce-white-background:
+      en: E-commerce white background
+      zh-CN: 电商白底图
+    portrait-enhancement:
+      en: Portrait enhancement
+      zh-CN: 人像美化
+    text-replacement:
+      en: Replace text
+      zh-CN: 文字替换
+    sticker-application:
+      en: Apply sticker
+      zh-CN: 贴纸应用
+    product-photo-set:
+      en: Product photo set
+      zh-CN: 商品图套装
+    professional-portrait:
+      en: Professional portrait
+      zh-CN: 职业形象照
+    freeform:
+      en: Freeform edit
+      zh-CN: 自由改图

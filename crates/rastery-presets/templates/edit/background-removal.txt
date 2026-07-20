@@ -1,0 +1,1 @@
+Extract the complete foreground subject from the reference image and return it isolated on a transparent background. Preserve fine hair, fur, translucent edges, holes, soft boundaries, and product details. Do not crop, recolor, retouch, reshape, or add a replacement background. Tier: {{tier}}. Additional detail: {{user_instruction}}.

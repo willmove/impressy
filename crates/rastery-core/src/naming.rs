@@ -45,3 +45,19 @@ pub fn batch_filename(source_stem: &str, index: usize, format: OutputFormat) -> 
 pub fn tile_filename(tile: &Tile) -> String {
     format!("tile{}.png", tile.filename_suffix())
 }
+
+/// Timestamp-based AI output name (Requirement 41.5).
+pub fn ai_filename(created_at_unix_ms: u64, index: usize, extension: &str) -> String {
+    let extension = extension
+        .trim_start_matches('.')
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    let extension = if extension.is_empty() {
+        "png"
+    } else {
+        &extension
+    };
+    format!("rastery-ai-{created_at_unix_ms}-{index:02}.{extension}")
+}

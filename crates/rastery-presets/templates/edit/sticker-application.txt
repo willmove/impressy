@@ -1,0 +1,1 @@
+Apply the requested sticker to the reference image at the specified location. Preserve all original content. Match perspective, scale, edge quality, surface curvature, lighting, shadow, and occlusion so the sticker appears intentionally placed without obscuring important faces, labels, or controls. Tier: {{tier}}. Sticker detail: {{user_instruction}}.

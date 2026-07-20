@@ -1,0 +1,1 @@
+Generate a polished poster background in the selected style with strong visual hierarchy and a clear safe area for local text layers. Do not render any words, letters, numbers, logos, watermarks, or pseudo-text. Keep the composition suitable for the requested canvas ratio and local title, subtitle, and corner-label placement. Style tier: {{tier}}. Direction: {{user_instruction}}.

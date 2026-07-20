@@ -1,0 +1,1 @@
+Preview the supplied room in the selected furnishing style. The room structure is a strict keep-unchanged item: preserve walls, doors, windows, floor plan, ceiling, built-ins, camera viewpoint, and scale. Change only movable furniture, textiles, lighting fixtures, decor, and palette with realistic perspective and shadows. Style tier: {{tier}}. Detail: {{user_instruction}}.

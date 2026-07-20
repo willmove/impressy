@@ -119,6 +119,7 @@ fn collect_rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
 fn i18n_string_literals(source: &str) -> BTreeSet<String> {
     const PREFIXES: &[&str] = &[
         "action.",
+        "ai.",
         "app.",
         "dialog.",
         "error.",

@@ -1,0 +1,1 @@
+Replace only the specified visible text in the reference image. Match the original typography, baseline, curvature, perspective, spacing, lighting, print texture, and occlusion. Preserve every non-text pixel and never introduce extra words. Tier: {{tier}}. Exact replacement instruction: {{user_instruction}}.

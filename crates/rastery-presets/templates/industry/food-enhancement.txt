@@ -1,0 +1,1 @@
+Enhance the supplied dish photograph into a professional food image. The dish itself, portion, ingredients, doneness, plate, garnish, and plating are strict keep-unchanged items. Improve only lighting, white balance, tonal depth, background cleanliness, and appetizing but realistic color. Tier: {{tier}}. Detail: {{user_instruction}}.

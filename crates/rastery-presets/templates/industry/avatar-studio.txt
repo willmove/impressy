@@ -1,0 +1,1 @@
+Create a square social avatar in the selected visual style while preserving the subject's recognizable identity, facial geometry, hairstyle, expression, and key accessories. Compose a clear head-and-shoulders portrait with a coherent background and no added words or logos. Tier/style: {{tier}}. User detail: {{user_instruction}}.

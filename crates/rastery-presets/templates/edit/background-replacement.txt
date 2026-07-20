@@ -1,0 +1,1 @@
+Replace only the background of the supplied image with the requested scene. Preserve the foreground subject pixel-faithfully: identity, pose, silhouette, clothing, product shape, logos, colors, materials, and proportions. Match contact shadows and lighting naturally. Tier: {{tier}}. Scene detail: {{user_instruction}}.

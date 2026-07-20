@@ -1,0 +1,1 @@
+Outpaint beyond the original canvas while keeping every original pixel and the main subject unchanged. Continue perspective, depth, lighting, texture, and photographic grain into the expanded area. Do not stretch, duplicate, crop, or redesign the subject. Tier: {{tier}}. Expansion direction or detail: {{user_instruction}}.

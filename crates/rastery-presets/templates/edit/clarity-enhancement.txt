@@ -1,0 +1,1 @@
+Enhance perceived clarity and resolution of the reference image without inventing semantic details. Preserve identity, composition, geometry, colors, text content, logos, material texture, and natural skin texture. Avoid halos, plastic skin, oversharpening, or altered facial features. Tier: {{tier}}. Additional detail: {{user_instruction}}.

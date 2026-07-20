@@ -13,6 +13,11 @@ const MARGIN: i32 = 12;
 const MAX_CHARS: usize = 256;
 
 pub(crate) fn rasterize(text: &str) -> Result<RgbaImage, String> {
+    rasterize_with_size(text, FONT_SIZE)
+}
+
+/// Rasterizes a poster text layer at an explicit output-pixel size.
+pub(crate) fn rasterize_with_size(text: &str, font_size: f32) -> Result<RgbaImage, String> {
     let text = text.trim();
     if text.is_empty() {
         return Err("text watermark is empty".to_string());
@@ -21,13 +26,16 @@ pub(crate) fn rasterize(text: &str) -> Result<RgbaImage, String> {
         return Err(format!("text watermark exceeds {MAX_CHARS} characters"));
     }
 
-    let estimated_width = ((text.chars().count() as f32 * FONT_SIZE) as u32).clamp(256, 16_384);
-    let canvas_width = estimated_width.saturating_add((MARGIN * 2) as u32);
-    let canvas_height = (LINE_HEIGHT as u32).saturating_add((MARGIN * 2) as u32);
+    let font_size = font_size.clamp(8.0, 512.0);
+    let line_height = font_size * (LINE_HEIGHT / FONT_SIZE);
+    let margin = ((font_size / FONT_SIZE) * MARGIN as f32).round().max(2.0) as i32;
+    let estimated_width = ((text.chars().count() as f32 * font_size) as u32).clamp(64, 16_384);
+    let canvas_width = estimated_width.saturating_add((margin * 2) as u32);
+    let canvas_height = (line_height as u32).saturating_add((margin * 2) as u32);
 
     let mut font_system = FontSystem::new();
     let mut cache = SwashCache::new();
-    let mut buffer = Buffer::new(&mut font_system, Metrics::new(FONT_SIZE, LINE_HEIGHT));
+    let mut buffer = Buffer::new(&mut font_system, Metrics::new(font_size, line_height));
     {
         let mut borrowed = buffer.borrow_with(&mut font_system);
         borrowed.set_size(Some(estimated_width as f32), Some(canvas_height as f32));
@@ -43,8 +51,8 @@ pub(crate) fn rasterize(text: &str) -> Result<RgbaImage, String> {
         &mut cache,
         Color::rgb(255, 255, 255),
         |x, y, width, height, color| {
-            let x = x + MARGIN;
-            let y = y + MARGIN;
+            let x = x + margin;
+            let y = y + margin;
             for py in 0..height {
                 for px in 0..width {
                     let (dx, dy) = (x + px as i32, y + py as i32);

@@ -30,10 +30,28 @@ impl Language {
     }
 }
 
+/// Non-secret local AI generation history (Requirement 32.7).
+///
+/// Prompts and API keys are intentionally absent. Paths remain local and can be cleared from the
+/// settings page.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct GenerationHistoryRecord {
+    /// Request completion time as Unix milliseconds.
+    pub created_at_unix_ms: u64,
+    /// Stable provider identifier; never contains credentials.
+    pub provider: String,
+    /// Stable feature identifier.
+    pub feature: String,
+    /// Number of images returned by the provider.
+    pub output_count: usize,
+    /// Local paths chosen by the user when saving this result set.
+    #[serde(default)]
+    pub saved_paths: Vec<PathBuf>,
+}
+
 /// 应用配置（Requirement 32）。
 ///
-/// **只含 v1 字段**：不含 Provider 选择与 API Key——前者属 v2，后者属凭据管理器
-/// （Requirement 60.1–60.4 禁止明文落盘）。
+/// API Key 永远不属于该模型；它们只存入系统凭据管理器（Requirement 60.1–60.4）。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AppConfig {
     /// 默认导出格式（Requirement 32.4）。
@@ -49,6 +67,12 @@ pub struct AppConfig {
     pub language: Language,
     /// 最近使用的输出目录（Requirement 32.10）。
     pub last_output_dir: Option<PathBuf>,
+    /// v2 默认 Provider 的稳定标识。使用字符串避免本地 core 依赖网络 crate。
+    #[serde(default = "default_provider")]
+    pub default_provider: String,
+    /// 本地生成历史；不含提示词与密钥。
+    #[serde(default)]
+    pub generation_history: Vec<GenerationHistoryRecord>,
 }
 
 impl Default for AppConfig {
@@ -59,8 +83,14 @@ impl Default for AppConfig {
             default_png_compression: PngCompression::default(),
             language: Language::default(),
             last_output_dir: None,
+            default_provider: default_provider(),
+            generation_history: Vec::new(),
         }
     }
+}
+
+fn default_provider() -> String {
+    "seedream".to_string()
 }
 
 /// 序列化为 TOML 文本（Requirement 32.1、53.1）。

@@ -1,21 +1,23 @@
 //! rastery-app：GPUI 桌面应用入口。
 //!
-//! 四大板块导航（Requirement 34）+ 多语言（Requirement 35）。v1 板块「基础图片处理」
-//! 与「创作输出」列出可用的本地功能；两个 AI 板块与三个视频功能按 ADR-0001 / Req 34
-//! 做 v2「开发中」占位。图像处理逻辑全部在 `rastery-core`，本 crate 只负责 UI。
+//! 四大板块导航（Requirement 34）+ 多语言（Requirement 35）。本地功能由
+//! `rastery-core` 提供，AI 图片功能由 `rastery-ai` 与 `rastery-presets` 提供；三个视频
+//! 入口仍为规划占位。本 crate 只负责 GPUI UI 与后台任务编排。
 //!
-//! **环境约束（ADR-0002）**：主开发机为无头云 VM，本 crate 只能 `cargo check`、不能
-//! 运行。渲染正确性、交互手感、冷启动耗时须在真机（Win/macOS/Linux 桌面）验收。
+//! 渲染正确性、交互手感、冷启动耗时以及 AI **保持不变项**须在对应真机和真实 Provider
+//! 上验收；类型检查与假传输契约测试不能替代这些证据。
 
 // `i18n!` 生成 `crate::_rust_i18n_t!` 等条目，必须在任何模块（`shell` 等在其中用 `t!`）
 // 之前声明，否则子模块里的 `t!` 找不到 `crate::_rust_i18n_t`。
 rust_i18n::i18n!("locales");
 
 // 裁剪交互由图片编辑页直接接入，使用自定义 Element 完成三阶段绘制。
+mod ai_state;
 mod config_store;
 mod crop_frame;
 mod feature_params;
 mod logging;
+mod poster_canvas;
 mod section;
 mod shell;
 mod text_watermark;

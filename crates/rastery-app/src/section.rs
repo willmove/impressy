@@ -3,8 +3,8 @@
 //! 四大板块的划分以 `docs/spec/design.md` §Overview 为准：
 //! 「基础图片处理」含编辑 / 拼图 / 批量 / 切图 / 二维码 / EXIF / 截图美化；
 //! 「创作输出」含 GIF 制作（v1）与海报设计（FR-11，v2）；
-//! 两个 AI 板块整体属 v2。三个视频功能（Requirement 34.5–34.10）作为
-//! v2 占位入口挂在「AI 生成与改图」板块下。
+//! 两个 AI 板块在 v2 提供完整图片工具。三个视频功能（Requirement 34.5–34.10）仍作为
+//! 独立的开发中入口挂在「AI 生成与改图」板块下。
 //!
 //! 每个 [`Feature`] 只携带 i18n 键与 v1/v2 标记，**不含任何 UI 与业务逻辑**——
 //! 渲染与工作区编排在 [`crate::shell`]，图像处理在 `rastery-core`。
@@ -14,9 +14,9 @@
 pub enum Section {
     /// 基础图片处理（v1，有实质内容）。
     BasicImage,
-    /// AI 生成与改图（v2，占位）。
+    /// AI 生成与改图（v2）。
     AiGeneration,
-    /// 行业定制 AI 工具（v2，占位）。
+    /// 行业定制 AI 工具（v2）。
     IndustryTools,
     /// 创作输出（v1 的 GIF + v2 的海报）。
     CreativeOutput,
@@ -71,7 +71,21 @@ impl Section {
                 Feature::VideoSubtitle,
                 Feature::VideoClarity,
             ],
-            Self::IndustryTools => &[Feature::Industry],
+            Self::IndustryTools => &[
+                Feature::OldPhotoRestoration,
+                Feature::IdPhoto,
+                Feature::AvatarStudio,
+                Feature::MemeGenerator,
+                Feature::AiPortrait,
+                Feature::ModelTryOn,
+                Feature::ProductRecolor,
+                Feature::PromotionalPoster,
+                Feature::PlatformAdaptation,
+                Feature::CoverFactory,
+                Feature::ArticleIllustration,
+                Feature::FoodEnhancement,
+                Feature::InteriorPreview,
+            ],
             Self::CreativeOutput => &[Feature::Gif, Feature::Poster],
         }
     }
@@ -98,9 +112,9 @@ pub enum Feature {
     // —— 创作输出 ——
     /// GIF 制作（FR-10，v1，`rastery_core::animation`）。
     Gif,
-    /// 海报设计（FR-11，v2 占位）。
+    /// 海报设计（FR-11，v2）。
     Poster,
-    // —— AI 生成与改图（v2 占位）——
+    // —— AI 生成与改图（v2）——
     /// 文生图（v2）。
     TextToImage,
     /// AI 改图（v2）。
@@ -111,13 +125,24 @@ pub enum Feature {
     VideoSubtitle,
     /// 视频清晰度增强（Requirement 34.7，v2 占位）。
     VideoClarity,
-    // —— 行业定制 AI 工具（v2 占位）——
-    /// 行业专用 AI 工具合集（v2）。
-    Industry,
+    // —— 行业定制 AI 工具（v2）——
+    OldPhotoRestoration,
+    IdPhoto,
+    AvatarStudio,
+    MemeGenerator,
+    AiPortrait,
+    ModelTryOn,
+    ProductRecolor,
+    PromotionalPoster,
+    PlatformAdaptation,
+    CoverFactory,
+    ArticleIllustration,
+    FoodEnhancement,
+    InteriorPreview,
 }
 
 impl Feature {
-    /// 是否为 v1 功能（完全离线、无 API Key）。false 表示 v2 占位。
+    /// 是否为 v1 功能（完全离线、无 API Key）。false 表示联网的 v2 功能或视频占位。
     pub fn is_v1(self) -> bool {
         matches!(
             self,
@@ -130,6 +155,120 @@ impl Feature {
                 | Self::Beautify
                 | Self::Gif
         )
+    }
+
+    /// v2 AI 图片功能。三个视频入口不在本次图片工具范围内。
+    pub fn is_ai(self) -> bool {
+        !self.is_v1()
+            && !matches!(
+                self,
+                Self::VideoWatermark | Self::VideoSubtitle | Self::VideoClarity
+            )
+    }
+
+    pub fn ai_spec(self) -> Option<crate::ai_state::AiFeatureSpec> {
+        use crate::ai_state::*;
+        use rastery_ai::AspectRatio;
+        let spec = match self {
+            Self::TextToImage => AiFeatureSpec {
+                tiers: &[],
+                max_selected: 1,
+                needs_image: false,
+                default_ratio: AspectRatio::Square,
+            },
+            Self::ImageEdit => AiFeatureSpec {
+                tiers: &[],
+                max_selected: 1,
+                needs_image: true,
+                default_ratio: AspectRatio::Square,
+            },
+            Self::Poster => AiFeatureSpec {
+                tiers: &["tech-launch", "minimal", "luxury", "playful"],
+                max_selected: 1,
+                needs_image: false,
+                default_ratio: AspectRatio::PortraitNineSixteen,
+            },
+            Self::OldPhotoRestoration => AiFeatureSpec {
+                tiers: RESTORE_TIERS,
+                max_selected: 3,
+                needs_image: true,
+                default_ratio: AspectRatio::Square,
+            },
+            Self::IdPhoto => AiFeatureSpec {
+                tiers: ID_TIERS,
+                max_selected: 1,
+                needs_image: true,
+                default_ratio: AspectRatio::PortraitThreeFour,
+            },
+            Self::AvatarStudio => AiFeatureSpec {
+                tiers: AVATAR_TIERS,
+                max_selected: 6,
+                needs_image: true,
+                default_ratio: AspectRatio::Square,
+            },
+            Self::MemeGenerator => AiFeatureSpec {
+                tiers: MEME_TIERS,
+                max_selected: 12,
+                needs_image: true,
+                default_ratio: AspectRatio::Square,
+            },
+            Self::AiPortrait => AiFeatureSpec {
+                tiers: PORTRAIT_TIERS,
+                max_selected: 8,
+                needs_image: true,
+                default_ratio: AspectRatio::PortraitThreeFour,
+            },
+            Self::ModelTryOn => AiFeatureSpec {
+                tiers: TRY_ON_TIERS,
+                max_selected: 1,
+                needs_image: true,
+                default_ratio: AspectRatio::PortraitThreeFour,
+            },
+            Self::ProductRecolor => AiFeatureSpec {
+                tiers: COLOR_TIERS,
+                max_selected: 4,
+                needs_image: true,
+                default_ratio: AspectRatio::Square,
+            },
+            Self::PromotionalPoster => AiFeatureSpec {
+                tiers: PROMO_TIERS,
+                max_selected: 1,
+                needs_image: true,
+                default_ratio: AspectRatio::PortraitThreeFour,
+            },
+            Self::PlatformAdaptation => AiFeatureSpec {
+                tiers: PLATFORM_TIERS,
+                max_selected: 4,
+                needs_image: true,
+                default_ratio: AspectRatio::Square,
+            },
+            Self::CoverFactory => AiFeatureSpec {
+                tiers: COVER_TIERS,
+                max_selected: 1,
+                needs_image: false,
+                default_ratio: AspectRatio::LandscapeSixteenNine,
+            },
+            Self::ArticleIllustration => AiFeatureSpec {
+                tiers: ARTICLE_TIERS,
+                max_selected: 1,
+                needs_image: false,
+                default_ratio: AspectRatio::LandscapeSixteenNine,
+            },
+            Self::FoodEnhancement => AiFeatureSpec {
+                tiers: FOOD_TIERS,
+                max_selected: 1,
+                needs_image: true,
+                default_ratio: AspectRatio::LandscapeFourThree,
+            },
+            Self::InteriorPreview => AiFeatureSpec {
+                tiers: INTERIOR_TIERS,
+                max_selected: 4,
+                needs_image: true,
+                default_ratio: AspectRatio::LandscapeFourThree,
+            },
+            _ => return None,
+        };
+        Some(spec)
     }
 
     /// 稳定的元素 id 片段。
@@ -149,7 +288,19 @@ impl Feature {
             Self::VideoWatermark => "feat-video-wm",
             Self::VideoSubtitle => "feat-video-sub",
             Self::VideoClarity => "feat-video-clarity",
-            Self::Industry => "feat-industry",
+            Self::OldPhotoRestoration => "feat-old-photo",
+            Self::IdPhoto => "feat-id-photo",
+            Self::AvatarStudio => "feat-avatar",
+            Self::MemeGenerator => "feat-meme",
+            Self::AiPortrait => "feat-ai-portrait",
+            Self::ModelTryOn => "feat-try-on",
+            Self::ProductRecolor => "feat-recolor",
+            Self::PromotionalPoster => "feat-promo-poster",
+            Self::PlatformAdaptation => "feat-platform-adapt",
+            Self::CoverFactory => "feat-cover",
+            Self::ArticleIllustration => "feat-article",
+            Self::FoodEnhancement => "feat-food",
+            Self::InteriorPreview => "feat-interior",
         }
     }
 
@@ -170,7 +321,19 @@ impl Feature {
             Self::VideoWatermark => "feature.video_watermark.name",
             Self::VideoSubtitle => "feature.video_subtitle.name",
             Self::VideoClarity => "feature.video_clarity.name",
-            Self::Industry => "feature.industry.name",
+            Self::OldPhotoRestoration => "feature.old_photo.name",
+            Self::IdPhoto => "feature.id_photo.name",
+            Self::AvatarStudio => "feature.avatar.name",
+            Self::MemeGenerator => "feature.meme.name",
+            Self::AiPortrait => "feature.ai_portrait.name",
+            Self::ModelTryOn => "feature.try_on.name",
+            Self::ProductRecolor => "feature.recolor.name",
+            Self::PromotionalPoster => "feature.promo_poster.name",
+            Self::PlatformAdaptation => "feature.platform_adapt.name",
+            Self::CoverFactory => "feature.cover_factory.name",
+            Self::ArticleIllustration => "feature.article_illustration.name",
+            Self::FoodEnhancement => "feature.food.name",
+            Self::InteriorPreview => "feature.interior.name",
         }
     }
 
@@ -191,7 +354,19 @@ impl Feature {
             Self::VideoWatermark => "feature.video_watermark.desc",
             Self::VideoSubtitle => "feature.video_subtitle.desc",
             Self::VideoClarity => "feature.video_clarity.desc",
-            Self::Industry => "feature.industry.desc",
+            Self::OldPhotoRestoration => "feature.old_photo.desc",
+            Self::IdPhoto => "feature.id_photo.desc",
+            Self::AvatarStudio => "feature.avatar.desc",
+            Self::MemeGenerator => "feature.meme.desc",
+            Self::AiPortrait => "feature.ai_portrait.desc",
+            Self::ModelTryOn => "feature.try_on.desc",
+            Self::ProductRecolor => "feature.recolor.desc",
+            Self::PromotionalPoster => "feature.promo_poster.desc",
+            Self::PlatformAdaptation => "feature.platform_adapt.desc",
+            Self::CoverFactory => "feature.cover_factory.desc",
+            Self::ArticleIllustration => "feature.article_illustration.desc",
+            Self::FoodEnhancement => "feature.food.desc",
+            Self::InteriorPreview => "feature.interior.desc",
         }
     }
 }

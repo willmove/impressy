@@ -1,0 +1,1 @@
+Recolor only the product region to the selected target color. Preserve product silhouette, geometry, material response, texture, seams, logos, labels, highlights, shadows, background, camera view, and all other colors. The recoloring must look physically plausible for the original material. Color tier: {{tier}}. Exact color detail: {{user_instruction}}.

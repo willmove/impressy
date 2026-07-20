@@ -1,0 +1,1 @@
+Create a compliant e-commerce product image on a pure white #FFFFFF background. Preserve the exact product silhouette, dimensions, color, material, logo, label text, and accessories. Center the product with a natural grounding shadow; do not add props or promotional text. Tier: {{tier}}. Additional detail: {{user_instruction}}.

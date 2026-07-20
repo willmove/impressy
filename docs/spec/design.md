@@ -3,7 +3,7 @@
 > **本文档与 [`requirements.md`](./requirements.md) 是本项目的唯一真相源。** 领域词汇见 [`CONTEXT.md`](../../CONTEXT.md)，范围与顺序决策见 [`docs/adr/`](../adr/)。
 > 早期的 `rastery-spec.md` 已冻结至 [`archive/rastery-spec-v0.3.md`](./archive/rastery-spec-v0.3.md)，**不要据此写代码**。
 >
-> **v1 范围**：只做本地功能。`## Implementation Approach` 以 `[v1]` / `[v2]` Stage 明确区分当前验收工作与后续规划；`rastery-ai` 与 `rastery-presets` 两个 crate v1 不建。理由见 [ADR-0001](../adr/0001-v1-scope-local-only.md)。
+> **v1 / v2 范围**：v1 只做本地功能；v2 已按 [ADR-0004](../adr/0004-v2-provider-contract.md) 启动并建立 `rastery-ai` 与 `rastery-presets`。v2 不得削弱任何 v1 离线承诺。
 >
 > **截图能力已剥离**：`rastery-capture`、屏幕截图、全局热键、屏幕取色、覆盖层与截图标注不属于当前范围。截图美化仍是导入现有图片后的纯处理能力。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
 >
@@ -18,7 +18,7 @@ Rastery is a cross-platform desktop image processing application built with Rust
 3. **Industry-Specific AI Tools**: 13 specialized tools including photo restoration, ID photos, avatars, meme generation, portrait photography, model try-on, product recoloring, promotional posters, platform adaptation, cover images, article illustrations, food photography, and interior design preview
 4. **Creative Output**: GIF creation and poster design with local text rendering
 
-### Current Implementation Baseline (2026-07-18)
+### v1 Implementation Baseline Before v2 (2026-07-18)
 
 The current candidate implementation baseline is `fffdb2c`, one local commit ahead of `origin/main@f88a939`. It includes the complete asynchronous native path-prompt change for image open, multi-image open, result save, output-directory selection, and image-watermark selection, plus direct regression coverage through the production `resolve_path_prompt` seam for cancellation, platform failure, channel closure, non-busy recovery, and immediate reuse. The local quality gate executes 60 tests and passes. Remote `f88a939` passed the Windows, macOS, and Linux quality jobs plus Windows MSI and Linux DEB smoke tests; because `fffdb2c` has not been pushed, exact-candidate CI evidence remains open. This is **not a release-ready declaration**:
 
@@ -31,13 +31,15 @@ The current candidate implementation baseline is `fffdb2c`, one local commit ahe
 
 Status words used here have the meanings defined in `requirements.md` §“v1 当前验收状态”. A future change must not promote a UI item from “implemented” to “verified” using compilation alone.
 
+The 2026-07-19 v2 implementation supersedes this source baseline: the workspace now contains four crates and all marked v2 image features are wired. Automated contract/state tests pass, while real-provider visual acceptance and a new exact-candidate desktop matrix remain open.
+
 ### Core Design Principles
 
-- **Local-First Architecture**: All v1 本地功能 work offline; AI 功能 use BYOK (Bring Your Own Key) in v2
-- **Privacy by Design**: No telemetry or embedded API keys; 〔v2〕credentials are stored in OS-native secure storage
+- **Local-First Architecture**: All v1 本地功能 work offline; AI 功能 use BYOK (Bring Your Own Key)
+- **Privacy by Design**: No telemetry or embedded API keys; credentials are stored in OS-native secure storage
 - **Async-First Processing**: Heavy operations run in background executors to maintain UI responsiveness
-- **Provider Abstraction**: 〔v2〕Unified AI provider interface supporting multiple services (Seedream, Google Nano Banana, OpenAI GPT-Image). Agnes is deferred — the trait reserves extensibility only.
-- **Multi-Crate Workspace**: Modular architecture separating concerns (app and core in v1; ai and presets planned for v2)
+- **Provider Abstraction**: Unified AI provider interface supporting Seedream, Google Nano Banana, and OpenAI GPT-Image. Agnes is deferred — the trait reserves extensibility only.
+- **Multi-Crate Workspace**: Four crates separate UI, pure local processing, provider networking, and locked prompts
 
 ### Technology Stack
 
@@ -45,9 +47,9 @@ Status words used here have the meanings defined in `requirements.md` §“v1 �
 - **Language**: Rust with strict quality gates (cargo check, clippy deny, all tests pass)
 - **Rendering**: DirectX 11 + DirectWrite (Windows), Metal (macOS), GPUI backend (Linux)
 - **Image Processing**: Rust image processing libraries (offline)
-- **Credential Storage**: 〔v2〕Windows Credential Manager, macOS Keychain
+- **Credential Storage**: Windows Credential Manager, macOS Keychain, Linux Secret Service
 - **Configuration**: TOML format in standard app data directory
-- **Build**: Cargo workspace with exactly 2 crates in v1; `rastery-ai` and `rastery-presets` are v2 plans, not current packages
+- **Build**: Cargo workspace with `rastery-app`, `rastery-core`, `rastery-ai`, and `rastery-presets`
 
 ## Architecture
 
@@ -55,7 +57,7 @@ Status words used here have the meanings defined in `requirements.md` §“v1 �
 
 ```mermaid
 graph TB
-    subgraph "v1 current workspace"
+    subgraph "current workspace"
         A["GPUI AppShell<br/>navigation + pages + settings"]
         B["Workspace<br/>main-thread state"]
         C["WorkspaceJob<br/>Send + background execution"]
@@ -64,7 +66,7 @@ graph TB
         F["File system / clipboard / native dialogs"]
     end
 
-    subgraph "v2 planned — crates do not exist in v1"
+    subgraph "v2 AI layer"
         G["rastery-ai<br/>Provider abstraction"]
         H["rastery-presets<br/>locked prompt templates"]
         I["OS credential store + AI providers"]
@@ -77,8 +79,9 @@ graph TB
     C --> B
     A --> E
     A --> F
-    G -. "v2" .-> I
-    H -. "v2" .-> G
+    A --> G
+    G --> I
+    H --> A
 
     style D fill:#e1f5ff
     style G fill:#fff4e1,stroke-dasharray: 5 5
@@ -87,7 +90,7 @@ graph TB
 
 ### Crate Organization
 
-The v1 system is organized as a Cargo workspace with **exactly two crates**:
+The current system is organized as a Cargo workspace with **four crates**:
 
 #### 1. **rastery-app** (Main Application)
 - GPUI application initialization, window identity, and four-section navigation
@@ -110,23 +113,23 @@ The v1 system is organized as a Cargo workspace with **exactly two crates**:
 - Config serialization and deterministic output naming
 - **No façade trait**: the public API is the set of typed module functions; async scheduling belongs to `rastery-app`
 
-The following packages are v2 plans and MUST NOT be created during v1:
+The following packages implement the v2 AI layer:
 
-#### 3. **rastery-ai** (v2 planned AI Service Abstraction)
+#### 3. **rastery-ai** (AI Service Abstraction)
 - Provider trait abstraction
 - Unified request/response models
-- HTTP client with retry logic
+- HTTPS-only Rustls transport with certificate validation
 - Error mapping from provider-specific to app-level errors
 - Capability declaration system
 - Provider implementations: Seedream, Google Nano Banana, OpenAI GPT-Image（Agnes 暂不实现）
 - **Key Trait**: `Provider` with capability declarations
 
-#### 4. **rastery-presets** (v2 planned Industry Tool Templates)
+#### 4. **rastery-presets** (Industry Tool Templates)
 - Locked prompt template storage
 - Compile-time embedding of prompts into binary
 - Template organization by industry tool category
 - Version-controlled prompt iteration
-- **Key API**: `get_preset(tool: IndustryTool, variant: Option<String>) -> &'static str`
+- **Key API**: typed edit/industry prompt renderers backed by separate compile-time template files
 
 ### Concurrency Model
 
@@ -211,16 +214,16 @@ The job lifecycle is:
 
 Native path prompts are outside `WorkspaceJob`: selection happens asynchronously, after the listener's mutable entity borrow is released. File reads and image decoding begin only after concrete paths have been returned.
 
-### v2 Planned Interfaces
+### v2 Provider and Preset Interfaces
 
-`rastery-ai` and `rastery-presets` do not exist in v1. Their planned boundary remains:
+The implemented boundary is:
 
 - a `Provider` abstraction with capability declarations, text-to-image, image-to-image, edit, and normalized errors;
 - provider credentials stored only in OS credential stores;
 - locked prompt templates compiled into `rastery-presets` and selected by industry-tool **档位**;
-- no v1 type may depend on either planned crate.
+- `rastery-core` remains independent of both network crates; only `rastery-app` orchestrates them.
 
-Detailed provider request schemas are intentionally deferred until v2 because vendor APIs are time-sensitive. Creating concrete request structs in v1 would be speculative coupling.
+Provider request schemas and models are frozen by ADR-0004 and contract-tested through injected fake transports. A future model or endpoint upgrade is an explicit research/ADR task.
 
 ## Data Models
 
@@ -245,7 +248,7 @@ Detailed provider request schemas are intentionally deferred until v2 because ve
 
 Batch outputs retain the input index, success/failure partition, and original source stem. Naming sanitization guarantees that generated files remain inside the selected directory.
 
-### v1 Configuration Model
+### Configuration Model
 
 `AppConfig` contains only:
 
@@ -254,12 +257,14 @@ Batch outputs retain the input index, success/failure partition, and original so
 - `default_png_compression`;
 - `language` (`zh-CN` or `en` at runtime);
 - `last_output_dir: Option<PathBuf>`.
+- `default_provider`;
+- non-secret local `generation_history` records.
 
-It intentionally contains no provider, API key, AI history, or credential-store fields. `ConfigStore` writes through a temporary file and backup/rename sequence, and a missing or corrupt config falls back to defaults with a localized warning.
+It intentionally contains no API key or prompt text. `ConfigStore` writes through a temporary file and backup/rename sequence, and a missing or corrupt config falls back to defaults with a localized warning.
 
 ### History and Credentials
 
-Generation history and provider credentials are v2 data. They MUST NOT be added to the v1 TOML schema. Any future credential model must use platform secure storage and must never serialize secrets or log values.
+Generation history is non-secret TOML data and can be cleared in Settings. Provider credentials use `keyring` and are stored only by Windows Credential Manager, macOS Keychain, or Linux Secret Service; secret wrappers are redacted, zeroized on drop, and never serialized or logged.
 
 ## Error Handling
 
@@ -284,13 +289,13 @@ Generation history and provider credentials are v2 data. They MUST NOT be added 
 3. Missing config silently uses defaults; unreadable or invalid config uses defaults and displays a reset warning.
 4. Save failures preserve the in-memory result so the user can choose another destination.
 5. Invalid numeric or empty text input is rejected before a background job is spawned.
-6. v2 AI and credential errors are deferred with the v2 crates; they are not part of the v1 error hierarchy.
+6. AI/provider/credential failures map into localized semantic categories without exposing provider bodies or credentials.
 
 ## Testing Strategy
 
 ### Automated Baseline
 
-At candidate `fffdb2c`, `cargo test` executes 60 tests: 28 in `rastery-core` and 32 in `rastery-app`. Picker regressions cover supported-path filtering and order, concrete save/directory/watermark path preparation, busy state, and the production `resolve_path_prompt` seam for cancellation, platform failure, channel closure, non-busy recovery, and immediate reuse. The core suite covers the active v1 correctness properties (Properties 1–15 and 17–28); app tests also cover config recovery, parameter bounds, crop geometry, filename containment, batch progress/failure state, initial paths, logging filters, packaging identity, and text-watermark validation.
+The 2026-07-19 workspace baseline executes 80 tests: `rastery-ai` provider/security/transport contracts, `rastery-presets` embedded-template coverage, the complete v1 core property suite, and app state/orchestration tests including AI masks, exact business dimensions, config secret exclusion, platform local cropping, and poster composition.
 
 Property-based testing is required for pure transformations and invariants. Example-based unit tests are preferred for state transitions, platform-independent orchestration, validation, and known regressions. UI pixels, interaction feel, native dialogs, clipboard interoperability, signing, and timing are desktop acceptance concerns.
 
@@ -577,9 +582,11 @@ Exit criterion: all common and platform-specific checks in `v1-desktop-acceptanc
 
 Exit criterion: the release workflow accepts the evidence and all platform artifacts pass their jobs. Until then the product status remains pre-release even if every automated test is green.
 
-### [v2] Stage D — AI 功能: Deferred
+### [v2] Stage D — AI 功能: Implemented, Real-Provider Acceptance Open
 
-A new ADR and fresh provider research are required before v2 starts. That change may create `rastery-ai` and `rastery-presets`, define the Provider contract against then-current APIs, add secure credential storage, and implement AI 功能 plus their **档位** and **保持不变项** acceptance process.
+ADR-0004 and fresh official-provider research established the contract. The four-crate implementation includes secure credentials, three providers, capability-driven UI, 12 edit presets, 13 industry tools, poster composition, exact output post-processing, history, and semantic failures.
+
+Exit criterion: execute [`v2-ai-acceptance.md`](../testing/v2-ai-acceptance.md) with funded real-provider accounts, verify every **保持不变项** and content-filter/error path, then repeat the exact-candidate desktop and package matrix. Automated fake-transport tests cannot promote subjective generated output to “verified”.
 
 v2 MUST NOT weaken the v1 guarantees: every 本地功能 remains usable without network connectivity, API keys, provider initialization, or telemetry.
 
@@ -591,7 +598,7 @@ v2 MUST NOT weaken the v1 guarantees: every 本地功能 remains usable without 
 - Treat a synchronized GPUI / gpui-component upgrade as its own change with regenerated `vendor-docs/`, full CI, and repeated desktop acceptance.
 - Do not enable `webview` or `inspector` features.
 - Keep the local `proc-macro-error2` compatibility patch documented and remove it only when a verified synchronized upgrade makes it unnecessary.
-- Use `PathBuf` for platform paths and preserve the two-crate v1 workspace boundary.
+- Use `PathBuf` for platform paths and preserve the four-crate dependency boundary.
 
 ### Code Quality Standards
 
@@ -610,7 +617,7 @@ v2 MUST NOT weaken the v1 guarantees: every 本地功能 remains usable without 
 - **Shrinking**: enabled.
 - **Replay**: committed `*.proptest-regressions` cases and explicit seeds when diagnosing CI-only failures.
 
-The v1 baseline implements Properties 1–15 and 17–28. Property 16 was removed with screen capture; Properties 29–30 are v2 and must not cause v1 credential or network code to be created.
+The baseline implements Properties 1–15 and 17–30. Property 16 was removed with screen capture; Properties 29–30 are covered by credential/config and HTTPS transport tests.
 
 ### Verification Layers
 
@@ -622,9 +629,8 @@ The v1 baseline implements Properties 1–15 and 17–28. Property 16 was remove
 | Desktop behavior | Rendering, interaction, dialogs, clipboard, drag/drop, file manager, performance | Four-environment desktop acceptance JSON |
 | Release trust | Signing, notarization, installation, uninstall, artifact size | release workflow plus real-machine checks |
 
-### Future Extensions (Out of Scope for V1)
+### Future Extensions (Out of Current Scope)
 
-- AI 功能 and their Provider / preset / credential infrastructure;
 - the three video placeholders;
 - optional screen capture only after a new ADR re-evaluates package size and platform dependencies;
 - AI providers beyond the three initially planned providers;
@@ -641,6 +647,6 @@ The v1 baseline implements Properties 1–15 and 17–28. Property 16 was remove
 - **Total Requirements Covered**: 60
 - **Total Acceptance Criteria Addressed**: 442
 - **Correctness Properties Defined**: 29 active (27 v1 + 2 v2), plus removed Property 16 placeholder
-- **Automated Baseline**: 60 tests at candidate `fffdb2c` (28 core + 32 app); latest remote three-platform CI evidence is `origin/main@f88a939`
-- **Last Updated**: 2026-07-18
-- **Status**: v1 implementation baseline complete; stabilization and desktop acceptance open; not release-ready
+- **Automated Baseline**: 80 workspace tests on the 2026-07-19 local v2 implementation
+- **Last Updated**: 2026-07-19
+- **Status**: v1 and v2 image implementation complete; real-provider, desktop, package, and release acceptance open

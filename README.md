@@ -13,13 +13,14 @@
 
 ## Status
 
-Rastery ships in two stages:
+Rastery was built in two stages:
 
-- **v1 — Local features (current focus).** Completely offline image-processing tools. Screen capture, global hotkeys, and screen color picking have been removed from the current scope to keep the package small.
-- **v2 — AI features (deferred).** Text-to-image, AI editing, and industry preset tools via BYOK (Bring Your Own Key). The two AI sections and three video tools are present in the UI as *under-development* placeholders.
+- **v1 — Local features (implemented).** Completely offline image-processing tools. Screen capture, global hotkeys, and screen color picking remain outside the current scope.
+- **v2 — AI image features (implemented; live-provider acceptance open).** Text/image generation, 12 AI editing presets, 13 industry tools, and poster design via BYOK. Seedream, Nano Banana, and OpenAI keys are stored in the operating-system credential manager. The three video entries remain explicitly planned placeholders and are not part of the marked v1/v2 image scope.
 
 See [ADR-0001](docs/adr/0001-v1-scope-local-only.md) for why the scope is split this way.
 See [ADR-0003](docs/adr/0003-remove-screen-capture.md) for the screen-capture removal decision.
+See [ADR-0004](docs/adr/0004-v2-provider-contract.md) for the researched v2 provider contract.
 
 ## Features (v1)
 
@@ -42,15 +43,25 @@ The UI is organized into four **sections**. v1 fills the two local ones:
 | Feature | What it does | Engine |
 | --- | --- | --- |
 | GIF Maker | Compose frames into a GIF (delay + forward/reverse/ping-pong) | `rastery_core::animation` |
+| Poster Design | Generate a 9:16 AI background, position/resize three native text layers, and export a local offscreen composition | `rastery-ai` · `rastery_core::poster` |
+
+### AI Generation and Industry Tools (v2)
+
+- Text-to-image and reference-image generation with dynamic provider capabilities and multi-result selection.
+- 12 AI editing presets, including mask-based removal with an interactive region selector.
+- 13 locked-prompt industry tools: restoration, ID photos, avatars, memes, portraits, try-on, recoloring, promotional posters, platform adaptation, covers, illustrations, food enhancement, and interior previews.
+- Exact local post-processing for ID photos, 3:4 promotional posters, avatars, and platform output sizes.
 
 ## Architecture
 
-A Cargo workspace of two crates (v1):
+A Cargo workspace of four crates:
 
 | Crate | Responsibility | Testable headless? |
 | --- | --- | --- |
 | [`rastery-core`](crates/rastery-core) | Pure local image engine: crop, compress, collage, slice, GIF, QR, EXIF, watermark, beautify. **No UI, no network, no global state.** | ✅ Fully — property-tested |
 | [`rastery-app`](crates/rastery-app) | GPUI UI: four-section navigation, feature pages, and a custom crop Element | ⚠️ Type-check only on headless machines |
+| [`rastery-ai`](crates/rastery-ai) | Provider trait, Seedream/Nano Banana/OpenAI adapters, HTTPS transport, capability declarations, and OS credential storage | ✅ Contract-tested with fake transports |
+| [`rastery-presets`](crates/rastery-presets) | Compile-time locked prompt templates for editing and all 13 industry tools | ✅ Embedded-resource tests |
 
 Design principles: local-first, privacy by design (no telemetry, no embedded keys), native and lightweight (single binary, **no browser-engine dependency**), GPU-direct rendering.
 

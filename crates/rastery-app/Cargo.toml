@@ -24,6 +24,8 @@ gpui-component = "=0.5.1"
 image = "=0.25.8"
 log = "0.4.33"
 rastery-core = { path = "../rastery-core" }
+rastery-ai = { path = "../rastery-ai" }
+rastery-presets = { path = "../rastery-presets" }
 rust-i18n = "3"
 
 [dev-dependencies]
@@ -44,7 +46,7 @@ icon = [
 ]
 category = "Graphics and Design"
 short_description = "A lightweight local image processing toolbox"
-long_description = "Rastery provides fast, offline image editing, conversion, compression, collage, slicing, QR, EXIF, watermark, and GIF tools."
+long_description = "Rastery provides fast offline image processing plus BYOK AI generation, editing, industry presets, and poster design."
 
 [package.metadata.wix]
 product-icon = "assets/icons/rastery.ico"

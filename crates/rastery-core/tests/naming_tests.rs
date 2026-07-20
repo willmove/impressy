@@ -32,3 +32,11 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn ai_filenames_are_timestamped_sequential_and_extension_safe() {
+    let first = naming::ai_filename(1_700_000_000_000, 1, ".PNG");
+    let second = naming::ai_filename(1_700_000_000_000, 2, "../webp");
+    assert_eq!(first, "rastery-ai-1700000000000-01.png");
+    assert_eq!(second, "rastery-ai-1700000000000-02.webp");
+}

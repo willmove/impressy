@@ -206,6 +206,12 @@ impl Workspace {
         self.current_image_source()
     }
 
+    /// Immutable decoded inputs for v2 reference-image requests. Encoding is performed on the
+    /// background executor so large images never block the GPUI thread.
+    pub fn ai_reference_images(&self) -> Arc<Vec<RgbaImage>> {
+        Arc::clone(&self.images)
+    }
+
     pub fn status_text(&self) -> SharedString {
         self.status.text()
     }

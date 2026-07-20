@@ -1,0 +1,1 @@
+Generate a coherent product photography set from the supplied product reference. Preserve exact product geometry, color, material, branding, labels, and included parts across every output. Vary only the requested camera angle or setting and maintain a consistent studio art direction. Tier: {{tier}}. Direction: {{user_instruction}}.

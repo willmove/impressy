@@ -1,0 +1,1 @@
+Create a themed portrait from the supplied person. Preserve identity, facial geometry, skin tone, age, and body proportions while changing only clothing, scene, lighting, and art direction to the selected theme. Maintain photographic coherence and avoid extra limbs, jewelry, or text. Theme tier: {{tier}}. Detail: {{user_instruction}}.

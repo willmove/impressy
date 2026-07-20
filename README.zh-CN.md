@@ -13,13 +13,14 @@
 
 ## 项目阶段
 
-Rastery 分两阶段交付：
+Rastery 已按两个阶段建设：
 
-- **v1 —— 本地功能（当前重点）。** 完全离线的图片处理工具，不联网、不需要 API Key。屏幕截图、全局热键与屏幕取色已从当前范围剥离，以控制安装包体积。
-- **v2 —— AI 功能（推迟）。** 文生图、AI 改图、行业预置工具，通过用户自备 API Key（BYOK）实现。两个 AI 板块与三个视频工具已在界面中作为「开发中」占位存在。
+- **v1 —— 本地功能（已实现）。** 完全离线的图片处理工具，不联网、不需要 API Key。屏幕截图、全局热键与屏幕取色仍不属于当前范围。
+- **v2 —— AI 图片功能（已实现，待真实服务商验收）。** 文生图 / 图生图、12 个 AI 改图预设、13 个行业工具和海报设计均通过 BYOK 提供；Seedream、Nano Banana、OpenAI 密钥只存入操作系统凭据管理器。三个视频入口仍是明确的规划占位，不属于当前标记为 v1/v2 的图片功能范围。
 
 范围如此切分的理由见 [ADR-0001](docs/adr/0001-v1-scope-local-only.md)。
 截图能力剥离的决策见 [ADR-0003](docs/adr/0003-remove-screen-capture.md)。
+v2 Provider 契约与调研结论见 [ADR-0004](docs/adr/0004-v2-provider-contract.md)。
 
 ## 功能（v1）
 
@@ -42,15 +43,25 @@ Rastery 分两阶段交付：
 | 功能 | 说明 | 引擎 |
 | --- | --- | --- |
 | GIF 制作 | 把多帧合成 GIF（延迟 + 正序 / 倒序 / 乒乓） | `rastery_core::animation` |
+| 海报设计 | 生成 9:16 AI 底图，拖拽 / 缩放三个原生文字图层并在本地离屏合成 | `rastery-ai` · `rastery_core::poster` |
+
+### AI 生成与行业工具（v2）
+
+- 文生图与参考图生成，参数随 Provider 能力动态调整，结果支持多选保存。
+- 12 个 AI 改图预设；局部消除支持交互式选区与透明掩码。
+- 13 个锁定提示词行业工具：老照片修复、证件照、头像、表情包、写真、试穿、改色、促销海报、平台适配、封面、文章配图、美食优化、室内预览。
+- 对证件照、3:4 促销海报、头像和平台规格执行精确本地后处理。
 
 ## 架构
 
-一个包含两个 crate 的 Cargo workspace（v1）：
+一个包含四个 crate 的 Cargo workspace：
 
 | Crate | 职责 | 可无头测试？ |
 | --- | --- | --- |
 | [`rastery-core`](crates/rastery-core) | 纯本地图像引擎：裁剪、压缩、拼图、切图、GIF、二维码、EXIF、水印、美化。**无 UI、无网络、无全局状态。** | ✅ 完全可测 —— property test 覆盖 |
 | [`rastery-app`](crates/rastery-app) | GPUI UI：四板块导航、功能页与自定义裁剪 Element | ⚠️ 无头机器上仅能类型检查 |
+| [`rastery-ai`](crates/rastery-ai) | Provider trait、Seedream / Nano Banana / OpenAI 适配器、HTTPS、能力声明与系统凭据存储 | ✅ 假传输契约测试 |
+| [`rastery-presets`](crates/rastery-presets) | AI 改图与 13 个行业工具的编译期锁定提示词模板 | ✅ 内嵌资源测试 |
 
 设计原则：本地优先、隐私优先（无遥测、无内嵌密钥）、原生轻量（单二进制、**无浏览器内核依赖**）、GPU 直渲。
 

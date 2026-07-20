@@ -1,6 +1,6 @@
 //! 配置 property tests：Property 3（往返）、23（幂等）、26（无效 TOML 报错）。
 use proptest::prelude::*;
-use rastery_core::config::{self, AppConfig, Language};
+use rastery_core::config::{self, AppConfig, GenerationHistoryRecord, Language};
 use rastery_core::format::{OutputFormat, PngCompression, Quality};
 use std::path::PathBuf;
 
@@ -24,6 +24,8 @@ fn arb_config() -> impl Strategy<Value = AppConfig> {
             } else {
                 None
             },
+            default_provider: "seedream".to_string(),
+            generation_history: Vec::new(),
         },
     )
 }
@@ -63,4 +65,26 @@ language = "En"
 "#;
     let parsed = config::from_toml(legacy).expect("legacy v1 config must remain readable");
     assert_eq!(parsed.default_png_compression, PngCompression::Default);
+    assert_eq!(parsed.default_provider, "seedream");
+    assert!(parsed.generation_history.is_empty());
+}
+
+#[test]
+fn v2_config_contains_history_but_has_no_api_key_field() {
+    let config = AppConfig {
+        default_provider: "openai".into(),
+        generation_history: vec![GenerationHistoryRecord {
+            created_at_unix_ms: 42,
+            provider: "openai".into(),
+            feature: "feat-t2i".into(),
+            output_count: 2,
+            saved_paths: vec![PathBuf::from("output.png")],
+        }],
+        ..AppConfig::default()
+    };
+    let encoded = config::to_toml(&config).expect("serialize v2 config");
+    assert!(encoded.contains("default_provider = \"openai\""));
+    assert!(encoded.contains("generation_history"));
+    assert!(!encoded.to_ascii_lowercase().contains("api_key"));
+    assert!(!encoded.contains("provider-secret"));
 }

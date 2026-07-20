@@ -1,0 +1,1 @@
+Create a vertical 3:4 promotional poster using the supplied product as the immutable hero asset. Preserve product geometry, color, material, logo, and labels. Build a clear commercial hierarchy for the selected activity and reserve safe areas for locally rendered title text. Do not render garbled placeholder copy. Activity tier: {{tier}}. Detail: {{user_instruction}}.
