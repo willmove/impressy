@@ -522,12 +522,12 @@ impl AppShell {
 
     fn sidebar_group(
         &self,
-        section: Section,
+        group: NavigationGroup,
         query: &str,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let features = section
-            .features()
+        let features = group
+            .features
             .iter()
             .copied()
             .filter(|feature| feature_matches_search(*feature, query))
@@ -550,8 +550,8 @@ impl AppShell {
                         .child(
                             h_flex()
                                 .gap_2()
-                                .child(Icon::new(section_icon(section)).small())
-                                .child(tr(section.nav_key())),
+                                .child(Icon::new(group.icon).small())
+                                .child(tr(group.label_key)),
                         )
                         .child(Icon::new(IconName::ChevronDown).small()),
                 )
@@ -625,7 +625,7 @@ impl AppShell {
         let (badge, badge_color) = feature_badge(feature, cx);
         h_flex()
             .id(feature.id())
-            .w(px(230.0))
+            .w(px(270.0))
             .min_h(px(68.0))
             .gap_3()
             .p_3()
@@ -673,6 +673,60 @@ impl AppShell {
             }))
     }
 
+    fn home_quick_action(&self, feature: Feature, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        h_flex()
+            .id(SharedString::from(format!("home-quick-{}", feature.id())))
+            .min_h(px(58.0))
+            .px_4()
+            .gap_3()
+            .border_t_1()
+            .border_color(theme.border)
+            .cursor_pointer()
+            .hover(|this| this.bg(theme.secondary_hover))
+            .child(
+                div()
+                    .size(px(34.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .bg(theme.sidebar_accent)
+                    .text_color(theme.sidebar_accent_foreground)
+                    .child(Icon::new(feature_icon(feature)).small()),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .gap_0p5()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(tr(feature.name_key())),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .child(tr(feature.desc_key())),
+                    ),
+            )
+            .child(
+                Icon::new(IconName::ChevronRight)
+                    .small()
+                    .text_color(theme.muted_foreground),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_feature(feature, cx);
+            }))
+            .into_any_element()
+    }
+
     fn section_home(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let cards = Section::ALL
             .into_iter()
@@ -680,6 +734,16 @@ impl AppShell {
             .copied()
             .map(|feature| self.feature_card(feature, cx).into_any_element())
             .collect::<Vec<_>>();
+        let quick_actions = [
+            Feature::Edit,
+            Feature::Batch,
+            Feature::Beautify,
+            Feature::TextToImage,
+            Feature::ImageEdit,
+        ]
+        .into_iter()
+        .map(|feature| self.home_quick_action(feature, cx))
+        .collect::<Vec<_>>();
         let theme = cx.theme();
         let local_count = Section::ALL
             .into_iter()
@@ -696,12 +760,12 @@ impl AppShell {
             .flat_map(Section::features)
             .filter(|feature| !feature.is_v1() && !feature.is_ai())
             .count();
-        let section_rows = Section::ALL
+        let section_rows = navigation_groups()
             .into_iter()
-            .map(|section| {
-                let first = section.features()[0];
+            .map(|group| {
+                let first = group.features[0];
                 h_flex()
-                    .id(SharedString::from(format!("home-section-{}", section.id())))
+                    .id(SharedString::from(format!("home-section-{}", group.id)))
                     .min_h(px(54.0))
                     .px_4()
                     .justify_between()
@@ -716,13 +780,13 @@ impl AppShell {
                                 div()
                                     .text_sm()
                                     .font_weight(gpui::FontWeight::MEDIUM)
-                                    .child(tr(section.nav_key())),
+                                    .child(tr(group.label_key)),
                             )
                             .child(
                                 div()
                                     .text_xs()
                                     .text_color(theme.muted_foreground)
-                                    .child(section_summary(section)),
+                                    .child(tr(group.summary_key)),
                             ),
                     )
                     .child(
@@ -744,8 +808,8 @@ impl AppShell {
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .w_full()
-                    .max_w(px(780.0))
+                    .w(px(1080.0))
+                    .flex_shrink_0()
                     .p_6()
                     .pb_8()
                     .gap_5()
@@ -758,14 +822,27 @@ impl AppShell {
                             .border_color(theme.border)
                             .child(
                                 v_flex()
-                                    .flex_1()
-                                    .min_w(px(0.0))
+                                    .w(px(560.0))
+                                    .flex_shrink_0()
                                     .gap_1()
                                     .child(
-                                        div()
-                                            .text_xl()
-                                            .font_weight(gpui::FontWeight::BOLD)
-                                            .child(tr("home.title")),
+                                        h_flex()
+                                            .justify_between()
+                                            .child(
+                                                div()
+                                                    .text_xl()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .child(tr("home.title")),
+                                            )
+                                            .child(
+                                                Button::new("home-open-image")
+                                                    .primary()
+                                                    .icon(IconName::FolderOpen)
+                                                    .label(tr("action.open"))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.prompt_for_images(false, cx);
+                                                    })),
+                                            ),
                                     )
                                     .child(
                                         h_flex()
@@ -779,15 +856,6 @@ impl AppShell {
                                             )
                                             .child(tr("home.privacy_note")),
                                     ),
-                            )
-                            .child(
-                                Button::new("home-open-image")
-                                    .primary()
-                                    .icon(IconName::FolderOpen)
-                                    .label(tr("action.open"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.prompt_for_images(false, cx);
-                                    })),
                             ),
                     )
                     .child(
@@ -796,9 +864,8 @@ impl AppShell {
                             .gap_5()
                             .child(
                                 v_flex()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .min_h(px(320.0))
+                                    .w(px(560.0))
+                                    .flex_shrink_0()
                                     .rounded_lg()
                                     .border_1()
                                     .border_color(theme.border)
@@ -812,75 +879,11 @@ impl AppShell {
                                             .child(Icon::new(IconName::Star).small())
                                             .child(tr("home.quick_start")),
                                     )
-                                    .child(
-                                        v_flex()
-                                            .flex_1()
-                                            .items_center()
-                                            .justify_center()
-                                            .gap_3()
-                                            .px_8()
-                                            .text_center()
-                                            .child(
-                                                div()
-                                                    .size(px(52.0))
-                                                    .flex()
-                                                    .items_center()
-                                                    .justify_center()
-                                                    .rounded_lg()
-                                                    .bg(theme.sidebar_accent)
-                                                    .text_color(theme.sidebar_accent_foreground)
-                                                    .child(
-                                                        Icon::new(IconName::GalleryVerticalEnd)
-                                                            .size_6(),
-                                                    ),
-                                            )
-                                            .child(
-                                                div()
-                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                    .child(tr("home.quick_start_title")),
-                                            )
-                                            .child(
-                                                div()
-                                                    .max_w(px(420.0))
-                                                    .text_sm()
-                                                    .text_color(theme.muted_foreground)
-                                                    .child(tr("home.quick_start_desc")),
-                                            )
-                                            .child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(
-                                                        Button::new("home-start-edit")
-                                                            .primary()
-                                                            .label(tr("feature.edit.name"))
-                                                            .on_click(cx.listener(
-                                                                |this, _, _, cx| {
-                                                                    this.open_feature(
-                                                                        Feature::Edit,
-                                                                        cx,
-                                                                    );
-                                                                },
-                                                            )),
-                                                    )
-                                                    .child(
-                                                        Button::new("home-start-ai")
-                                                            .outline()
-                                                            .label(tr("feature.text_to_image.name"))
-                                                            .on_click(cx.listener(
-                                                                |this, _, _, cx| {
-                                                                    this.open_feature(
-                                                                        Feature::TextToImage,
-                                                                        cx,
-                                                                    );
-                                                                },
-                                                            )),
-                                                    ),
-                                            ),
-                                    ),
+                                    .children(quick_actions),
                             )
                             .child(
                                 v_flex()
-                                    .w(px(260.0))
+                                    .w(px(280.0))
                                     .gap_4()
                                     .child(
                                         h_flex()
@@ -2340,10 +2343,15 @@ impl AppShell {
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 this.handle_drop(paths.paths().to_vec(), cx);
             }))
-            .child(self.workspace_canvas(feature, cx))
+            .child(
+                div()
+                    .w(px(640.0))
+                    .flex_shrink_0()
+                    .child(self.workspace_canvas(feature, cx)),
+            )
             .child(
                 v_flex()
-                    .w(px(330.0))
+                    .w(px(280.0))
                     .flex_shrink_0()
                     .gap_4()
                     .child(self.parameter_panel(feature, cx))
@@ -3070,7 +3078,8 @@ impl AppShell {
             }))
             .child(
                 v_flex()
-                    .flex_1()
+                    .w(px(640.0))
+                    .flex_shrink_0()
                     .min_h(px(520.0))
                     .p_4()
                     .gap_4()
@@ -3158,7 +3167,7 @@ impl AppShell {
             )
             .child(
                 v_flex()
-                    .w(px(340.0))
+                    .w(px(300.0))
                     .flex_shrink_0()
                     .gap_3()
                     .p_4()
@@ -3436,13 +3445,14 @@ impl AppShell {
         v_flex()
             .id("settings-workspace")
             .size_full()
-            .items_center()
+            .items_start()
+            .pl(px(160.0))
             .flex_1()
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .w_full()
-                    .max_w(px(940.0))
+                    .w(px(900.0))
+                    .flex_shrink_0()
                     .p_6()
                     .pb_8()
                     .gap_5()
@@ -3760,13 +3770,81 @@ fn section_for_feature(feature: Feature) -> Section {
     }
 }
 
-fn section_icon(section: Section) -> IconName {
-    match section {
-        Section::BasicImage => IconName::GalleryVerticalEnd,
-        Section::AiGeneration => IconName::Bot,
-        Section::IndustryTools => IconName::Building2,
-        Section::CreativeOutput => IconName::Palette,
-    }
+struct NavigationGroup {
+    id: &'static str,
+    label_key: &'static str,
+    summary_key: &'static str,
+    icon: IconName,
+    features: &'static [Feature],
+}
+
+fn navigation_groups() -> [NavigationGroup; 5] {
+    [
+        NavigationGroup {
+            id: Section::BasicImage.id(),
+            label_key: Section::BasicImage.nav_key(),
+            summary_key: "home.section_basic_summary",
+            icon: IconName::GalleryVerticalEnd,
+            features: &[
+                Feature::Edit,
+                Feature::Batch,
+                Feature::QrCode,
+                Feature::Exif,
+                Feature::Slice,
+            ],
+        },
+        NavigationGroup {
+            id: Section::AiGeneration.id(),
+            label_key: Section::AiGeneration.nav_key(),
+            summary_key: "home.section_ai_summary",
+            icon: IconName::Bot,
+            features: &[Feature::TextToImage, Feature::ImageEdit],
+        },
+        NavigationGroup {
+            id: Section::IndustryTools.id(),
+            label_key: Section::IndustryTools.nav_key(),
+            summary_key: "home.section_industry_summary",
+            icon: IconName::Building2,
+            features: &[
+                Feature::OldPhotoRestoration,
+                Feature::IdPhoto,
+                Feature::AvatarStudio,
+                Feature::MemeGenerator,
+                Feature::AiPortrait,
+                Feature::ModelTryOn,
+                Feature::ProductRecolor,
+                Feature::PromotionalPoster,
+                Feature::PlatformAdaptation,
+                Feature::CoverFactory,
+                Feature::ArticleIllustration,
+                Feature::FoodEnhancement,
+                Feature::InteriorPreview,
+            ],
+        },
+        NavigationGroup {
+            id: Section::CreativeOutput.id(),
+            label_key: Section::CreativeOutput.nav_key(),
+            summary_key: "home.section_creative_summary",
+            icon: IconName::Palette,
+            features: &[
+                Feature::Collage,
+                Feature::Gif,
+                Feature::Beautify,
+                Feature::Poster,
+            ],
+        },
+        NavigationGroup {
+            id: "video",
+            label_key: "nav.video_tools",
+            summary_key: "home.section_video_summary",
+            icon: IconName::WindowMaximize,
+            features: &[
+                Feature::VideoWatermark,
+                Feature::VideoSubtitle,
+                Feature::VideoClarity,
+            ],
+        },
+    ]
 }
 
 fn feature_icon(feature: Feature) -> IconName {
@@ -3845,15 +3923,6 @@ fn home_metric(count: usize, label_key: &str, color: Hsla, _cx: &Context<AppShel
         )
         .child(div().text_xs().text_color(color).child(tr(label_key)))
         .into_any_element()
-}
-
-fn section_summary(section: Section) -> SharedString {
-    match section {
-        Section::BasicImage => tr("home.section_basic_summary"),
-        Section::AiGeneration => tr("home.section_ai_summary"),
-        Section::IndustryTools => tr("home.section_industry_summary"),
-        Section::CreativeOutput => tr("home.section_creative_summary"),
-    }
 }
 
 fn provider_from_config(value: &str) -> ProviderId {
@@ -4354,9 +4423,9 @@ fn feature_detail(feature: Feature) -> SharedString {
 impl Render for AppShell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let query = self.nav_search.read(cx).value().to_string().to_lowercase();
-        let nav_groups = Section::ALL
+        let nav_groups = navigation_groups()
             .into_iter()
-            .filter_map(|section| self.sidebar_group(section, &query, cx))
+            .filter_map(|group| self.sidebar_group(group, &query, cx))
             .collect::<Vec<_>>();
         let settings = self.settings_button(cx).into_any_element();
         let language = self.language_button(cx).into_any_element();
@@ -4390,7 +4459,7 @@ impl Render for AppShell {
             .bg(secondary)
             .child(
                 h_flex()
-                    .h(px(44.0))
+                    .h(px(40.0))
                     .flex_shrink_0()
                     .px_3()
                     .justify_between()
@@ -4399,7 +4468,7 @@ impl Render for AppShell {
                     .bg(background)
                     .child(
                         h_flex()
-                            .w(px(430.0))
+                            .w(px(360.0))
                             .gap_4()
                             .child(
                                 div()
@@ -4431,19 +4500,21 @@ impl Render for AppShell {
                             .text_color(muted)
                             .child(format!("{} — {}", t!("app.title"), page_title)),
                     )
-                    .child(h_flex().w(px(180.0)).justify_end().child(language)),
+                    .child(h_flex().w(px(360.0)).justify_end().child(language)),
             )
             .child(
                 h_flex()
                     .flex_1()
+                    .h(px(0.0))
                     .min_h(px(0.0))
                     .overflow_hidden()
                     .child(
                         v_flex()
-                            .w(px(252.0))
+                            .w(px(216.0))
                             .h_full()
                             .min_h(px(0.0))
                             .flex_shrink_0()
+                            .relative()
                             .bg(sidebar)
                             .border_r_1()
                             .border_color(sidebar_border)

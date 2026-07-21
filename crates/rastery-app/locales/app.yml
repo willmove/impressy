@@ -25,6 +25,9 @@ nav:
   creative_output:
     en: Creative Output
     zh-CN: 创作输出
+  video_tools:
+    en: Video Tools
+    zh-CN: 视频工具
 lang:
   toggle:
     en: 中文
@@ -95,23 +98,30 @@ home:
     en: Native · Windows / macOS / Linux
     zh-CN: 原生 · Windows / macOS / Linux
   section_basic_summary:
-    en: Seven offline image workflows
-    zh-CN: 7 个本地图片工作流
+    en: Five everyday offline image workflows
+    zh-CN: 5 个常用本地图片工作流
   section_ai_summary:
-    en: Generation, editing, and video placeholders
-    zh-CN: 生成、改图与视频占位入口
+    en: Image generation and guided editing
+    zh-CN: 图片生成与引导式改图
   section_industry_summary:
     en: Thirteen locked-prompt workflows
     zh-CN: 13 个锁定提示词工作流
   section_creative_summary:
-    en: GIF and poster creation
-    zh-CN: GIF 与海报创作
+    en: Collage, GIF, framing, and posters
+    zh-CN: 拼图、GIF、截图美化与海报
+  section_video_summary:
+    en: Three planned video workflows
+    zh-CN: 3 个规划中的视频工作流
   offline_available:
     en: Available offline
     zh-CN: 离线可用
   provider_required:
     en: Provider connection required
     zh-CN: 需要连接服务商
+status:
+  zoom:
+    en: 100%
+    zh-CN: 100%
 workspace:
   preview:
     en: Preview
