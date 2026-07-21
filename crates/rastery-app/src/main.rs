@@ -25,9 +25,10 @@ mod ui_message;
 mod workspace;
 
 use gpui::{
-    App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size,
+    App, AppContext, Application, Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, rgb,
+    size,
 };
-use gpui_component::Root;
+use gpui_component::{Root, Theme, ThemeMode};
 
 use config_store::{ConfigLoad, ConfigStore};
 use rastery_core::config::AppConfig;
@@ -61,14 +62,42 @@ fn main() {
         .map(std::path::PathBuf::from)
         .filter(|path| path.is_file())
         .collect::<Vec<_>>();
-    let app = Application::new();
+    let app = Application::new().with_assets(gpui_component_assets::Assets);
     app.run(move |cx: &mut App| {
         // 必须在使用任何 gpui-component 功能之前调用。
         gpui_component::init(cx);
+        Theme::change(ThemeMode::Light, None, cx);
+        {
+            let theme = Theme::global_mut(cx);
+            theme.font_size = px(14.0);
+            theme.radius = px(8.0);
+            theme.radius_lg = px(12.0);
+            theme.background = rgb(0xffffff).into();
+            theme.foreground = rgb(0x182235).into();
+            theme.border = rgb(0xdde5ef).into();
+            theme.input = rgb(0xd5deea).into();
+            theme.muted = rgb(0xedf2f7).into();
+            theme.muted_foreground = rgb(0x7d8da7).into();
+            theme.secondary = rgb(0xf4f7fb).into();
+            theme.secondary_foreground = rgb(0x34435b).into();
+            theme.secondary_hover = rgb(0xeef4fc).into();
+            theme.primary = rgb(0x2867e8).into();
+            theme.primary_hover = rgb(0x1f5edb).into();
+            theme.primary_active = rgb(0x194fc0).into();
+            theme.primary_foreground = rgb(0xffffff).into();
+            theme.success = rgb(0x10a875).into();
+            theme.success_foreground = rgb(0xffffff).into();
+            theme.sidebar = rgb(0xf7f9fc).into();
+            theme.sidebar_foreground = rgb(0x46566f).into();
+            theme.sidebar_accent = rgb(0xeaf2ff).into();
+            theme.sidebar_accent_foreground = rgb(0x2867e8).into();
+            theme.sidebar_border = rgb(0xdde5ef).into();
+            theme.ring = rgb(0x77a4ff).into();
+        }
         // set_locale 同时切换应用与组件库文案。
         gpui_component::set_locale(loaded.config.language.locale());
 
-        let bounds = Bounds::centered(None, size(px(1024.), px(700.)), cx);
+        let bounds = Bounds::centered(None, size(px(1640.), px(920.)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),

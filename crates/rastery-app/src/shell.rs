@@ -18,11 +18,11 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 use gpui_component::spinner::Spinner;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{ActiveTheme, Colorize, Disableable, h_flex, v_flex};
+use gpui_component::{ActiveTheme, Colorize, Disableable, Icon, IconName, Sizable, h_flex, v_flex};
 use rastery_ai::{
     AiError, ApiKey, AspectRatio as AiAspectRatio, CredentialStore, GeneratedImage,
     GenerationQuality, GenerationRequest, ImageInput, ProviderId, ProviderRegistry,
@@ -162,6 +162,7 @@ pub struct AppShell {
     poster_title: Entity<InputState>,
     poster_subtitle: Entity<InputState>,
     poster_corner_label: Entity<InputState>,
+    nav_search: Entity<InputState>,
     seedream_key: Entity<InputState>,
     nano_banana_key: Entity<InputState>,
     openai_key: Entity<InputState>,
@@ -207,6 +208,8 @@ impl AppShell {
         });
         let poster_corner_label = cx
             .new(|cx| InputState::new(window, cx).placeholder(tr("ai.placeholder.poster_corner")));
+        let nav_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder(tr("nav.search_placeholder")));
         let seedream_key = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder(tr("ai.placeholder.api_key"))
@@ -243,6 +246,13 @@ impl AppShell {
             cx.new(|cx| ColorPickerState::new(window, cx).default_value(cx.theme().blue));
 
         let _subscriptions = vec![
+            cx.subscribe_in(&nav_search, window, {
+                move |_, _, event: &InputEvent, _, cx| {
+                    if matches!(event, InputEvent::Change) {
+                        cx.notify();
+                    }
+                }
+            }),
             cx.subscribe(&quality_slider, |this, _, event: &SliderEvent, cx| {
                 let SliderEvent::Change(value) = event;
                 let value = value.start().round().clamp(1.0, 100.0) as u8;
@@ -290,6 +300,7 @@ impl AppShell {
             poster_title,
             poster_subtitle,
             poster_corner_label,
+            nav_search,
             seedream_key,
             nano_banana_key,
             openai_key,
@@ -341,11 +352,19 @@ impl AppShell {
     }
 
     fn toggle_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.config.language = match self.config.language {
+        let language = match self.config.language {
             Language::ZhCn => Language::En,
             Language::En => Language::ZhCn,
         };
+        self.set_language(language, window, cx);
+    }
+
+    fn set_language(&mut self, language: Language, window: &mut Window, cx: &mut Context<Self>) {
+        self.config.language = language;
         gpui_component::set_locale(self.config.language.locale());
+        self.nav_search.update(cx, |input, input_cx| {
+            input.set_placeholder(tr("nav.search_placeholder"), window, input_cx);
+        });
         self.qr_input.update(cx, |input, input_cx| {
             input.set_placeholder(tr("placeholder.qr_text"), window, input_cx);
         });
@@ -433,45 +452,149 @@ impl AppShell {
         .detach();
     }
 
-    fn nav_button(&self, section: Section, cx: &mut Context<Self>) -> impl IntoElement {
-        let active = !self.settings_open && self.active == section && self.open.is_none();
+    fn home_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let (foreground, active_bg, hover_bg) = (
-            theme.sidebar_foreground,
-            theme.sidebar_accent,
-            theme.sidebar_accent,
-        );
-        div()
-            .id(section.id())
+        let active = !self.settings_open && self.open.is_none();
+        h_flex()
+            .id("nav-home")
+            .h(px(34.0))
             .px_3()
-            .py_2()
+            .gap_2()
             .rounded_md()
             .text_sm()
             .cursor_pointer()
-            .text_color(foreground)
-            .when(active, |this| this.bg(active_bg))
-            .hover(|this| this.bg(hover_bg))
-            .child(tr(section.nav_key()))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.active = section;
+            .text_color(if active {
+                theme.sidebar_accent_foreground
+            } else {
+                theme.sidebar_foreground
+            })
+            .when(active, |this| this.bg(theme.sidebar_accent))
+            .hover(|this| this.bg(theme.sidebar_accent))
+            .child(Icon::new(IconName::LayoutDashboard).small())
+            .child(tr("nav.home"))
+            .on_click(cx.listener(|this, _, _, cx| {
                 this.open = None;
                 this.settings_open = false;
                 cx.notify();
             }))
     }
 
-    fn settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn sidebar_feature_button(&self, feature: Feature, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        div()
-            .id("settings-nav")
-            .px_3()
-            .py_2()
+        let active = !self.settings_open && self.open == Some(feature);
+        let (badge, badge_color) = feature_badge(feature, cx);
+        h_flex()
+            .id(SharedString::from(format!("nav-{}", feature.id())))
+            .h(px(32.0))
+            .px_2()
+            .gap_2()
             .rounded_md()
             .text_sm()
             .cursor_pointer()
-            .text_color(theme.sidebar_foreground)
+            .text_color(if active {
+                theme.sidebar_accent_foreground
+            } else {
+                theme.sidebar_foreground
+            })
+            .when(active, |this| this.bg(theme.sidebar_accent))
+            .hover(|this| this.bg(theme.sidebar_accent))
+            .child(Icon::new(feature_icon(feature)).small().flex_shrink_0())
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .whitespace_nowrap()
+                    .child(tr(feature.name_key())),
+            )
+            .child(
+                div()
+                    .px_1()
+                    .rounded_sm()
+                    .text_size(px(10.0))
+                    .text_color(badge_color)
+                    .child(badge),
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.open_feature(feature, cx);
+            }))
+    }
+
+    fn sidebar_group(
+        &self,
+        section: Section,
+        query: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        let features = section
+            .features()
+            .iter()
+            .copied()
+            .filter(|feature| feature_matches_search(*feature, query))
+            .map(|feature| self.sidebar_feature_button(feature, cx).into_any_element())
+            .collect::<Vec<_>>();
+        if features.is_empty() {
+            return None;
+        }
+        Some(
+            v_flex()
+                .gap_0()
+                .child(
+                    h_flex()
+                        .h(px(30.0))
+                        .px_2()
+                        .justify_between()
+                        .text_xs()
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(cx.theme().muted_foreground)
+                        .child(
+                            h_flex()
+                                .gap_2()
+                                .child(Icon::new(section_icon(section)).small())
+                                .child(tr(section.nav_key())),
+                        )
+                        .child(Icon::new(IconName::ChevronDown).small()),
+                )
+                .children(features)
+                .into_any_element(),
+        )
+    }
+
+    fn open_feature(&mut self, feature: Feature, cx: &mut Context<Self>) {
+        self.open = Some(feature);
+        self.settings_open = false;
+        self.active = section_for_feature(feature);
+        if let Some(spec) = feature.ai_spec() {
+            self.ai_state.aspect_ratio = spec.default_ratio;
+            self.ai_state.selected_tiers.clear();
+            self.ai_state.selected_tiers.insert(0);
+        }
+        if feature == Feature::ImageEdit {
+            self.crop_selection.update(cx, |selection, selection_cx| {
+                selection.set_ratio(None, selection_cx);
+            });
+        }
+        cx.notify();
+    }
+
+    fn settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        h_flex()
+            .id("settings-nav")
+            .h(px(36.0))
+            .px_3()
+            .gap_2()
+            .rounded_md()
+            .text_sm()
+            .cursor_pointer()
+            .text_color(if self.settings_open {
+                theme.sidebar_accent_foreground
+            } else {
+                theme.sidebar_foreground
+            })
             .when(self.settings_open, |this| this.bg(theme.sidebar_accent))
             .hover(|this| this.bg(theme.sidebar_accent))
+            .child(Icon::new(IconName::Settings2).small())
             .child(tr("settings.title"))
             .on_click(cx.listener(|this, _, _, cx| {
                 this.settings_open = true;
@@ -482,125 +605,367 @@ impl AppShell {
 
     fn language_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        div()
+        h_flex()
             .id("lang-toggle")
-            .px_3()
-            .py_2()
+            .h(px(30.0))
+            .px_2()
+            .gap_1()
             .rounded_md()
-            .text_sm()
+            .text_xs()
             .cursor_pointer()
-            .border_1()
-            .border_color(theme.sidebar_border)
-            .text_color(theme.sidebar_foreground)
-            .hover(|this| this.bg(theme.sidebar_accent))
+            .text_color(theme.muted_foreground)
+            .hover(|this| this.bg(theme.secondary_hover))
+            .child(Icon::new(IconName::Globe).small())
             .child(tr("lang.toggle"))
             .on_click(cx.listener(|this, _, window, cx| this.toggle_language(window, cx)))
     }
 
     fn feature_card(&self, feature: Feature, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let is_v1 = feature.is_v1();
-        let badge = if is_v1 {
-            tr("placeholder.local_badge")
-        } else if feature.is_ai() {
-            tr("ai.badge")
-        } else {
-            tr("placeholder.dev_badge")
-        };
-        let badge_color = if is_v1 {
-            theme.primary
-        } else {
-            theme.muted_foreground
-        };
-
-        v_flex()
+        let (badge, badge_color) = feature_badge(feature, cx);
+        h_flex()
             .id(feature.id())
-            .w(px(260.0))
-            .gap_2()
-            .p_4()
+            .w(px(230.0))
+            .min_h(px(68.0))
+            .gap_3()
+            .p_3()
             .rounded_lg()
             .border_1()
             .border_color(theme.border)
-            .bg(theme.secondary)
+            .bg(theme.background)
             .cursor_pointer()
-            .hover(|this| this.border_color(theme.primary))
-            .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(tr(feature.name_key())),
-                    )
-                    .child(div().text_xs().text_color(badge_color).child(badge)),
-            )
+            .hover(|this| this.border_color(theme.primary).bg(theme.secondary_hover))
             .child(
                 div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(tr(feature.desc_key())),
+                    .size(px(34.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_md()
+                    .bg(theme.sidebar_accent)
+                    .text_color(theme.sidebar_accent_foreground)
+                    .child(Icon::new(feature_icon(feature)).small()),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(tr(feature.name_key())),
+                            )
+                            .child(div().text_xs().text_color(badge_color).child(badge)),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(tr(feature.desc_key())),
+                    ),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
-                this.open = Some(feature);
-                this.settings_open = false;
-                if let Some(spec) = feature.ai_spec() {
-                    this.ai_state.aspect_ratio = spec.default_ratio;
-                    this.ai_state.selected_tiers.clear();
-                    this.ai_state.selected_tiers.insert(0);
-                }
-                if feature == Feature::ImageEdit {
-                    this.crop_selection.update(cx, |selection, selection_cx| {
-                        selection.set_ratio(None, selection_cx);
-                    });
-                }
-                cx.notify();
+                this.open_feature(feature, cx);
             }))
     }
 
     fn section_home(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let cards = self
-            .active
-            .features()
-            .iter()
-            .map(|&feature| self.feature_card(feature, cx).into_any_element())
+        let cards = Section::ALL
+            .into_iter()
+            .flat_map(Section::features)
+            .copied()
+            .map(|feature| self.feature_card(feature, cx).into_any_element())
             .collect::<Vec<_>>();
         let theme = cx.theme();
+        let local_count = Section::ALL
+            .into_iter()
+            .flat_map(Section::features)
+            .filter(|feature| feature.is_v1())
+            .count();
+        let ai_count = Section::ALL
+            .into_iter()
+            .flat_map(Section::features)
+            .filter(|feature| feature.is_ai())
+            .count();
+        let development_count = Section::ALL
+            .into_iter()
+            .flat_map(Section::features)
+            .filter(|feature| !feature.is_v1() && !feature.is_ai())
+            .count();
+        let section_rows = Section::ALL
+            .into_iter()
+            .map(|section| {
+                let first = section.features()[0];
+                h_flex()
+                    .id(SharedString::from(format!("home-section-{}", section.id())))
+                    .min_h(px(54.0))
+                    .px_4()
+                    .justify_between()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .cursor_pointer()
+                    .hover(|this| this.bg(theme.secondary_hover))
+                    .child(
+                        v_flex()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::MEDIUM)
+                                    .child(tr(section.nav_key())),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(section_summary(section)),
+                            ),
+                    )
+                    .child(
+                        Icon::new(IconName::ChevronRight)
+                            .small()
+                            .text_color(theme.muted_foreground),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.open_feature(first, cx);
+                    }))
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
 
         v_flex()
+            .id("home-scroll")
             .size_full()
-            .p_6()
-            .gap_4()
+            .items_center()
+            .overflow_y_scroll()
             .child(
-                div()
-                    .text_xl()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(theme.foreground)
-                    .child(tr(self.active.nav_key())),
+                v_flex()
+                    .w_full()
+                    .max_w(px(780.0))
+                    .p_6()
+                    .pb_8()
+                    .gap_5()
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .items_center()
+                            .pb_4()
+                            .border_b_1()
+                            .border_color(theme.border)
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_xl()
+                                            .font_weight(gpui::FontWeight::BOLD)
+                                            .child(tr("home.title")),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(
+                                                Icon::new(IconName::CircleCheck)
+                                                    .small()
+                                                    .text_color(theme.success),
+                                            )
+                                            .child(tr("home.privacy_note")),
+                                    ),
+                            )
+                            .child(
+                                Button::new("home-open-image")
+                                    .primary()
+                                    .icon(IconName::FolderOpen)
+                                    .label(tr("action.open"))
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.prompt_for_images(false, cx);
+                                    })),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .items_start()
+                            .gap_5()
+                            .child(
+                                v_flex()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .min_h(px(320.0))
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(theme.border)
+                                    .bg(theme.background)
+                                    .child(
+                                        h_flex()
+                                            .h(px(48.0))
+                                            .px_4()
+                                            .gap_2()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child(Icon::new(IconName::Star).small())
+                                            .child(tr("home.quick_start")),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .items_center()
+                                            .justify_center()
+                                            .gap_3()
+                                            .px_8()
+                                            .text_center()
+                                            .child(
+                                                div()
+                                                    .size(px(52.0))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .rounded_lg()
+                                                    .bg(theme.sidebar_accent)
+                                                    .text_color(theme.sidebar_accent_foreground)
+                                                    .child(
+                                                        Icon::new(IconName::GalleryVerticalEnd)
+                                                            .size_6(),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .child(tr("home.quick_start_title")),
+                                            )
+                                            .child(
+                                                div()
+                                                    .max_w(px(420.0))
+                                                    .text_sm()
+                                                    .text_color(theme.muted_foreground)
+                                                    .child(tr("home.quick_start_desc")),
+                                            )
+                                            .child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .child(
+                                                        Button::new("home-start-edit")
+                                                            .primary()
+                                                            .label(tr("feature.edit.name"))
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.open_feature(
+                                                                        Feature::Edit,
+                                                                        cx,
+                                                                    );
+                                                                },
+                                                            )),
+                                                    )
+                                                    .child(
+                                                        Button::new("home-start-ai")
+                                                            .outline()
+                                                            .label(tr("feature.text_to_image.name"))
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.open_feature(
+                                                                        Feature::TextToImage,
+                                                                        cx,
+                                                                    );
+                                                                },
+                                                            )),
+                                                    ),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                v_flex()
+                                    .w(px(260.0))
+                                    .gap_4()
+                                    .child(
+                                        h_flex()
+                                            .h(px(82.0))
+                                            .rounded_lg()
+                                            .border_1()
+                                            .border_color(theme.border)
+                                            .bg(theme.background)
+                                            .child(home_metric(
+                                                local_count,
+                                                "home.local_tools",
+                                                theme.success,
+                                                cx,
+                                            ))
+                                            .child(home_metric(
+                                                ai_count,
+                                                "home.ai_tools",
+                                                theme.primary,
+                                                cx,
+                                            ))
+                                            .child(home_metric(
+                                                development_count,
+                                                "home.development",
+                                                theme.muted_foreground,
+                                                cx,
+                                            )),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .rounded_lg()
+                                            .border_1()
+                                            .border_color(theme.border)
+                                            .bg(theme.background)
+                                            .child(
+                                                h_flex()
+                                                    .h(px(46.0))
+                                                    .px_4()
+                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                    .child(tr("home.sections")),
+                                            )
+                                            .children(section_rows),
+                                    )
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(Icon::new(IconName::CircleCheck).small())
+                                            .child(tr("home.platform_note")),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.background)
+                            .child(
+                                h_flex()
+                                    .h(px(48.0))
+                                    .px_4()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(tr("home.all_tools")),
+                            )
+                            .child(
+                                h_flex()
+                                    .flex_wrap()
+                                    .items_start()
+                                    .gap_3()
+                                    .p_4()
+                                    .pt_0()
+                                    .children(cards),
+                            ),
+                    ),
             )
-            .child(h_flex().flex_wrap().gap_4().children(cards))
     }
 
     fn feature_page(&self, feature: Feature, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, secondary, foreground) =
-            (theme.muted_foreground, theme.secondary, theme.foreground);
-
-        let back = div()
-            .id("back")
-            .px_3()
-            .py_1()
-            .rounded_md()
-            .text_sm()
-            .cursor_pointer()
-            .text_color(muted)
-            .hover(move |this| this.bg(secondary))
-            .child(SharedString::from(format!("← {}", t!("placeholder.back"))))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.open = None;
-                cx.notify();
-            }));
+        let muted = cx.theme().muted_foreground;
+        let foreground = cx.theme().foreground;
+        let border = cx.theme().border;
+        let sidebar_accent = cx.theme().sidebar_accent;
+        let sidebar_accent_foreground = cx.theme().sidebar_accent_foreground;
+        let success = cx.theme().success;
 
         let body = if feature.is_v1() {
             self.v1_page(feature, cx).into_any_element()
@@ -615,23 +980,75 @@ impl AppShell {
 
         v_flex()
             .size_full()
-            .p_6()
-            .gap_4()
-            .child(back)
+            .overflow_hidden()
             .child(
-                div()
-                    .text_xl()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(foreground)
-                    .child(tr(feature.name_key())),
+                h_flex()
+                    .min_h(px(88.0))
+                    .px_7()
+                    .py_4()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(border)
+                    .child(
+                        h_flex()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .size(px(42.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_lg()
+                                    .bg(sidebar_accent)
+                                    .text_color(sidebar_accent_foreground)
+                                    .child(Icon::new(feature_icon(feature)).size_6()),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(
+                                        h_flex()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .text_lg()
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_color(foreground)
+                                                    .child(tr(feature.name_key())),
+                                            )
+                                            .child(feature_header_badge(feature, cx)),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(muted)
+                                            .child(tr(feature.desc_key())),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .px_3()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(border)
+                            .text_xs()
+                            .text_color(if feature.is_v1() { success } else { muted })
+                            .child(Icon::new(if feature.is_v1() {
+                                IconName::CircleCheck
+                            } else {
+                                IconName::Globe
+                            }))
+                            .child(tr(if feature.is_v1() {
+                                "home.offline_available"
+                            } else {
+                                "home.provider_required"
+                            })),
+                    ),
             )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(muted)
-                    .child(tr(feature.desc_key())),
-            )
-            .child(body)
+            .child(div().flex_1().overflow_hidden().p_6().child(body))
     }
 
     fn workspace_button(
@@ -1135,7 +1552,7 @@ impl AppShell {
                     .child(
                         Button::new(ids.0)
                             .outline()
-                            .label("−")
+                            .icon(IconName::Minus)
                             .tooltip(help.clone())
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.adjust_param(actions.0, cx);
@@ -1145,7 +1562,7 @@ impl AppShell {
                     .child(
                         Button::new(ids.1)
                             .outline()
-                            .label("+")
+                            .icon(IconName::Plus)
                             .tooltip(help)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.adjust_param(actions.1, cx);
@@ -1169,7 +1586,7 @@ impl AppShell {
             .child(div().text_sm().child(tr(label_key)))
             .child(
                 v_flex()
-                    .w(px(220.0))
+                    .w(px(180.0))
                     .gap_1()
                     .child(div().text_sm().text_center().child(value))
                     .child(
@@ -1330,12 +1747,19 @@ impl AppShell {
             _ => {}
         }
         v_flex()
-            .w(px(420.0))
-            .gap_2()
-            .p_3()
+            .w_full()
+            .gap_3()
+            .p_4()
             .rounded_lg()
             .border_1()
             .border_color(cx.theme().border)
+            .bg(cx.theme().background)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(tr("workspace.parameters")),
+            )
             .children(controls)
             .into_any_element()
     }
@@ -1744,7 +2168,7 @@ impl AppShell {
 
     fn preview_panel(&self, feature: Feature, cx: &mut Context<Self>) -> Option<AnyElement> {
         let image = self.workspace.preview()?;
-        let (width, height) = self.workspace.preview_size(520.0, 320.0)?;
+        let (width, height) = self.workspace.preview_size(720.0, 500.0)?;
         let preview = div()
             .relative()
             .w(px(width))
@@ -1796,59 +2220,161 @@ impl AppShell {
         } else {
             preview
         };
-        Some(
-            div()
-                .p_2()
-                .rounded_lg()
-                .border_1()
-                .border_color(cx.theme().border)
-                .bg(cx.theme().secondary)
-                .child(preview)
-                .into_any_element(),
-        )
+        Some(preview.into_any_element())
+    }
+
+    fn workspace_canvas(&self, feature: Feature, cx: &mut Context<Self>) -> AnyElement {
+        let border = cx.theme().border;
+        let background = cx.theme().background;
+        let secondary = cx.theme().secondary;
+        let muted = cx.theme().muted_foreground;
+        let sidebar_accent = cx.theme().sidebar_accent;
+        let sidebar_accent_foreground = cx.theme().sidebar_accent_foreground;
+        let preview = self.preview_panel(feature, cx);
+        let info = self.workspace.info_text();
+        let status = self.workspace.status_text();
+        v_flex()
+            .flex_1()
+            .min_h(px(520.0))
+            .p_4()
+            .gap_3()
+            .rounded_lg()
+            .border_1()
+            .border_color(border)
+            .bg(background)
+            .child(
+                h_flex()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(tr("workspace.preview")),
+                    )
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(feature_detail(feature)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_h(px(420.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .overflow_hidden()
+                    .rounded_lg()
+                    .border_1()
+                    .border_dashed()
+                    .border_color(border)
+                    .bg(secondary)
+                    .when_some(preview, |this, preview| this.child(preview))
+                    .when(self.workspace.preview().is_none(), |this| {
+                        this.child(
+                            v_flex()
+                                .items_center()
+                                .gap_3()
+                                .px_8()
+                                .text_center()
+                                .child(
+                                    div()
+                                        .size(px(52.0))
+                                        .flex()
+                                        .items_center()
+                                        .justify_center()
+                                        .rounded_lg()
+                                        .bg(sidebar_accent)
+                                        .text_color(sidebar_accent_foreground)
+                                        .child(Icon::new(IconName::GalleryVerticalEnd).size_6()),
+                                )
+                                .child(
+                                    div()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child(tr("workspace.empty_title")),
+                                )
+                                .child(
+                                    div()
+                                        .max_w(px(420.0))
+                                        .text_sm()
+                                        .text_color(muted)
+                                        .child(tr("workspace.empty_desc")),
+                                ),
+                        )
+                    }),
+            )
+            .child(
+                h_flex()
+                    .min_h(px(24.0))
+                    .justify_between()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(if info.is_empty() {
+                        tr("workspace.ready")
+                    } else {
+                        info
+                    })
+                    .when(!status.is_empty(), |this| this.child(status)),
+            )
+            .into_any_element()
     }
 
     fn v1_page(&self, feature: Feature, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (primary, muted, foreground) =
-            (theme.primary, theme.muted_foreground, theme.foreground);
+        let primary = cx.theme().primary;
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let background = cx.theme().background;
         let buttons = self.feature_action_buttons(feature, cx);
-        let detail = feature_detail(feature);
         let status = self.workspace.status_text();
-        let info = self.workspace.info_text();
-        let preview = self.preview_panel(feature, cx);
 
-        v_flex()
+        h_flex()
             .id("v1-workspace")
+            .size_full()
             .flex_1()
             .overflow_y_scroll()
             .pb_6()
-            .gap_3()
+            .gap_5()
+            .items_start()
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 this.handle_drop(paths.paths().to_vec(), cx);
             }))
-            .child(self.parameter_panel(feature, cx))
-            .child(h_flex().flex_wrap().gap_2().children(buttons))
+            .child(self.workspace_canvas(feature, cx))
             .child(
-                div()
-                    .text_xs()
-                    .text_color(primary)
-                    .child(tr("placeholder.local_badge")),
+                v_flex()
+                    .w(px(330.0))
+                    .flex_shrink_0()
+                    .gap_4()
+                    .child(self.parameter_panel(feature, cx))
+                    .child(
+                        v_flex()
+                            .gap_2()
+                            .p_4()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(border)
+                            .bg(background)
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(tr("workspace.actions")),
+                            )
+                            .children(buttons),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .text_xs()
+                            .text_color(primary)
+                            .child(Icon::new(IconName::CircleCheck).small())
+                            .child(tr("home.offline_available")),
+                    )
+                    .when(!status.is_empty(), |this| {
+                        this.child(div().text_sm().text_color(muted).child(status))
+                    }),
             )
-            .child(div().text_xs().text_color(muted).child(detail))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(tr("placeholder.drop_images")),
-            )
-            .when(!info.is_empty(), |this| {
-                this.child(div().text_sm().text_color(foreground).child(info))
-            })
-            .when(!status.is_empty(), |this| {
-                this.child(div().text_sm().text_color(muted).child(status))
-            })
-            .when_some(preview, |this, preview| this.child(preview))
     }
 
     fn cycle_ai_provider(&mut self, cx: &mut Context<Self>) {
@@ -2264,9 +2790,8 @@ impl AppShell {
                         .rounded_sm()
                         .bg(theme.primary)
                         .text_color(theme.primary_foreground)
-                        .text_xs()
                         .cursor_pointer()
-                        .child("↘")
+                        .child(Icon::new(IconName::ResizeCorner).small())
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |_, event: &MouseDownEvent, _, cx| {
@@ -2417,8 +2942,13 @@ impl AppShell {
     }
 
     fn ai_page(&self, feature: Feature, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (primary, muted, border) = (theme.primary, theme.muted_foreground, theme.border);
+        let primary = cx.theme().primary;
+        let muted = cx.theme().muted_foreground;
+        let border = cx.theme().border;
+        let background = cx.theme().background;
+        let secondary = cx.theme().secondary;
+        let sidebar_accent = cx.theme().sidebar_accent;
+        let sidebar_accent_foreground = cx.theme().sidebar_accent_foreground;
         let spec = feature.ai_spec().expect("AI page must have a feature spec");
         let capabilities = self
             .provider_registry
@@ -2525,22 +3055,123 @@ impl AppShell {
             })
             .collect::<Vec<_>>();
 
-        v_flex()
+        let has_results = !results.is_empty();
+        let has_reference = reference.is_some();
+        let has_poster = poster.is_some();
+        h_flex()
             .id("ai-workspace")
-            .flex_1()
+            .size_full()
+            .items_start()
+            .gap_5()
             .overflow_y_scroll()
             .pb_6()
-            .gap_4()
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
                 this.handle_drop(paths.paths().to_vec(), cx);
             }))
             .child(
                 v_flex()
-                    .gap_2()
-                    .p_3()
+                    .flex_1()
+                    .min_h(px(520.0))
+                    .p_4()
+                    .gap_4()
                     .rounded_lg()
                     .border_1()
                     .border_color(border)
+                    .bg(background)
+                    .child(
+                        h_flex()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(tr("workspace.preview")),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(tr("ai.workspace.result_hint")),
+                            ),
+                    )
+                    .when_some(reference, |this, reference| this.child(reference))
+                    .when_some(poster, |this, poster| this.child(poster))
+                    .when(!has_reference && !has_poster && !has_results, |this| {
+                        this.child(
+                            div()
+                                .flex_1()
+                                .min_h(px(420.0))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_lg()
+                                .border_1()
+                                .border_dashed()
+                                .border_color(border)
+                                .bg(secondary)
+                                .child(
+                                    v_flex()
+                                        .items_center()
+                                        .gap_3()
+                                        .px_8()
+                                        .text_center()
+                                        .child(
+                                            div()
+                                                .size(px(54.0))
+                                                .flex()
+                                                .items_center()
+                                                .justify_center()
+                                                .rounded_lg()
+                                                .bg(sidebar_accent)
+                                                .text_color(sidebar_accent_foreground)
+                                                .child(Icon::new(IconName::Bot).size_6()),
+                                        )
+                                        .child(
+                                            div()
+                                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                                .child(tr("ai.workspace.empty_title")),
+                                        )
+                                        .child(
+                                            div()
+                                                .max_w(px(420.0))
+                                                .text_sm()
+                                                .text_color(muted)
+                                                .child(tr("ai.workspace.empty_desc")),
+                                        ),
+                                ),
+                        )
+                    })
+                    .when(
+                        feature == Feature::OldPhotoRestoration && has_results,
+                        |this| {
+                            this.child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(tr("ai.comparison.hold_original")),
+                            )
+                        },
+                    )
+                    .when(has_results, |this| {
+                        this.child(h_flex().flex_wrap().gap_3().children(results))
+                    }),
+            )
+            .child(
+                v_flex()
+                    .w(px(340.0))
+                    .flex_shrink_0()
+                    .gap_3()
+                    .p_4()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(border)
+                    .bg(background)
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(tr("workspace.parameters")),
+                    )
                     .child(Input::new(&self.ai_prompt).cleanable(true))
                     .when(feature == Feature::Poster, |this| {
                         this.child(Input::new(&self.poster_title).cleanable(true))
@@ -2564,8 +3195,7 @@ impl AppShell {
                         )
                     })
                     .child(
-                        h_flex()
-                            .flex_wrap()
+                        v_flex()
                             .gap_2()
                             .child(
                                 Button::new("ai-provider")
@@ -2577,26 +3207,32 @@ impl AppShell {
                                     })),
                             )
                             .child(
-                                Button::new("ai-ratio")
-                                    .outline()
-                                    .label(self.ai_state.aspect_ratio.to_string())
-                                    .disabled(busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cycle_ai_ratio(cx);
-                                    })),
-                            )
-                            .child(
-                                Button::new("ai-count")
-                                    .outline()
-                                    .label(format!(
-                                        "{}: {}",
-                                        t!("ai.parameter.count"),
-                                        self.ai_state.count
-                                    ))
-                                    .disabled(busy || capabilities.max_generation_count == 1)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cycle_ai_count(cx);
-                                    })),
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("ai-ratio")
+                                            .outline()
+                                            .label(self.ai_state.aspect_ratio.to_string())
+                                            .disabled(busy)
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.cycle_ai_ratio(cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("ai-count")
+                                            .outline()
+                                            .label(format!(
+                                                "{}: {}",
+                                                t!("ai.parameter.count"),
+                                                self.ai_state.count
+                                            ))
+                                            .disabled(
+                                                busy || capabilities.max_generation_count == 1,
+                                            )
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.cycle_ai_count(cx);
+                                            })),
+                                    ),
                             )
                             .child(
                                 Button::new("ai-quality")
@@ -2629,19 +3265,14 @@ impl AppShell {
                         capabilities.max_reference_images,
                         t!("ai.capability.outputs"),
                         capabilities.max_generation_count
-                    ))),
-            )
-            .when_some(reference, |this, reference| this.child(reference))
-            .child(
-                h_flex()
-                    .flex_wrap()
-                    .gap_2()
+                    )))
                     .when(
                         spec.needs_image || feature == Feature::TextToImage,
                         |this| {
                             this.child(
                                 Button::new("ai-open-reference")
                                     .outline()
+                                    .icon(IconName::FolderOpen)
                                     .label(tr("ai.action.open_reference"))
                                     .disabled(busy)
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -2653,13 +3284,14 @@ impl AppShell {
                     .child(
                         Button::new("ai-generate")
                             .primary()
+                            .icon(IconName::Bot)
                             .label(tr("ai.action.generate"))
                             .disabled(busy || !region_supported)
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.start_ai_generation(feature, cx);
                             })),
                     )
-                    .when(!results.is_empty(), |this| {
+                    .when(has_results, |this| {
                         this.child(
                             Button::new("ai-save-selected")
                                 .outline()
@@ -2669,86 +3301,124 @@ impl AppShell {
                                     this.prompt_for_ai_output_directory(feature, cx);
                                 })),
                         )
+                    })
+                    .when(!self.ai_status_text().is_empty(), |this| {
+                        this.child(
+                            h_flex()
+                                .gap_2()
+                                .text_sm()
+                                .text_color(primary)
+                                .when(busy, |this| this.child(Spinner::new()))
+                                .child(self.ai_status_text()),
+                        )
+                    })
+                    .when(!region_supported, |this| {
+                        this.child(
+                            div()
+                                .text_sm()
+                                .text_color(muted)
+                                .child(tr("ai.edit.region_provider_required")),
+                        )
                     }),
             )
-            .when(!self.ai_status_text().is_empty(), |this| {
-                this.child(
-                    h_flex()
-                        .gap_2()
-                        .text_sm()
-                        .text_color(primary)
-                        .when(busy, |this| this.child(Spinner::new()))
-                        .child(self.ai_status_text()),
-                )
-            })
-            .when(!region_supported, |this| {
-                this.child(
-                    div()
-                        .text_sm()
-                        .text_color(muted)
-                        .child(tr("ai.edit.region_provider_required")),
-                )
-            })
-            .when_some(poster, |this, poster| this.child(poster))
-            .when(
-                feature == Feature::OldPhotoRestoration && !results.is_empty(),
-                |this| {
-                    this.child(
-                        div()
-                            .text_xs()
-                            .text_color(muted)
-                            .child(tr("ai.comparison.hold_original")),
-                    )
-                },
-            )
-            .when(!results.is_empty(), |this| {
-                this.child(h_flex().flex_wrap().gap_3().children(results))
-            })
     }
 
     fn settings_page(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let credential_rows =
-            ProviderId::ALL
-                .into_iter()
-                .map(|provider| {
-                    v_flex()
-                        .gap_2()
-                        .child(tr(provider_label_key(provider)))
-                        .child(
+        let credential_rows = ProviderId::ALL
+            .into_iter()
+            .map(|provider| {
+                h_flex()
+                    .gap_3()
+                    .child(
+                        div()
+                            .w(px(170.0))
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(tr(provider_label_key(provider))),
+                    )
+                    .child(
+                        div().flex_1().child(
                             Input::new(self.api_key_input(provider))
                                 .mask_toggle()
                                 .cleanable(true),
-                        )
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    Button::new(SharedString::from(format!(
-                                        "settings-save-key-{}",
-                                        provider.as_str()
-                                    )))
-                                    .primary()
-                                    .label(tr("ai.settings.save_key"))
-                                    .on_click(cx.listener(move |this, _, window, cx| {
-                                        this.save_api_key(provider, window, cx);
-                                    })),
-                                )
-                                .child(
-                                    Button::new(SharedString::from(format!(
-                                        "settings-delete-key-{}",
-                                        provider.as_str()
-                                    )))
-                                    .outline()
-                                    .label(tr("ai.settings.delete_key"))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.delete_api_key(provider, cx);
-                                    })),
-                                ),
-                        )
-                        .into_any_element()
-                })
-                .collect::<Vec<_>>();
+                        ),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "settings-save-key-{}",
+                            provider.as_str()
+                        )))
+                        .primary()
+                        .label(tr("ai.settings.save_key"))
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.save_api_key(provider, window, cx);
+                            },
+                        )),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!(
+                            "settings-delete-key-{}",
+                            provider.as_str()
+                        )))
+                        .outline()
+                        .icon(IconName::Delete)
+                        .tooltip(tr("ai.settings.delete_key"))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.delete_api_key(provider, cx);
+                        })),
+                    )
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
+        let capability_rows = ProviderId::ALL
+            .into_iter()
+            .map(|provider| {
+                let capabilities = self
+                    .provider_registry
+                    .capabilities(provider)
+                    .expect("registered provider");
+                let ratios = capabilities
+                    .supported_aspect_ratios
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                h_flex()
+                    .min_h(px(48.0))
+                    .px_4()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .text_sm()
+                    .child(
+                        div()
+                            .w(px(220.0))
+                            .font_weight(gpui::FontWeight::MEDIUM)
+                            .child(tr(provider_label_key(provider))),
+                    )
+                    .child(
+                        div()
+                            .w(px(150.0))
+                            .text_color(theme.muted_foreground)
+                            .child(capabilities.max_reference_images.to_string()),
+                    )
+                    .child(
+                        div()
+                            .w(px(150.0))
+                            .text_color(theme.muted_foreground)
+                            .child(capabilities.max_generation_count.to_string()),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(theme.primary)
+                            .child(ratios),
+                    )
+                    .into_any_element()
+            })
+            .collect::<Vec<_>>();
         let output_dir: SharedString = self
             .config
             .last_output_dir
@@ -2765,144 +3435,424 @@ impl AppShell {
 
         v_flex()
             .id("settings-workspace")
-            .w_full()
+            .size_full()
+            .items_center()
             .flex_1()
             .overflow_y_scroll()
-            .p_6()
-            .pb_8()
-            .gap_5()
-            .child(
-                div()
-                    .text_xl()
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .text_color(theme.foreground)
-                    .child(tr("settings.title")),
-            )
-            .child(
-                v_flex().gap_2().child(tr("settings.export_format")).child(
-                    Button::new("settings-format")
-                        .outline()
-                        .label(format!(
-                            "{} · {}",
-                            self.config.default_export_format,
-                            t!("action.cycle_format")
-                        ))
-                        .on_click(cx.listener(|this, _, _, cx| this.cycle_export_format(cx))),
-                ),
-            )
             .child(
                 v_flex()
-                    .gap_2()
-                    .when(
-                        self.config.default_export_format == OutputFormat::Png,
-                        |this| {
-                            this.child(tr("settings.png_compression")).child(
-                                Button::new("settings-png-compression")
-                                    .outline()
-                                    .label(tr(png_compression_label_key(
-                                        self.config.default_png_compression,
-                                    )))
-                                    .tooltip(tr("help.png_compression"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cycle_png_compression(cx);
-                                    })),
-                            )
-                        },
+                    .w_full()
+                    .max_w(px(940.0))
+                    .p_6()
+                    .pb_8()
+                    .gap_5()
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_color(theme.foreground)
+                            .child(tr("settings.title")),
                     )
-                    .when(
-                        self.config.default_export_format != OutputFormat::Png,
-                        |this| {
-                            this.child(format!(
-                                "{}: {}",
-                                t!("settings.export_quality"),
-                                self.config.default_export_quality.get()
-                            ))
+                    .child(
+                        v_flex()
+                            .gap_3()
+                            .p_5()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.background)
                             .child(
-                                div()
-                                    .id("settings-quality-slider")
-                                    .w(px(360.0))
-                                    .tooltip(|window, cx| {
-                                        Tooltip::new(tr("help.quality")).build(window, cx)
-                                    })
-                                    .child(Slider::new(&self.quality_slider).w_full()),
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Asterisk)
+                                            .small()
+                                            .text_color(theme.primary),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_lg()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child(tr("ai.settings.title")),
+                                    ),
                             )
-                        },
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(estimate),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .gap_3()
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(tr("ai.settings.title")),
-                    )
-                    .child(
-                        Button::new("settings-default-provider")
-                            .outline()
-                            .label(format!(
-                                "{}: {}",
-                                t!("ai.settings.default_provider"),
-                                t!(provider_label_key(self.ai_state.provider))
-                            ))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.cycle_ai_provider(cx);
-                            })),
-                    )
-                    .children(credential_rows)
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(tr("ai.settings.key_security")),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(format!(
-                                "{}: {}",
-                                t!("ai.settings.history"),
-                                self.config.generation_history.len()
-                            ))
                             .child(
-                                Button::new("settings-clear-ai-history")
-                                    .outline()
-                                    .label(tr("ai.settings.clear_history"))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.clear_ai_history(cx);
-                                    })),
+                                h_flex()
+                                    .gap_2()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(
+                                        Icon::new(IconName::CircleCheck)
+                                            .small()
+                                            .text_color(theme.success),
+                                    )
+                                    .child(tr("ai.settings.key_security")),
+                            )
+                            .children(credential_rows)
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("settings-default-provider")
+                                            .outline()
+                                            .label(format!(
+                                                "{}: {}",
+                                                t!("ai.settings.default_provider"),
+                                                t!(provider_label_key(self.ai_state.provider))
+                                            ))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.cycle_ai_provider(cx);
+                                            })),
+                                    )
+                                    .child(format!(
+                                        "{}: {}",
+                                        t!("ai.settings.history"),
+                                        self.config.generation_history.len()
+                                    ))
+                                    .child(
+                                        Button::new("settings-clear-ai-history")
+                                            .outline()
+                                            .label(tr("ai.settings.clear_history"))
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.clear_ai_history(cx);
+                                            })),
+                                    ),
                             ),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .gap_1()
-                    .child(tr("settings.output_directory"))
+                    )
                     .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(output_dir),
-                    ),
+                        v_flex()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.background)
+                            .child(
+                                h_flex()
+                                    .h(px(54.0))
+                                    .px_4()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Bot).small().text_color(theme.primary),
+                                    )
+                                    .child(
+                                        div()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child(tr("settings.provider_capabilities")),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .h(px(38.0))
+                                    .px_4()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(div().w(px(220.0)).child(tr("settings.provider")))
+                                    .child(div().w(px(150.0)).child(tr("settings.reference_limit")))
+                                    .child(div().w(px(150.0)).child(tr("settings.output_limit")))
+                                    .child(div().flex_1().child(tr("settings.aspect_ratios"))),
+                            )
+                            .children(capability_rows),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_4()
+                            .p_5()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.background)
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Settings2)
+                                            .small()
+                                            .text_color(theme.primary),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_lg()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child(tr("settings.export_title")),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_3()
+                                    .child(
+                                        v_flex()
+                                            .w(px(250.0))
+                                            .gap_2()
+                                            .child(tr("settings.export_format"))
+                                            .child(
+                                                Button::new("settings-format")
+                                                    .outline()
+                                                    .label(format!(
+                                                        "{} · {}",
+                                                        self.config.default_export_format,
+                                                        t!("action.cycle_format")
+                                                    ))
+                                                    .on_click(cx.listener(|this, _, _, cx| {
+                                                        this.cycle_export_format(cx)
+                                                    })),
+                                            ),
+                                    )
+                                    .child(
+                                        v_flex()
+                                            .flex_1()
+                                            .gap_2()
+                                            .when(
+                                                self.config.default_export_format
+                                                    == OutputFormat::Png,
+                                                |this| {
+                                                    this.child(tr("settings.png_compression"))
+                                                        .child(
+                                                        Button::new("settings-png-compression")
+                                                            .outline()
+                                                            .label(tr(png_compression_label_key(
+                                                                self.config.default_png_compression,
+                                                            )))
+                                                            .tooltip(tr("help.png_compression"))
+                                                            .on_click(cx.listener(
+                                                                |this, _, _, cx| {
+                                                                    this.cycle_png_compression(cx);
+                                                                },
+                                                            )),
+                                                    )
+                                                },
+                                            )
+                                            .when(
+                                                self.config.default_export_format
+                                                    != OutputFormat::Png,
+                                                |this| {
+                                                    this.child(format!(
+                                                        "{}: {}",
+                                                        t!("settings.export_quality"),
+                                                        self.config.default_export_quality.get()
+                                                    ))
+                                                    .child(
+                                                        div()
+                                                            .id("settings-quality-slider")
+                                                            .w_full()
+                                                            .tooltip(|window, cx| {
+                                                                Tooltip::new(tr("help.quality"))
+                                                                    .build(window, cx)
+                                                            })
+                                                            .child(
+                                                                Slider::new(&self.quality_slider)
+                                                                    .w_full(),
+                                                            ),
+                                                    )
+                                                },
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_sm()
+                                                    .text_color(theme.muted_foreground)
+                                                    .child(estimate),
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                v_flex()
+                                    .gap_1()
+                                    .child(tr("settings.output_directory"))
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(theme.muted_foreground)
+                                            .child(output_dir),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .gap_4()
+                            .p_5()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(theme.border)
+                            .bg(theme.background)
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Icon::new(IconName::Globe)
+                                            .small()
+                                            .text_color(theme.primary),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_lg()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child(tr("lang.label")),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(theme.muted_foreground)
+                                            .child(tr("settings.language_hint")),
+                                    ),
+                            )
+                            .child(
+                                h_flex()
+                                    .gap_2()
+                                    .child(
+                                        Button::new("settings-language-zh")
+                                            .label(tr("lang.zh_cn"))
+                                            .when(
+                                                self.config.language == Language::ZhCn,
+                                                |button| button.primary(),
+                                            )
+                                            .when(
+                                                self.config.language != Language::ZhCn,
+                                                |button| button.outline(),
+                                            )
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.set_language(Language::ZhCn, window, cx);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("settings-language-en")
+                                            .label(tr("lang.english"))
+                                            .when(self.config.language == Language::En, |button| {
+                                                button.primary()
+                                            })
+                                            .when(self.config.language != Language::En, |button| {
+                                                button.outline()
+                                            })
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.set_language(Language::En, window, cx);
+                                            })),
+                                    ),
+                            )
+                            .when(!config_path.is_empty(), |this| {
+                                this.child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(config_path),
+                                )
+                            }),
+                    )
+                    .when(!status.is_empty(), |this| {
+                        this.child(div().text_sm().text_color(theme.primary).child(status))
+                    }),
             )
-            .when(!config_path.is_empty(), |this| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(config_path),
-                )
-            })
-            .when(!status.is_empty(), |this| {
-                this.child(div().text_sm().text_color(theme.primary).child(status))
-            })
+    }
+}
+
+fn section_for_feature(feature: Feature) -> Section {
+    match feature {
+        Feature::Edit
+        | Feature::Collage
+        | Feature::Batch
+        | Feature::Slice
+        | Feature::QrCode
+        | Feature::Exif
+        | Feature::Beautify => Section::BasicImage,
+        Feature::TextToImage
+        | Feature::ImageEdit
+        | Feature::VideoWatermark
+        | Feature::VideoSubtitle
+        | Feature::VideoClarity => Section::AiGeneration,
+        Feature::Gif | Feature::Poster => Section::CreativeOutput,
+        _ => Section::IndustryTools,
+    }
+}
+
+fn section_icon(section: Section) -> IconName {
+    match section {
+        Section::BasicImage => IconName::GalleryVerticalEnd,
+        Section::AiGeneration => IconName::Bot,
+        Section::IndustryTools => IconName::Building2,
+        Section::CreativeOutput => IconName::Palette,
+    }
+}
+
+fn feature_icon(feature: Feature) -> IconName {
+    match feature {
+        Feature::Edit => IconName::Frame,
+        Feature::Collage => IconName::GalleryVerticalEnd,
+        Feature::Batch => IconName::Replace,
+        Feature::Slice => IconName::LayoutDashboard,
+        Feature::QrCode => IconName::Asterisk,
+        Feature::Exif => IconName::File,
+        Feature::Beautify => IconName::Palette,
+        Feature::Gif => IconName::GalleryVerticalEnd,
+        Feature::Poster => IconName::Frame,
+        Feature::TextToImage | Feature::ImageEdit => IconName::Bot,
+        Feature::VideoWatermark | Feature::VideoSubtitle | Feature::VideoClarity => {
+            IconName::WindowMaximize
+        }
+        Feature::OldPhotoRestoration => IconName::GalleryVerticalEnd,
+        Feature::IdPhoto | Feature::AiPortrait => IconName::CircleUser,
+        Feature::AvatarStudio | Feature::ModelTryOn => IconName::User,
+        Feature::MemeGenerator => IconName::Heart,
+        Feature::ProductRecolor => IconName::Palette,
+        Feature::PromotionalPoster => IconName::ChartPie,
+        Feature::PlatformAdaptation => IconName::ResizeCorner,
+        Feature::CoverFactory => IconName::BookOpen,
+        Feature::ArticleIllustration => IconName::File,
+        Feature::FoodEnhancement => IconName::Star,
+        Feature::InteriorPreview => IconName::Building2,
+    }
+}
+
+fn feature_badge(feature: Feature, cx: &Context<AppShell>) -> (SharedString, Hsla) {
+    if feature.is_v1() {
+        (tr("home.badge_local"), cx.theme().success)
+    } else if feature.is_ai() {
+        (tr("home.badge_ai"), cx.theme().primary)
+    } else {
+        (tr("home.badge_dev"), cx.theme().muted_foreground)
+    }
+}
+
+fn feature_header_badge(feature: Feature, cx: &Context<AppShell>) -> AnyElement {
+    let (label, color) = feature_badge(feature, cx);
+    div()
+        .px_2()
+        .py_0p5()
+        .rounded_md()
+        .bg(cx.theme().sidebar_accent)
+        .text_xs()
+        .text_color(color)
+        .child(label)
+        .into_any_element()
+}
+
+fn feature_matches_search(feature: Feature, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let name = t!(feature.name_key()).to_string().to_lowercase();
+    let description = t!(feature.desc_key()).to_string().to_lowercase();
+    name.contains(query) || description.contains(query)
+}
+
+fn home_metric(count: usize, label_key: &str, color: Hsla, _cx: &Context<AppShell>) -> AnyElement {
+    v_flex()
+        .flex_1()
+        .items_center()
+        .justify_center()
+        .gap_1()
+        .child(
+            div()
+                .text_lg()
+                .font_weight(gpui::FontWeight::BOLD)
+                .text_color(color)
+                .child(count.to_string()),
+        )
+        .child(div().text_xs().text_color(color).child(tr(label_key)))
+        .into_any_element()
+}
+
+fn section_summary(section: Section) -> SharedString {
+    match section {
+        Section::BasicImage => tr("home.section_basic_summary"),
+        Section::AiGeneration => tr("home.section_ai_summary"),
+        Section::IndustryTools => tr("home.section_industry_summary"),
+        Section::CreativeOutput => tr("home.section_creative_summary"),
     }
 }
 
@@ -3403,12 +4353,20 @@ fn feature_detail(feature: Feature) -> SharedString {
 
 impl Render for AppShell {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let nav_items = Section::ALL
+        let query = self.nav_search.read(cx).value().to_string().to_lowercase();
+        let nav_groups = Section::ALL
             .into_iter()
-            .map(|section| self.nav_button(section, cx).into_any_element())
+            .filter_map(|section| self.sidebar_group(section, &query, cx))
             .collect::<Vec<_>>();
         let settings = self.settings_button(cx).into_any_element();
         let language = self.language_button(cx).into_any_element();
+        let page_title = if self.settings_open {
+            tr("settings.title")
+        } else if let Some(feature) = self.open {
+            tr(feature.name_key())
+        } else {
+            tr("nav.home")
+        };
 
         let content = if self.settings_open {
             self.settings_page(cx).into_any_element()
@@ -3419,44 +4377,109 @@ impl Render for AppShell {
             }
         };
 
-        let theme = cx.theme();
-        h_flex()
+        let secondary = cx.theme().secondary;
+        let border = cx.theme().border;
+        let background = cx.theme().background;
+        let foreground = cx.theme().foreground;
+        let muted = cx.theme().muted_foreground;
+        let sidebar = cx.theme().sidebar;
+        let sidebar_border = cx.theme().sidebar_border;
+        v_flex()
             .size_full()
-            .bg(theme.background)
+            .overflow_hidden()
+            .bg(secondary)
             .child(
-                v_flex()
-                    .w(px(220.0))
-                    .h_full()
-                    .bg(theme.sidebar)
-                    .border_r_1()
-                    .border_color(theme.sidebar_border)
-                    .p_3()
-                    .gap_1()
+                h_flex()
+                    .h(px(44.0))
+                    .flex_shrink_0()
+                    .px_3()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(border)
+                    .bg(background)
                     .child(
-                        v_flex()
-                            .px_2()
-                            .py_3()
-                            .gap_1()
+                        h_flex()
+                            .w(px(430.0))
+                            .gap_4()
                             .child(
                                 div()
-                                    .text_lg()
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_color(theme.sidebar_foreground)
-                                    .child(tr("app.title")),
+                                    .size(px(26.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .rounded_md()
+                                    .bg(foreground)
+                                    .text_color(background)
+                                    .child(Icon::new(IconName::GalleryVerticalEnd).small()),
                             )
                             .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(tr("app.subtitle")),
+                                h_flex()
+                                    .gap_5()
+                                    .text_sm()
+                                    .text_color(foreground)
+                                    .child(tr("menu.file"))
+                                    .child(tr("menu.edit"))
+                                    .child(tr("menu.view"))
+                                    .child(tr("menu.help")),
                             ),
                     )
-                    .children(nav_items)
-                    .child(div().flex_1())
-                    .child(settings)
-                    .child(language),
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_center()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(format!("{} — {}", t!("app.title"), page_title)),
+                    )
+                    .child(h_flex().w(px(180.0)).justify_end().child(language)),
             )
-            .child(v_flex().flex_1().h_full().child(content))
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .overflow_hidden()
+                    .child(
+                        v_flex()
+                            .w(px(252.0))
+                            .h_full()
+                            .min_h(px(0.0))
+                            .flex_shrink_0()
+                            .bg(sidebar)
+                            .border_r_1()
+                            .border_color(sidebar_border)
+                            .child(
+                                v_flex()
+                                    .p_3()
+                                    .gap_2()
+                                    .child(
+                                        Input::new(&self.nav_search)
+                                            .prefix(Icon::new(IconName::Search).small())
+                                            .cleanable(true),
+                                    )
+                                    .child(self.home_button(cx))
+                                    .child(settings),
+                            )
+                            .child(
+                                v_flex()
+                                    .id("navigation-scroll")
+                                    .flex_1()
+                                    .h(px(0.0))
+                                    .overflow_y_scroll()
+                                    .px_3()
+                                    .pb_3()
+                                    .gap_2()
+                                    .children(nav_groups),
+                            ),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .h_full()
+                            .min_h(px(0.0))
+                            .overflow_hidden()
+                            .child(content),
+                    ),
+            )
     }
 }
 

@@ -7,6 +7,12 @@ app:
     en: Native image toolbox
     zh-CN: 原生图片工具箱
 nav:
+  home:
+    en: Home
+    zh-CN: 首页
+  search_placeholder:
+    en: Search tools…
+    zh-CN: 搜索工具…
   basic_image:
     en: Basic Image Processing
     zh-CN: 基础图片处理
@@ -26,6 +32,112 @@ lang:
   label:
     en: Language
     zh-CN: 语言
+  zh_cn:
+    en: 简体中文
+    zh-CN: 简体中文
+  english:
+    en: English
+    zh-CN: English
+menu:
+  file:
+    en: File
+    zh-CN: 文件
+  edit:
+    en: Edit
+    zh-CN: 编辑
+  view:
+    en: View
+    zh-CN: 视图
+  help:
+    en: Help
+    zh-CN: 帮助
+home:
+  badge_local:
+    en: Local
+    zh-CN: 本地
+  badge_ai:
+    en: AI
+    zh-CN: AI
+  badge_dev:
+    en: Planned
+    zh-CN: 规划中
+  title:
+    en: Start
+    zh-CN: 开始
+  privacy_note:
+    en: Local tools need no network; API keys stay in the system credential manager.
+    zh-CN: 本地功能无需网络；API Key 仅存入系统凭据管理器。
+  quick_start:
+    en: Quick start
+    zh-CN: 快速开始
+  quick_start_title:
+    en: Turn an image into a finished result
+    zh-CN: 从一张图片开始完成创作
+  quick_start_desc:
+    en: Open an editor or choose an AI workflow. Every existing tool remains available from the sidebar and the complete list below.
+    zh-CN: 打开编辑器或选择 AI 工作流。现有功能均可从左侧导航及下方完整工具列表进入。
+  local_tools:
+    en: Local tools
+    zh-CN: 本地工具
+  ai_tools:
+    en: AI tools
+    zh-CN: AI 工具
+  development:
+    en: In progress
+    zh-CN: 开发中
+  sections:
+    en: Sections
+    zh-CN: 板块
+  all_tools:
+    en: All tools
+    zh-CN: 全部工具
+  platform_note:
+    en: Native · Windows / macOS / Linux
+    zh-CN: 原生 · Windows / macOS / Linux
+  section_basic_summary:
+    en: Seven offline image workflows
+    zh-CN: 7 个本地图片工作流
+  section_ai_summary:
+    en: Generation, editing, and video placeholders
+    zh-CN: 生成、改图与视频占位入口
+  section_industry_summary:
+    en: Thirteen locked-prompt workflows
+    zh-CN: 13 个锁定提示词工作流
+  section_creative_summary:
+    en: GIF and poster creation
+    zh-CN: GIF 与海报创作
+  offline_available:
+    en: Available offline
+    zh-CN: 离线可用
+  provider_required:
+    en: Provider connection required
+    zh-CN: 需要连接服务商
+workspace:
+  preview:
+    en: Preview
+    zh-CN: 预览
+  parameters:
+    en: Parameters
+    zh-CN: 参数设置
+  actions:
+    en: Actions
+    zh-CN: 操作
+  empty_title:
+    en: Open or drop an image
+    zh-CN: 打开或拖入图片
+  empty_desc:
+    en: PNG, JPEG, WebP, GIF, and BMP are supported. You can also paste an image from the clipboard.
+    zh-CN: 支持 PNG、JPEG、WebP、GIF 与 BMP，也可直接从剪贴板粘贴图片。
+  ready:
+    en: Ready for an image
+    zh-CN: 等待导入图片
+status:
+  zoom:
+    en: 100%
+    zh-CN: 100%
+  local_mode:
+    en: Local tools stay offline
+    zh-CN: 本地功能保持离线
 settings:
   title:
     en: Settings
@@ -57,6 +169,27 @@ settings:
   no_output_directory:
     en: Not selected yet
     zh-CN: 尚未选择
+  provider_capabilities:
+    en: Provider capabilities
+    zh-CN: Provider 能力
+  provider:
+    en: Provider
+    zh-CN: Provider
+  reference_limit:
+    en: Reference limit
+    zh-CN: 参考图上限
+  output_limit:
+    en: Output limit
+    zh-CN: 单次张数
+  aspect_ratios:
+    en: Aspect ratios
+    zh-CN: 宽高比
+  export_title:
+    en: Export defaults
+    zh-CN: 导出默认设置
+  language_hint:
+    en: Changes immediately without restart
+    zh-CN: 运行时切换，无需重启
 dialog:
   images:
     en: Images
@@ -879,6 +1012,16 @@ ai:
     outputs:
       en: Max outputs
       zh-CN: 最多结果
+  workspace:
+    result_hint:
+      en: Generated results appear here
+      zh-CN: 生成结果将显示在这里
+    empty_title:
+      en: Prepare your AI image workflow
+      zh-CN: 准备开始 AI 图片工作流
+    empty_desc:
+      en: Choose a provider and parameters on the right, add a reference image when needed, then generate.
+      zh-CN: 在右侧选择服务商与档位，按需添加参考图，然后开始生成。
   action:
     open_reference:
       en: Open reference image
