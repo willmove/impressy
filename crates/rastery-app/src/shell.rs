@@ -22,7 +22,7 @@ use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 use gpui_component::spinner::Spinner;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{ActiveTheme, Colorize, Disableable, Icon, IconName, Sizable, h_flex, v_flex};
+use gpui_component::{ActiveTheme, Colorize, Disableable, Icon, IconName, Sizable, WindowExt, h_flex, v_flex};
 use rastery_ai::{
     AiError, ApiKey, AspectRatio as AiAspectRatio, CredentialStore, GeneratedImage,
     GenerationQuality, GenerationRequest, ImageInput, ProviderId, ProviderRegistry,
@@ -38,6 +38,8 @@ use crate::ai_state::{AiErrorKind, AiStatus, AiUiState, RenderedAiImage};
 use crate::config_store::ConfigStore;
 use crate::crop_frame::{NormRect, Selection, selection_overlay};
 use crate::feature_params::{BatchMode, FeatureParams, ParamAction, ParamEffect, WatermarkSource};
+#[cfg(not(target_os = "macos"))]
+use crate::menus::MenuBar;
 use crate::poster_canvas::{
     POSTER_HEIGHT, POSTER_WIDTH, PosterLayout, PosterTextLayer, bounds_capture,
 };
@@ -169,6 +171,9 @@ pub struct AppShell {
     ai_state: AiUiState,
     provider_registry: ProviderRegistry,
     credential_store: Arc<dyn CredentialStore>,
+    /// Windows / Linux 的窗口内菜单栏；macOS 由系统原生菜单栏呈现同一份 `set_menus` 数据。
+    #[cfg(not(target_os = "macos"))]
+    menu_bar: Entity<MenuBar>,
     quality_slider: Entity<SliderState>,
     batch_quality_slider: Entity<SliderState>,
     qr_foreground: Entity<ColorPickerState>,
@@ -194,6 +199,8 @@ impl AppShell {
         }
         let params = FeatureParams::default();
         let crop_selection = cx.new(|_| Selection::new(Some(params.edit.ratio())));
+        #[cfg(not(target_os = "macos"))]
+        let menu_bar = cx.new(MenuBar::new);
         let poster_layout = cx.new(|_| PosterLayout::default());
         let qr_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("placeholder.qr_text")));
@@ -307,6 +314,8 @@ impl AppShell {
             ai_state: AiUiState::new(configured_provider),
             provider_registry: ProviderRegistry::default(),
             credential_store: Arc::new(SystemCredentialStore),
+            #[cfg(not(target_os = "macos"))]
+            menu_bar,
             quality_slider,
             batch_quality_slider,
             qr_foreground,
@@ -362,6 +371,8 @@ impl AppShell {
     fn set_language(&mut self, language: Language, window: &mut Window, cx: &mut Context<Self>) {
         self.config.language = language;
         gpui_component::set_locale(self.config.language.locale());
+        // 菜单文案随语言重建：MenuBar 每次渲染都重读 get_menus()，此处只需更新数据。
+        cx.set_menus(crate::menus::build_menus());
         self.nav_search.update(cx, |input, input_cx| {
             input.set_placeholder(tr("nav.search_placeholder"), window, input_cx);
         });
@@ -1359,6 +1370,100 @@ impl AppShell {
             self.workspace.set_status(UiMessage::Error(ErrorKind::Io));
         }
         cx.notify();
+    }
+
+    /// 菜单栏槽位：Windows / Linux 由 MenuBar 渲染 `set_menus`；macOS 交给系统菜单栏。
+    fn menu_bar_slot(&self) -> AnyElement {
+        #[cfg(not(target_os = "macos"))]
+        return self.menu_bar.clone().into_any_element();
+        #[cfg(target_os = "macos")]
+        return div().into_any_element();
+    }
+
+    // —— 菜单动作处理器（由 `crate::menus::register_actions` 经全局动作分发调用）——
+
+    pub(crate) fn menu_open_images(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.open_images_via_menu(false, cx);
+    }
+
+    pub(crate) fn menu_open_multiple_images(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.open_images_via_menu(true, cx);
+    }
+
+    /// 各功能页共享同一工作区：已在功能页时原地加载；在首页 / 设置页则先落到对应工作区。
+    fn open_images_via_menu(&mut self, multiple: bool, cx: &mut Context<Self>) {
+        if self.settings_open || self.open.is_none() {
+            let landing = if multiple { Feature::Batch } else { Feature::Edit };
+            self.open_feature(landing, cx);
+        }
+        self.prompt_for_images(multiple, cx);
+    }
+
+    pub(crate) fn menu_save_result(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if !self.workspace.has_image() {
+            self.workspace.set_status(UiMessage::NeedResult);
+            cx.notify();
+            return;
+        }
+        self.prompt_for_save(default_export_settings(&self.config), cx);
+    }
+
+    pub(crate) fn menu_reveal_output_directory(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.open_output_directory(cx);
+    }
+
+    pub(crate) fn menu_open_settings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_open = true;
+        self.open = None;
+        cx.notify();
+    }
+
+    pub(crate) fn menu_quit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.quit();
+    }
+
+    pub(crate) fn menu_paste_image(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_open || self.open.is_none() {
+            self.open_feature(Feature::Edit, cx);
+        }
+        self.paste_image(cx);
+    }
+
+    pub(crate) fn menu_copy_result(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.copy_result(cx);
+    }
+
+    pub(crate) fn menu_go_home(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.open = None;
+        self.settings_open = false;
+        cx.notify();
+    }
+
+    pub(crate) fn menu_switch_language(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_language(window, cx);
+    }
+
+    pub(crate) fn menu_show_about(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.open_dialog(cx, |dialog, _, _| {
+            dialog.title(tr("menu.about")).child(
+                v_flex()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_lg()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(tr("app.title")),
+                    )
+                    .child(
+                        div().text_sm().child(format!(
+                            "{} {}",
+                            tr("menu.about_version"),
+                            env!("CARGO_PKG_VERSION")
+                        )),
+                    )
+                    .child(div().text_sm().child(tr("app.subtitle"))),
+            )
+        });
     }
 
     fn adjust_param(&mut self, action: ParamAction, cx: &mut Context<Self>) {
@@ -4416,14 +4521,11 @@ impl Render for AppShell {
                                     .child(Icon::new(IconName::GalleryVerticalEnd).small()),
                             )
                             .child(
-                                h_flex()
-                                    .gap_5()
-                                    .text_sm()
-                                    .text_color(foreground)
-                                    .child(tr("menu.file"))
-                                    .child(tr("menu.edit"))
-                                    .child(tr("menu.view"))
-                                    .child(tr("menu.help")),
+                                div()
+                                    .flex_1()
+                                    .min_w(px(0.0))
+                                    .overflow_hidden()
+                                    .child(self.menu_bar_slot()),
                             ),
                     )
                     .child(

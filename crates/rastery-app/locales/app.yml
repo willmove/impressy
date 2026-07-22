@@ -54,6 +54,42 @@ menu:
   help:
     en: Help
     zh-CN: 帮助
+  open:
+    en: Open Image…
+    zh-CN: 打开图片…
+  open_multi:
+    en: Open Multiple…
+    zh-CN: 打开多张…
+  save:
+    en: Save Result…
+    zh-CN: 保存结果…
+  reveal_output:
+    en: Reveal Output Folder
+    zh-CN: 打开输出目录
+  settings:
+    en: Settings…
+    zh-CN: 设置…
+  quit:
+    en: Quit
+    zh-CN: 退出
+  paste:
+    en: Paste Image
+    zh-CN: 粘贴图片
+  copy:
+    en: Copy Result
+    zh-CN: 复制结果
+  home:
+    en: Home
+    zh-CN: 首页
+  switch_language:
+    en: Switch Language
+    zh-CN: 切换语言
+  about:
+    en: About Rastery
+    zh-CN: 关于 Rastery
+  about_version:
+    en: Version
+    zh-CN: 版本
 home:
   badge_local:
     en: Local

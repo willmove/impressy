@@ -17,6 +17,7 @@ mod config_store;
 mod crop_frame;
 mod feature_params;
 mod logging;
+mod menus;
 mod poster_canvas;
 mod section;
 mod shell;
@@ -96,8 +97,12 @@ fn main() {
         }
         // set_locale 同时切换应用与组件库文案。
         gpui_component::set_locale(loaded.config.language.locale());
+        // 平台菜单 + 菜单快捷键必须在创建窗口（及窗口内菜单栏）之前注册。
+        menus::install(cx);
 
         let bounds = Bounds::centered(None, size(px(1640.), px(920.)), cx);
+        let shell_slot = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let shell_slot_in_window = std::rc::Rc::clone(&shell_slot);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -117,11 +122,17 @@ fn main() {
                 if !initial_paths.is_empty() {
                     view.update(cx, |shell, cx| shell.open_initial_paths(initial_paths, cx));
                 }
+                *shell_slot_in_window.borrow_mut() = Some(view.clone());
                 // 窗口第一层必须是 Root（gpui-component 的弹层 / 通知等依赖它）。
                 cx.new(|cx| Root::new(view, window, cx))
             },
         )
         .unwrap();
+        let shell = shell_slot
+            .borrow()
+            .clone()
+            .expect("window creation yields the app shell");
+        menus::register_actions(cx, &shell);
         cx.activate(true);
     });
 }
