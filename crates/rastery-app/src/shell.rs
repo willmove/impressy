@@ -745,21 +745,6 @@ impl AppShell {
         .map(|feature| self.home_quick_action(feature, cx))
         .collect::<Vec<_>>();
         let theme = cx.theme();
-        let local_count = Section::ALL
-            .into_iter()
-            .flat_map(Section::features)
-            .filter(|feature| feature.is_v1())
-            .count();
-        let ai_count = Section::ALL
-            .into_iter()
-            .flat_map(Section::features)
-            .filter(|feature| feature.is_ai())
-            .count();
-        let development_count = Section::ALL
-            .into_iter()
-            .flat_map(Section::features)
-            .filter(|feature| !feature.is_v1() && !feature.is_ai())
-            .count();
         let section_rows = navigation_groups()
             .into_iter()
             .map(|group| {
@@ -886,32 +871,6 @@ impl AppShell {
                                     .w(px(280.0))
                                     .gap_4()
                                     .child(
-                                        h_flex()
-                                            .h(px(82.0))
-                                            .rounded_lg()
-                                            .border_1()
-                                            .border_color(theme.border)
-                                            .bg(theme.background)
-                                            .child(home_metric(
-                                                local_count,
-                                                "home.local_tools",
-                                                theme.success,
-                                                cx,
-                                            ))
-                                            .child(home_metric(
-                                                ai_count,
-                                                "home.ai_tools",
-                                                theme.primary,
-                                                cx,
-                                            ))
-                                            .child(home_metric(
-                                                development_count,
-                                                "home.development",
-                                                theme.muted_foreground,
-                                                cx,
-                                            )),
-                                    )
-                                    .child(
                                         v_flex()
                                             .rounded_lg()
                                             .border_1()
@@ -925,14 +884,6 @@ impl AppShell {
                                                     .child(tr("home.sections")),
                                             )
                                             .children(section_rows),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .text_xs()
-                                            .text_color(theme.muted_foreground)
-                                            .child(Icon::new(IconName::CircleCheck).small())
-                                            .child(tr("home.platform_note")),
                                     ),
                             ),
                     )
@@ -3906,23 +3857,6 @@ fn feature_matches_search(feature: Feature, query: &str) -> bool {
     let name = t!(feature.name_key()).to_string().to_lowercase();
     let description = t!(feature.desc_key()).to_string().to_lowercase();
     name.contains(query) || description.contains(query)
-}
-
-fn home_metric(count: usize, label_key: &str, color: Hsla, _cx: &Context<AppShell>) -> AnyElement {
-    v_flex()
-        .flex_1()
-        .items_center()
-        .justify_center()
-        .gap_1()
-        .child(
-            div()
-                .text_lg()
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(color)
-                .child(count.to_string()),
-        )
-        .child(div().text_xs().text_color(color).child(tr(label_key)))
-        .into_any_element()
 }
 
 fn provider_from_config(value: &str) -> ProviderId {

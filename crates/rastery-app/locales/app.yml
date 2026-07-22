@@ -79,24 +79,12 @@ home:
   quick_start_desc:
     en: Open an editor or choose an AI workflow. Every existing tool remains available from the sidebar and the complete list below.
     zh-CN: 打开编辑器或选择 AI 工作流。现有功能均可从左侧导航及下方完整工具列表进入。
-  local_tools:
-    en: Local tools
-    zh-CN: 本地工具
-  ai_tools:
-    en: AI tools
-    zh-CN: AI 工具
-  development:
-    en: In progress
-    zh-CN: 开发中
   sections:
     en: Sections
     zh-CN: 板块
   all_tools:
     en: All tools
     zh-CN: 全部工具
-  platform_note:
-    en: Native · Windows / macOS / Linux
-    zh-CN: 原生 · Windows / macOS / Linux
   section_basic_summary:
     en: Five everyday offline image workflows
     zh-CN: 5 个常用本地图片工作流
