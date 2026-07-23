@@ -6,17 +6,17 @@
 
 ## 背景
 
-Rastery 当前的主要价值是轻量、快速的本地图片处理。屏幕截图需要跨平台屏幕捕获、全局热键、系统剪贴板、多显示器 DPI 换算、覆盖层窗口和标注交互，这条系统集成链路引入 `xcap`、`global-hotkey`、`arboard` 及其平台依赖，显著增加依赖树、安装包体积和真机验收成本。
+Impressy 当前的主要价值是轻量、快速的本地图片处理。屏幕截图需要跨平台屏幕捕获、全局热键、系统剪贴板、多显示器 DPI 换算、覆盖层窗口和标注交互，这条系统集成链路引入 `xcap`、`global-hotkey`、`arboard` 及其平台依赖，显著增加依赖树、安装包体积和真机验收成本。
 
 当前阶段优先控制程序包体积，因此先不交付屏幕截图工具。
 
 ## 决策
 
-- 从 workspace 删除 `rastery-capture` crate。
+- 从 workspace 删除 `impressy-capture` crate。
 - 删除屏幕截图、全局热键、屏幕取色、截图剪贴板、跨显示器 DPI 捕获、截图覆盖层，以及仅供截图使用的画笔/马赛克标注能力。
-- 删除 `rastery-app` 的 `system` feature 和截图导航入口。
+- 删除 `impressy-app` 的 `system` feature 和截图导航入口。
 - 删除截图热键与截图压缩配置。
-- 当前 workspace 只包含 `rastery-core` 与 `rastery-app`。
+- 当前 workspace 只包含 `impressy-core` 与 `impressy-app`。
 - Requirement 13、14、48、49 及其他需求中的截图专用 AC 不属于当前交付范围。
 
 ## 保留项

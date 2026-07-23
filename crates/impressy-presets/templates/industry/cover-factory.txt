@@ -1,0 +1,1 @@
+Create a platform-ready cover image for the supplied title and selected style. Establish one strong focal point, high contrast, generous safe areas, and a composition appropriate to the platform. Do not render any words; reserve a clean layout region so Impressy can render the exact title locally. Platform/style tier: {{tier}}. Title and detail: {{user_instruction}}.

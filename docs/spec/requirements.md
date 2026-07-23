@@ -1,19 +1,19 @@
-# Requirements Document - Rastery 图像工具箱
+# Requirements Document - Impressy 图像工具箱
 
 > **本文档与 [`design.md`](./design.md) 是本项目的唯一真相源。** 领域词汇见 [`CONTEXT.md`](../../CONTEXT.md)，范围与顺序决策见 [`docs/adr/`](../adr/)。
-> 早期的 `rastery-spec.md` 已冻结至 [`archive/rastery-spec-v0.3.md`](./archive/rastery-spec-v0.3.md)，仅作历史参考，**不要据此写代码**。
+> 早期的 `impressy-spec.md` 已冻结至 [`archive/impressy-spec-v0.3.md`](./archive/impressy-spec-v0.3.md)，仅作历史参考，**不要据此写代码**。
 
 ## Introduction
 
 ### 为什么存在
 
-现有图片处理软件（如美图秀秀）**启动慢、功能臃肿**，常用功能缺失、不需要的功能冗余。Rastery 的目标是用一款轻量、快启动的原生工具，覆盖个人用户的常用本地图片处理需求。
+现有图片处理软件（如美图秀秀）**启动慢、功能臃肿**，常用功能缺失、不需要的功能冗余。Impressy 的目标是用一款轻量、快启动的原生工具，覆盖个人用户的常用本地图片处理需求。
 
 这段问题陈述是 [ADR-0001](../adr/0001-v1-scope-local-only.md) 的基石——它解释了为什么本地功能是产品的本体，而 AI 功能是后加的一层。
 
 ### 是什么
 
-Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处理工具，基于 Rust + GPUI 框架构建，围绕四大**板块**组织：基础图片处理、AI 生成与改图、行业定制 AI 工具、创作输出。系统采用本地优先架构，本地功能完全离线可用，AI 功能通过用户自备 API Key（BYOK）实现，确保隐私安全与零成本运营。屏幕截图、全局热键与屏幕取色已按 [ADR-0003](../adr/0003-remove-screen-capture.md) 从当前范围剥离。
+Impressy 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处理工具，基于 Rust + GPUI 框架构建，围绕四大**板块**组织：基础图片处理、AI 生成与改图、行业定制 AI 工具、创作输出。系统采用本地优先架构，本地功能完全离线可用，AI 功能通过用户自备 API Key（BYOK）实现，确保隐私安全与零成本运营。屏幕截图、全局热键与屏幕取色已按 [ADR-0003](../adr/0003-remove-screen-capture.md) 从当前范围剥离。
 
 ### v1 / v2 范围（重要）
 
@@ -25,7 +25,7 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 
 注意「本地功能 / AI 功能」与「板块」是**正交的两根轴**：v1 的历史基线只填充本地功能；当前 v2 基线已填充两个 AI 板块并在「创作输出」提供海报设计。三个视频入口继续作为「开发中」占位。详见 [CONTEXT.md](../../CONTEXT.md)、[ADR-0001](../adr/0001-v1-scope-local-only.md) 与 [ADR-0004](../adr/0004-v2-provider-contract.md)。
 
-**建设顺序**：先 `rastery-core` 到全绿，GPUI 骨架推后（与已冻结 spec 的 M1→M7 顺序相反）。原因见 [ADR-0002](../adr/0002-core-before-ui.md)。
+**建设顺序**：先 `impressy-core` 到全绿，GPUI 骨架推后（与已冻结 spec 的 M1→M7 顺序相反）。原因见 [ADR-0002](../adr/0002-core-before-ui.md)。
 
 ### v1 当前验收状态（2026-07-19）
 
@@ -40,14 +40,14 @@ Rastery 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处�
 `origin/feature/ongoing`。其后的提交只更新验收文档，没有改变 release 源码。`377d62c`
 已完成全部原生路径 prompt 的异步化，`fffdb2c` 又把取消、平台错误和 channel 关闭统一
 收敛到生产 `resolve_path_prompt` seam，让取消 / 失败后的非忙碌状态与立即复用能够直接
-回归。本地质量门禁执行 60 个测试（`rastery-core` 28 个、`rastery-app` 32 个）并通过。
+回归。本地质量门禁执行 60 个测试（`impressy-core` 28 个、`impressy-app` 32 个）并通过。
 远端 `origin/main@f88a939` 的 Windows、macOS、Linux 质量任务以及 Windows MSI、Linux
 DEB 冒烟均通过；`fffdb2c` 尚未触发精确候选的跨平台 CI：
 
 | 范围 | 当前状态 | 证据 / 剩余门禁 |
 | --- | --- | --- |
-| `rastery-core` 本地引擎 | 自动验证通过 | 本地质量门禁全绿；Requirement 52–57 的 v1 property 覆盖已落地 |
-| `rastery-app` 八个 v1 功能页 | 已实现；待真机验收 | Windows 11 build 26200 已完成主流程和扩展矩阵：文件拖放、跨应用 PNG 剪贴板、输出目录、配置持久化 / 损坏恢复、格式不支持 / 图片损坏 / 权限不足分类均通过；编辑与拼图均直出 PNG/JPEG/WebP，拼图还覆盖网格间距和透明背景；批量首项写出失败会显示名称且不中断后项；切图覆盖 3×3 与自定义 2×4 的逐像素重组；二维码覆盖高纠错、尺寸与自定义双色并可回读；美化透明背景的外角 alpha 为 0；GIF 覆盖 100/800ms 边界、三种播放顺序和 Windows Photos 实播。磁盘空间不足、常用消息应用播放、Windows 10 和其他桌面仍待验收 |
+| `impressy-core` 本地引擎 | 自动验证通过 | 本地质量门禁全绿；Requirement 52–57 的 v1 property 覆盖已落地 |
+| `impressy-app` 八个 v1 功能页 | 已实现；待真机验收 | Windows 11 build 26200 已完成主流程和扩展矩阵：文件拖放、跨应用 PNG 剪贴板、输出目录、配置持久化 / 损坏恢复、格式不支持 / 图片损坏 / 权限不足分类均通过；编辑与拼图均直出 PNG/JPEG/WebP，拼图还覆盖网格间距和透明背景；批量首项写出失败会显示名称且不中断后项；切图覆盖 3×3 与自定义 2×4 的逐像素重组；二维码覆盖高纠错、尺寸与自定义双色并可回读；美化透明背景的外角 alpha 为 0；GIF 覆盖 100/800ms 边界、三种播放顺序和 Windows Photos 实播。磁盘空间不足、常用消息应用播放、Windows 10 和其他桌面仍待验收 |
 | 三平台编译与安装包结构 | 已实现 | `origin/main@f88a939` 的 Windows、macOS、Linux 质量任务及 Windows MSI、Linux DEB 冒烟均通过；`fffdb2c` 的本地未签名 MSI 为 5.10MiB，administrative extraction 成功且 payload EXE 摘要与 release 构建一致；精确候选跨平台 CI、管理员权限下的安装 / 关联 / 升级 / 卸载、签名与公证仍待完成 |
 | 性能指标 | Windows 11 真机验证通过；其他平台待验收 | release 构建三次样本均达标：冷启动最大 539.36ms、50MP 预览最大 1047.66ms、美化预览最大 198.56ms、100 张批处理点击响应最大 33.59ms、进度频率最小 1.97Hz；Windows 10、macOS 与 Linux 仍须按同一清单测量 |
 | v1 发布状态 | **不可标记为可发布** | 正式桌面验收结果文件尚未提交；缺失或过期会被发布工作流阻止 |
@@ -64,11 +64,11 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 > 这是**组件清单**（crate 与技术构件的命名），不是领域词汇表。领域词汇（板块、档位、保持不变项、本地功能 / AI 功能）见 [`CONTEXT.md`](../../CONTEXT.md)。
 
-- **Rastery_System**: Rastery 图像工具箱应用程序整体
+- **Impressy_System**: Impressy 图像工具箱应用程序整体
 - **UI_Layer**: 基于 GPUI 的用户界面层，负责所有可视化交互
-- **Core_Engine**: 本地图像处理引擎（rastery-core crate），执行裁剪、压缩、拼接等离线操作
-- **AI_Engine**: AI 服务提供商抽象层（rastery-ai crate），统一管理多个 AI 服务商接口
-- **Preset_Library**: 行业工具锁定提示词模板库（rastery-presets crate）
+- **Core_Engine**: 本地图像处理引擎（impressy-core crate），执行裁剪、压缩、拼接等离线操作
+- **AI_Engine**: AI 服务提供商抽象层（impressy-ai crate），统一管理多个 AI 服务商接口
+- **Preset_Library**: 行业工具锁定提示词模板库（impressy-presets crate）
 - **Provider**: AI 服务提供商，包括 Seedream（默认）、Google Nano Banana、OpenAI GPT-Image。〔v2〕Agnes 暂不实现，仅预留接口扩展能力。
 - **API_Key**: 用户自备的 AI 服务商访问密钥
 - **Credential_Store**: 操作系统凭据管理器（Windows Credential Manager / macOS Keychain）
@@ -86,18 +86,18 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 ### [v1] Requirement 1: 平台支持与运行环境
 
-**User Story:** 作为用户，我希望在 Windows、macOS、Linux 平台上运行 Rastery，以便在不同操作系统环境下使用图像处理功能。
+**User Story:** 作为用户，我希望在 Windows、macOS、Linux 平台上运行 Impressy，以便在不同操作系统环境下使用图像处理功能。
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL run on Windows 10 x64 and Windows 11 x64
-2. THE Rastery_System SHALL run on macOS using Metal rendering backend
-3. THE Rastery_System SHALL run on Linux using appropriate GPUI backend
-4. THE Rastery_System SHALL use DirectX 11 for rendering on Windows platform
-5. THE Rastery_System SHALL use DirectWrite for text shaping on Windows platform
+1. THE Impressy_System SHALL run on Windows 10 x64 and Windows 11 x64
+2. THE Impressy_System SHALL run on macOS using Metal rendering backend
+3. THE Impressy_System SHALL run on Linux using appropriate GPUI backend
+4. THE Impressy_System SHALL use DirectX 11 for rendering on Windows platform
+5. THE Impressy_System SHALL use DirectWrite for text shaping on Windows platform
 6. THE Core_Engine SHALL execute all v1 local image processing functions without network connectivity
-7. WHEN the system starts from a cold state, THE Rastery_System SHALL display the main interface within 1500 milliseconds
-8. EACH platform release artifact of THE Rastery_System SHALL NOT exceed 30 MiB
+7. WHEN the system starts from a cold state, THE Impressy_System SHALL display the main interface within 1500 milliseconds
+8. EACH platform release artifact of THE Impressy_System SHALL NOT exceed 30 MiB
 
 ### [v1] Requirement 2: 隐私与安全
 
@@ -105,16 +105,16 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. 〔v2〕WHEN a user configures an API_Key for a Provider, THE Rastery_System SHALL store the API_Key in the Credential_Store
-2. 〔v2〕THE Rastery_System SHALL NOT include any API_Key in the installation package
-3. 〔v2〕THE Rastery_System SHALL NOT upload any API_Key to any remote server
+1. 〔v2〕WHEN a user configures an API_Key for a Provider, THE Impressy_System SHALL store the API_Key in the Credential_Store
+2. 〔v2〕THE Impressy_System SHALL NOT include any API_Key in the installation package
+3. 〔v2〕THE Impressy_System SHALL NOT upload any API_Key to any remote server
 4. 〔v2〕IF a user initiates an AI request, THEN THE AI_Engine SHALL send image data to the configured Provider endpoint
-5. THE Rastery_System SHALL NOT send user image data to any server without explicit user-initiated AI requests
-6. THE Rastery_System SHALL NOT send telemetry data to any remote server
+5. THE Impressy_System SHALL NOT send user image data to any server without explicit user-initiated AI requests
+6. THE Impressy_System SHALL NOT send telemetry data to any remote server
 7. WHEN EXIF_Cleaner exports an image file, THE Core_Engine SHALL remove all GPS metadata fields
 8. WHEN EXIF_Cleaner exports an image file, THE Core_Engine SHALL remove all device identification metadata fields
-9. 〔v2〕THE Rastery_System SHALL use Windows Credential Manager for API_Key storage on Windows platform
-10. 〔v2〕THE Rastery_System SHALL use macOS Keychain for API_Key storage on macOS platform
+9. 〔v2〕THE Impressy_System SHALL use Windows Credential Manager for API_Key storage on Windows platform
+10. 〔v2〕THE Impressy_System SHALL use macOS Keychain for API_Key storage on macOS platform
 
 
 ### [v1] Requirement 3: 架构与并发处理
@@ -123,7 +123,7 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL organize code into a Cargo workspace. 〔v1 只建两个 crate：**rastery-app、rastery-core**。`rastery-capture` 按 ADR-0003 剥离；`rastery-ai` 与 `rastery-presets` 属 AI 功能，v1 不建 —— 见 ADR-0001。〕
+1. THE Impressy_System SHALL organize code into a Cargo workspace. 〔v1 只建两个 crate：**impressy-app、impressy-core**。`impressy-capture` 按 ADR-0003 剥离；`impressy-ai` 与 `impressy-presets` 属 AI 功能，v1 不建 —— 见 ADR-0001。〕
 2. 〔v2〕THE AI_Engine SHALL implement a unified Provider trait for all AI service providers
 3. 〔v2〕WHEN a new Provider is added, THE AI_Engine SHALL integrate it without modifying upper-layer business logic
 4. THE Core_Engine SHALL execute all image encoding operations in Background_Executor
@@ -140,12 +140,12 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL support Seedream as a Provider
-2. THE Rastery_System SHALL support Google Nano Banana as a Provider
-3. THE Rastery_System SHALL support OpenAI GPT-Image as a Provider
+1. THE Impressy_System SHALL support Seedream as a Provider
+2. THE Impressy_System SHALL support Google Nano Banana as a Provider
+3. THE Impressy_System SHALL support OpenAI GPT-Image as a Provider
 4. 〔v2・暂缓〕Agnes **暂不实现**（spec v0.3 已确认），仅要求 Provider trait 预留扩展能力，不得为其编写适配器。
 5. WHEN a user opens settings, THE UI_Layer SHALL display API_Key configuration fields for all supported Providers
-6. WHEN a user selects a default Provider, THE Rastery_System SHALL save the selection in local configuration
+6. WHEN a user selects a default Provider, THE Impressy_System SHALL save the selection in local configuration
 7. WHEN a user switches Provider, THE UI_Layer SHALL adjust available generation parameters according to the Provider capabilities
 8. THE AI_Engine SHALL declare capability constraints for each Provider including maximum reference image count
 9. THE AI_Engine SHALL declare capability constraints for each Provider including supported aspect ratios
@@ -286,7 +286,7 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 9. WHILE a user adjusts beautification parameters, THE UI_Layer SHALL update the preview in real-time
 10. WHEN a user exports with transparent background selected, THE Core_Engine SHALL produce a PNG file with true transparency outside rounded corners
 
-> 本需求只处理用户导入的现有图片，不包含屏幕捕获，也不依赖 `rastery-capture`。
+> 本需求只处理用户导入的现有图片，不包含屏幕捕获，也不依赖 `impressy-capture`。
 
 
 ### [removed] Requirement 13: 屏幕截图
@@ -565,14 +565,14 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL store configuration in TOML format
-2. THE Rastery_System SHALL store configuration file in the standard application data directory defined by the directories crate
-3. 〔v2〕THE Rastery_System SHALL store default Provider selection in configuration
-4. THE Rastery_System SHALL store default export format in configuration
-5. THE Rastery_System SHALL store default export quality in configuration
-6. 〔v2〕THE Rastery_System SHALL NOT store API_Key in the configuration file
-7. 〔v2〕THE Rastery_System SHALL store generation history records locally only
-8. THE Rastery_System SHALL store the last output directory path locally only
+1. THE Impressy_System SHALL store configuration in TOML format
+2. THE Impressy_System SHALL store configuration file in the standard application data directory defined by the directories crate
+3. 〔v2〕THE Impressy_System SHALL store default Provider selection in configuration
+4. THE Impressy_System SHALL store default export format in configuration
+5. THE Impressy_System SHALL store default export quality in configuration
+6. 〔v2〕THE Impressy_System SHALL NOT store API_Key in the configuration file
+7. 〔v2〕THE Impressy_System SHALL store generation history records locally only
+8. THE Impressy_System SHALL store the last output directory path locally only
 9. 〔v2〕THE UI_Layer SHALL provide a clear all history function
 
 
@@ -585,7 +585,7 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 1. THE Preset_Library SHALL store all industry tool locked prompts as built-in resources
 2. THE Preset_Library SHALL compile all prompts into the application binary
 3. THE UI_Layer SHALL NOT display locked prompts to users
-4. THE Preset_Library SHALL organize prompts as separate template files in the rastery-presets crate within the code repository
+4. THE Preset_Library SHALL organize prompts as separate template files in the impressy-presets crate within the code repository
 5. THE Preset_Library SHALL allow prompt iteration and optimization through code repository updates
 
 ### [v1] Requirement 34: 主界面导航
@@ -640,7 +640,7 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. WHEN the application cold starts, THE Rastery_System SHALL display the main interface within 1500 milliseconds
+1. WHEN the application cold starts, THE Impressy_System SHALL display the main interface within 1500 milliseconds
 2. WHEN opening an image file up to 50 megapixels, THE UI_Layer SHALL display the image within 2000 milliseconds
 3. WHILE batch processing 100 images, THE UI_Layer SHALL update progress indicators smoothly
 4. WHILE batch processing 100 images, THE UI_Layer SHALL respond to user clicks within 100 milliseconds
@@ -686,8 +686,8 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 #### Acceptance Criteria
 
 1. WHEN the system clipboard contains image data, THE UI_Layer SHALL allow pasting the image into any image input field
-2. WHEN a user copies an edited image, THE Rastery_System SHALL place the image data in the system clipboard
-3. THE Rastery_System SHALL support pasting images from clipboard across different applications
+2. WHEN a user copies an edited image, THE Impressy_System SHALL place the image data in the system clipboard
+3. THE Impressy_System SHALL support pasting images from clipboard across different applications
 
 ### [v1] Requirement 41: 文件输出与命名
 
@@ -700,7 +700,7 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 3. WHEN batch processing outputs multiple files, THE Core_Engine SHALL append sequential numbers to filenames
 4. WHEN slicing outputs multiple tiles, THE Core_Engine SHALL append grid position identifiers to filenames
 5. 〔v2〕WHEN multiple AI images are generated, THE Core_Engine SHALL use timestamp-based filenames to prevent overwrites
-6. THE Rastery_System SHALL remember the last used output directory in local configuration
+6. THE Impressy_System SHALL remember the last used output directory in local configuration
 7. THE UI_Layer SHALL provide an option to open the output directory after export completes
 
 
@@ -724,11 +724,11 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL lock the gpui crate to a specific version in Cargo workspace
-2. THE Rastery_System SHALL lock the gpui-component crate to a specific version in Cargo workspace
-3. THE Rastery_System SHALL document the locked versions in project documentation
+1. THE Impressy_System SHALL lock the gpui crate to a specific version in Cargo workspace
+2. THE Impressy_System SHALL lock the gpui-component crate to a specific version in Cargo workspace
+3. THE Impressy_System SHALL document the locked versions in project documentation
 4. WHEN upgrading gpui or gpui-component versions, THE development team SHALL treat the upgrade as an independent task
-5. THE Rastery_System SHALL ensure gpui and gpui-component versions are compatible with each other
+5. THE Impressy_System SHALL ensure gpui and gpui-component versions are compatible with each other
 6. THE Cargo workspace configuration SHALL specify exact versions for all critical dependencies
 
 
@@ -738,9 +738,9 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL pass cargo check without errors
-2. THE Rastery_System SHALL pass cargo clippy with warning level set to deny without any warnings
-3. THE Rastery_System SHALL pass all unit tests executed by cargo test
+1. THE Impressy_System SHALL pass cargo check without errors
+2. THE Impressy_System SHALL pass cargo clippy with warning level set to deny without any warnings
+3. THE Impressy_System SHALL pass all unit tests executed by cargo test
 4. WHEN a developer completes a task, THE code changes SHALL pass all three quality checks before task completion
 5. THE project repository SHALL include automated quality check scripts
 6. THE project documentation SHALL define quality gates as part of Definition of Done
@@ -766,11 +766,11 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL provide a Windows x64 MSI installer
+1. THE Impressy_System SHALL provide a Windows x64 MSI installer
 2. THE Windows executable and MSI installer SHALL be digitally signed for security verification
-3. THE Rastery_System SHALL provide a signed and notarized macOS application inside a DMG
-4. THE Rastery_System SHALL provide a Debian / Ubuntu amd64 DEB package with a desktop entry, application icons, and explicit native runtime dependencies
-5. THE Rastery_System SHALL ship a native compiled executable without a browser engine or bundled web runtime
+3. THE Impressy_System SHALL provide a signed and notarized macOS application inside a DMG
+4. THE Impressy_System SHALL provide a Debian / Ubuntu amd64 DEB package with a desktop entry, application icons, and explicit native runtime dependencies
+5. THE Impressy_System SHALL ship a native compiled executable without a browser engine or bundled web runtime
 6. EACH executable and installer artifact SHALL NOT exceed 30 MiB
 7. THE Windows installer SHALL create an application shortcut in the Start Menu
 8. THE Windows installer SHALL register file type associations for PNG, JPEG, WebP, BMP, and GIF
@@ -862,11 +862,11 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. THE Rastery_System SHALL implement a configuration serializer to TOML format
-2. THE Rastery_System SHALL implement a configuration parser from TOML format
+1. THE Impressy_System SHALL implement a configuration serializer to TOML format
+2. THE Impressy_System SHALL implement a configuration parser from TOML format
 3. FOR ALL valid configuration objects, serializing to TOML then parsing back SHALL produce an equivalent configuration object
 4. THE configuration parser SHALL validate TOML syntax before parsing
-5. IF configuration file is corrupted, THEN THE Rastery_System SHALL load default configuration and display a configuration reset warning
+5. IF configuration file is corrupted, THEN THE Impressy_System SHALL load default configuration and display a configuration reset warning
 
 
 ### [v1] Requirement 54: 批量处理不变性属性
@@ -919,8 +919,8 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 4. 〔v2〕WHEN an API request fails with HTTP 429, THE AI_Engine SHALL return a rate limit error without crashing
 5. WHEN disk space is insufficient for export, THE Core_Engine SHALL return a disk space error without crashing
 6. WHEN invalid TOML syntax is encountered, THE configuration parser SHALL return a parse error without crashing
-7. FOR ALL error conditions, THE Rastery_System SHALL log the error details
-8. FOR ALL error conditions, THE Rastery_System SHALL remain in a valid state allowing continued operation
+7. FOR ALL error conditions, THE Impressy_System SHALL log the error details
+8. FOR ALL error conditions, THE Impressy_System SHALL remain in a valid state allowing continued operation
 
 
 ### [v1] Requirement 58: 性能不变性属性
@@ -955,9 +955,9 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. 〔v2〕FOR ALL API_Key storage operations, THE Rastery_System SHALL use the Credential_Store
-2. 〔v2〕FOR ALL API_Key storage operations, THE Rastery_System SHALL NOT write API_Key to plain text configuration files
-3. 〔v2〕FOR ALL API_Key storage operations, THE Rastery_System SHALL NOT write API_Key to log files
+1. 〔v2〕FOR ALL API_Key storage operations, THE Impressy_System SHALL use the Credential_Store
+2. 〔v2〕FOR ALL API_Key storage operations, THE Impressy_System SHALL NOT write API_Key to plain text configuration files
+3. 〔v2〕FOR ALL API_Key storage operations, THE Impressy_System SHALL NOT write API_Key to log files
 4. 〔v2〕WHEN the configuration file is inspected, THE file SHALL NOT contain any API_Key values
 5. WHEN EXIF cleaning completes, THE output file SHALL contain zero GPS-related EXIF tags
 6. WHEN EXIF cleaning completes, THE output file SHALL contain zero device identification EXIF tags
@@ -968,7 +968,7 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 ## Document Metadata
 
-- **Feature Name**: rastery
+- **Feature Name**: impressy
 - **Spec Type**: Feature
 - **Document Version**: 1.3
 - **Total Requirements**: 60（v1: 35 / v2: 21 / removed: 4，见各条标题、ADR-0001 与 ADR-0003）

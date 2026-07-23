@@ -274,7 +274,7 @@
 #![cfg_attr(feature = "nightly", feature(proc_macro_diagnostic))]
 #![forbid(unsafe_code)]
 
-// Modified by Rastery: make the source of the public re-export below public as
+// Modified by Impressy: make the source of the public re-export below public as
 // required by rustc future-incompatibility lint E0365 (rust-lang/rust#127909).
 pub extern crate proc_macro;
 

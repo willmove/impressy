@@ -1,4 +1,4 @@
-# Rastery desktop redesign — design QA
+# Impressy desktop redesign — design QA
 
 **Comparison target**
 
@@ -6,11 +6,11 @@
   - `C:\Users\weimuma\AppData\Local\Temp\codex-clipboard-eccf7edd-dbe4-44b2-88af-93d78de79b48.png` (home)
   - `C:\Users\weimuma\AppData\Local\Temp\codex-clipboard-42fd8ab9-38a7-4634-bf13-2897913d218a.png` (editor)
   - `C:\Users\weimuma\AppData\Local\Temp\codex-clipboard-21ebeb5a-d370-4a6f-9e59-cec974a18fe9.png` (settings)
-  - Live reference: `http://localhost:3000/`, backed by `C:\Coding\WebProjects\prototypes\app-rastery-prototype-kimi`
+  - Live reference: `http://localhost:3000/`, backed by `C:\Coding\WebProjects\prototypes\app-impressy-prototype-kimi`
 - Rendered implementation:
-  - `C:\Coding\DesignProjects\rastery\target\design-qa\final-release-home.png`
-  - `C:\Coding\DesignProjects\rastery\target\design-qa\final-release-editor.png`
-  - `C:\Coding\DesignProjects\rastery\target\design-qa\final-release-settings.png`
+  - `C:\Coding\DesignProjects\impressy\target\design-qa\final-release-home.png`
+  - `C:\Coding\DesignProjects\impressy\target\design-qa\final-release-editor.png`
+  - `C:\Coding\DesignProjects\impressy\target\design-qa\final-release-settings.png`
 - Build and environment: native GPUI release build on Windows 11, light theme, physical capture 1654 × 958 px; application window requested at 1640 × 920 logical px. Source and implementation content regions were normalized in the comparison canvases to avoid false precision from OS chrome and DPI scaling differences.
 - States:
   - Home: initial state, no image loaded.
@@ -19,14 +19,14 @@
 
 **Full-view comparison evidence**
 
-- Home: `C:\Coding\DesignProjects\rastery\target\design-qa\compare-home-full.png`
-- Editor: `C:\Coding\DesignProjects\rastery\target\design-qa\compare-editor-full.png`
-- Settings: `C:\Coding\DesignProjects\rastery\target\design-qa\compare-settings-full.png`
+- Home: `C:\Coding\DesignProjects\impressy\target\design-qa\compare-home-full.png`
+- Editor: `C:\Coding\DesignProjects\impressy\target\design-qa\compare-editor-full.png`
+- Settings: `C:\Coding\DesignProjects\impressy\target\design-qa\compare-settings-full.png`
 
 **Focused region comparison evidence**
 
-- Editor preview, parameters, and action controls: `C:\Coding\DesignProjects\rastery\target\design-qa\compare-editor-focused.png`
-- Settings credentials, capability table, and export defaults: `C:\Coding\DesignProjects\rastery\target\design-qa\compare-settings-focused.png`
+- Editor preview, parameters, and action controls: `C:\Coding\DesignProjects\impressy\target\design-qa\compare-editor-focused.png`
+- Settings credentials, capability table, and export defaults: `C:\Coding\DesignProjects\impressy\target\design-qa\compare-settings-focused.png`
 - No extra focused home crop was needed: navigation labels, quick actions, statistics, board summaries, and tool-grid content remain legible in the full-view comparison.
 
 **Findings**

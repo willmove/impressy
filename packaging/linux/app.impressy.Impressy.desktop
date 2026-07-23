@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Impressy
+GenericName=Image Toolbox
+Comment=Lightweight local image processing toolbox
+Exec=impressy %F
+Icon=app.impressy.Impressy
+Terminal=false
+Categories=Graphics;Photography;
+Keywords=image;crop;resize;convert;compress;collage;watermark;QR;EXIF;GIF;
+MimeType=image/png;image/jpeg;image/webp;image/bmp;image/gif;
+StartupNotify=true
+StartupWMClass=app.impressy.Impressy

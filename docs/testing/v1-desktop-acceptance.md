@@ -1,7 +1,7 @@
 # v1 桌面真机验收清单
 
 本清单覆盖无法在 headless 开发机验证的 GPUI 渲染、交互手感、系统集成与性能指标。
-每个平台均使用 `cargo build --release -p rastery-app` 的 release 构建验收；不要用 debug
+每个平台均使用 `cargo build --release -p impressy-app` 的 release 构建验收；不要用 debug
 构建记录性能数据。
 
 正式记录复制 [`results/v1-desktop-acceptance.example.json`](./results/v1-desktop-acceptance.example.json)
@@ -17,7 +17,7 @@ python scripts/verify_desktop_acceptance.py
 可复测资源用确定性生成器创建，不把 50MP 图片和 100 张批处理样本提交进 Git：
 
 ```shell
-cargo run --release -p rastery-core --example acceptance_assets -- target/acceptance-assets
+cargo run --release -p impressy-core --example acceptance_assets -- target/acceptance-assets
 ```
 
 生成器会按规范化相对路径和文件内容输出跨平台一致的目录 SHA-256，把它写入结果 JSON 的

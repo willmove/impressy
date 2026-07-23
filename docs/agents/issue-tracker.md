@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and PRDs for this repo live as GitHub issues in [`willmove/rastery`](https://github.com/willmove/rastery). Use the `gh` CLI for all operations.
+Issues and PRDs for this repo live as GitHub issues in [`willmove/impressy`](https://github.com/willmove/impressy). Use the `gh` CLI for all operations.
 
 ## Conventions
 

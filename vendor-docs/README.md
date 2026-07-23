@@ -2,16 +2,16 @@
 
 **写 GPUI 代码前必须先读这里。不得依赖模型记忆中的 GPUI API。**
 
-> ## ⚖️ 第三方代码，非 Rastery 自有
+> ## ⚖️ 第三方代码，非 Impressy 自有
 >
 > 本目录下的 `examples/`、`component-demos/`、`upstream-docs/`、`upstream-ui-locale.yml` 均为**上游第三方代码原样拷贝**，版权归原作者，按 **Apache-2.0** 授权：
 >
 > - `gpui-0.2.2/` —— © 2022–2025 Zed Industries, Inc.（见 [`gpui-0.2.2/LICENSE-APACHE`](./gpui-0.2.2/LICENSE-APACHE)）
 > - `gpui-component-0.5.1/` —— © Longbridge（见 [`gpui-component-0.5.1/LICENSE-APACHE`](./gpui-component-0.5.1/LICENSE-APACHE)）
 >
-> 只有 `README.md`、`gpui-0.2.2/API-NOTES.md`、`gpui-component-0.5.1/COMPONENTS.md` 三份是 Rastery 自己写的说明。
+> 只有 `README.md`、`gpui-0.2.2/API-NOTES.md`、`gpui-component-0.5.1/COMPONENTS.md` 三份是 Impressy 自己写的说明。
 >
-> **不要把本目录的代码直接复制进 `rastery-app`** —— 参考写法，不是拿来即用的源码。真要整段借用，注意保留 Apache-2.0 的署名义务。本目录不参与构建（不在 workspace members 中）。
+> **不要把本目录的代码直接复制进 `impressy-app`** —— 参考写法，不是拿来即用的源码。真要整段借用，注意保留 Apache-2.0 的署名义务。本目录不参与构建（不在 workspace members 中）。
 
 ## 锁定版本
 
@@ -69,10 +69,10 @@ vendor-docs/
 
 ### 刻意排除的内容
 
-以下上游示例**故意没有收录**，因为它们演示的能力与 Rastery 的架构承诺冲突，放进来等于诱导 codegen 去用：
+以下上游示例**故意没有收录**，因为它们演示的能力与 Impressy 的架构承诺冲突，放进来等于诱导 codegen 去用：
 
 - `webview.rs`、`html.rs`、`markdown.rs`、`editor.rs` —— 依赖 `wry`（浏览器内核）或 tree-sitter。前者违反 §1.3 原则 5「无浏览器内核依赖」，后者白白撑大二进制（NFR-03「安装包 ≤ 30MB」）。
-- `chart` / `calendar` / `date_picker` / `kbd` / `otp_input` 等组件的 demo —— Rastery 无对应需求。
+- `chart` / `calendar` / `date_picker` / `kbd` / `otp_input` 等组件的 demo —— Impressy 无对应需求。
 - `examples/image/`、`examples/svg/` 素材（约 4.5MB）—— 只有 `.rs` 源码有参考价值。
 
 需要时从 crates.io / GitHub tag 重新获取。
@@ -82,9 +82,9 @@ vendor-docs/
 1. **写 UI 代码前**：先读 `gpui-0.2.2/API-NOTES.md` 的「记忆陷阱」一节，再读与任务最接近的 example。
 2. **写代码时**：以仓库内现有代码和本目录的 example 为准，模仿现有写法。
 3. **API 存疑时**：查 `examples/` 里的真实用法。仍不确定就去 scratchpad 解包 crate 源码读，**不要猜**。
-4. **本目录只读**：不要在这里写 Rastery 自己的代码或笔记。
+4. **本目录只读**：不要在这里写 Impressy 自己的代码或笔记。
 
-## 与 examples 对应的 Rastery 需求
+## 与 examples 对应的 Impressy 需求
 
 `examples/` 里有几个直接对得上：
 

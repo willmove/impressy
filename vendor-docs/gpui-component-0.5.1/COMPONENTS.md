@@ -14,7 +14,7 @@ default    : 无（Cargo.toml 中没有 default 键）
 ```
 
 - **`webview`** —— 启用会引入 **`wry`**（`lb-wry` 0.53.3，WebView 封装）。这**直接违反 spec §1.3 设计原则 5「原生轻量：单二进制分发、无浏览器内核依赖、GPU 直渲」**。该模块被 `#[cfg(feature = "webview")]` 门控，默认关闭。**保持关闭。**
-- **`tree-sitter-languages`** —— 会拉入十几个 tree-sitter 语法 crate。Rastery 不做代码编辑，不需要。开启会白白撑大二进制（关联 NFR-03「安装包 ≤ 30MB」）。
+- **`tree-sitter-languages`** —— 会拉入十几个 tree-sitter 语法 crate。Impressy 不做代码编辑，不需要。开启会白白撑大二进制（关联 NFR-03「安装包 ≤ 30MB」）。
 - **`decimal`** —— 引入 `rust_decimal`。按需。
 - **`inspector`** —— 调试用，需与 `gpui/inspector` 配套；注意它同时启用 `wry/devtools`，**因此会引入浏览器内核**。仅可用于本地调试，绝不可进发布构建。
 
@@ -35,7 +35,7 @@ webview（feature 门控）
 另经 `pub use time::{calendar, date_picker}` 导出日历与日期选择器
 ```
 
-### 与 Rastery 需求的对应
+### 与 Impressy 需求的对应
 
 | 组件 | 用途 |
 | --- | --- |
@@ -47,11 +47,11 @@ webview（feature 门控）
 | `dock` `sidebar` `tab` `breadcrumb` | 主界面四大板块导航（Requirement 34） |
 | `notification` `dialog` `sheet` `popover` `tooltip` | 错误与反馈（Requirement 36） |
 | `theme` | 主题系统 |
-| `chart` `plot` `highlighter` `tree` `kbd` | Rastery 暂无对应需求 |
+| `chart` `plot` `highlighter` `tree` `kbd` | Impressy 暂无对应需求 |
 
 ## i18n —— 这不是个选择题
 
-**`gpui-component` 依赖 `rust-i18n` v3（实际解析为 3.1.5），并自带 `locales/ui.yml`，其中已包含 `en` 与 `zh-CN` 翻译**——正好是 Rastery 需要的两种语言（NFR-04、CFG-04）。
+**`gpui-component` 依赖 `rust-i18n` v3（实际解析为 3.1.5），并自带 `locales/ui.yml`，其中已包含 `en` 与 `zh-CN` 翻译**——正好是 Impressy 需要的两种语言（NFR-04、CFG-04）。
 
 CFG-04 原文写的是「建议 `fluent` 或 `rust-i18n`」，像是个偏好选择。**它不是**：选 `fluent` 会导致一个二进制里并存两套 i18n 系统（组件库的 rust-i18n + 应用的 fluent），运行时切换语言必须同时驱动两边，且两套资源格式、两套缺失键检查。**选 `rust-i18n` v3。**
 
@@ -80,9 +80,9 @@ Calendar:
     it: Do
 ```
 
-注意这是 **`_version: 2` 的多语言合并格式**（每个键下并列各语言），不是每语言一个文件的格式。Rastery 自己的资源沿用同一格式可减少认知负担。
+注意这是 **`_version: 2` 的多语言合并格式**（每个键下并列各语言），不是每语言一个文件的格式。Impressy 自己的资源沿用同一格式可减少认知负担。
 
-> 组件库只带了 `en` / `zh-CN` / `zh-HK` / `it` 等有限语言。Rastery 只需中英，覆盖完整。
+> 组件库只带了 `en` / `zh-CN` / `zh-HK` / `it` 等有限语言。Impressy 只需中英，覆盖完整。
 
 ## examples 与 component-demos
 

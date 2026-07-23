@@ -35,15 +35,15 @@ v1 本地功能现已形成可自动验证的实现基线，因此本 ADR 启动
 
 v2 workspace 包含四个 crate：
 
-1. `rastery-core`：继续只承载确定性的本地图像处理；
-2. `rastery-ai`：Provider、能力声明、HTTPS 传输、错误归一化和系统凭据管理；
-3. `rastery-presets`：编译进二进制且不向 UI 暴露的锁定提示词；
-4. `rastery-app`：GPUI 页面、后台调度、设置、历史和结果下载。
+1. `impressy-core`：继续只承载确定性的本地图像处理；
+2. `impressy-ai`：Provider、能力声明、HTTPS 传输、错误归一化和系统凭据管理；
+3. `impressy-presets`：编译进二进制且不向 UI 暴露的锁定提示词；
+4. `impressy-app`：GPUI 页面、后台调度、设置、历史和结果下载。
 
 ### Provider 契约
 
-`Provider` 是同步、`Send + Sync` 的接口。网络请求由 `rastery-app` 放入 GPUI background
-executor；`rastery-ai` 不创建第二套异步运行时。统一契约包含：
+`Provider` 是同步、`Send + Sync` 的接口。网络请求由 `impressy-app` 放入 GPUI background
+executor；`impressy-ai` 不创建第二套异步运行时。统一契约包含：
 
 - Provider 标识与能力声明；
 - 文生图、参考图生图和可选区域编辑；
@@ -63,7 +63,7 @@ Secret Service。TOML 只保存默认 Provider、非敏感生成历史和本地�
 
 ### 锁定提示词与档位
 
-`rastery-presets/templates/` 中每项 AI 改图场景和行业工具各有独立模板文件，通过
+`impressy-presets/templates/` 中每项 AI 改图场景和行业工具各有独立模板文件，通过
 `include_str!` 编译进二进制。UI 只传递工具与**档位**标识，绝不显示最终锁定提示词。
 
 ### 兼容边界
@@ -75,7 +75,7 @@ Secret Service。TOML 只保存默认 Provider、非敏感生成历史和本地�
 
 ## 后果
 
-- `rastery-ai` 会引入 Rustls HTTPS 与系统凭据后端，需重新核对 30 MiB 发布体积门禁；
+- `impressy-ai` 会引入 Rustls HTTPS 与系统凭据后端，需重新核对 30 MiB 发布体积门禁；
 - 真实供应商结果、**保持不变项**、签名/公证与四种桌面环境仍需真人、真实 API Key 和对应
   平台完成验收；自动测试只能证明线协议、状态机、格式与安全不变量；
 - 供应商更换模型或废弃端点时，只更新对应适配器及本 ADR 的后继决策，不让行业工具页面

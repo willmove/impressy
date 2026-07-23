@@ -1,8 +1,8 @@
-# 先写 rastery-core，GPUI 骨架推后（与 spec 的 M1→M7 顺序相反）
+# 先写 impressy-core，GPUI 骨架推后（与 spec 的 M1→M7 顺序相反）
 
-> **2026-07-17 范围更新**：屏幕截图、取色和 `rastery-capture` 已被 [ADR-0003](./0003-remove-screen-capture.md) 剥离。下文涉及这些能力的早期环境分析仅作历史背景；当前 workspace 只有 `rastery-core` 与 `rastery-app`。
+> **2026-07-17 范围更新**：屏幕截图、取色和 `impressy-capture` 已被 [ADR-0003](./0003-remove-screen-capture.md) 剥离。下文涉及这些能力的早期环境分析仅作历史背景；当前 workspace 只有 `impressy-core` 与 `impressy-app`。
 
-spec §8 的里程碑顺序是 M1 骨架与语料（GPUI 脚手架 + 主界面导航 + i18n）→ M2 本地引擎。**我们反过来：先把 `rastery-core` 写到全绿，GPUI 骨架推到之后。** 原因是一条代码里看不见的约束——主开发机是一台无图形环境的云 VM——它使得两半代码的 AI 生成循环速度相差一个数量级。
+spec §8 的里程碑顺序是 M1 骨架与语料（GPUI 脚手架 + 主界面导航 + i18n）→ M2 本地引擎。**我们反过来：先把 `impressy-core` 写到全绿，GPUI 骨架推到之后。** 原因是一条代码里看不见的约束——主开发机是一台无图形环境的云 VM——它使得两半代码的 AI 生成循环速度相差一个数量级。
 
 ## 代码里看不见的约束：开发机跑不了 GPUI
 
@@ -14,8 +14,8 @@ spec §8 的里程碑顺序是 M1 骨架与语料（GPUI 脚手架 + 主界面�
 
 ## 由此产生的循环不对称
 
-- **`rastery-core` 是理想的 AI 循环**：Claude Code 写 → VM 上 `cargo test` → 自动收敛到全绿，开发者完全不必在场。图片进图片出的纯函数与 property test 全部 headless 可跑。spec 附录 4 所说的「以编译器为评审、自我修正循环」**只在这一半成立**。
-- **`rastery-app` 是较慢的循环**：VM 上能**类型检查**但不能**运行**。写完只能确认「编译得过」，要确认「渲染对不对、手感如何」必须 push → 在真机 pull、build、运行、肉眼判断 → 再把结果讲回来。**行为验证的每一次迭代开发者都必须在场。**
+- **`impressy-core` 是理想的 AI 循环**：Claude Code 写 → VM 上 `cargo test` → 自动收敛到全绿，开发者完全不必在场。图片进图片出的纯函数与 property test 全部 headless 可跑。spec 附录 4 所说的「以编译器为评审、自我修正循环」**只在这一半成立**。
+- **`impressy-app` 是较慢的循环**：VM 上能**类型检查**但不能**运行**。写完只能确认「编译得过」，要确认「渲染对不对、手感如何」必须 push → 在真机 pull、build、运行、肉眼判断 → 再把结果讲回来。**行为验证的每一次迭代开发者都必须在场。**
 
 > **2026-07-15 更正**：本 ADR 初版称「VM 上连编译检查都做不了」，**该说法有误**。它对 Windows target 成立（无交叉工具链），但对 **Linux host target 是错的**——已实测：`gpui 0.2.2` + `gpui-component 0.5.1` 在本 VM 上 `cargo check` **3 分 14 秒干净通过**，756 个依赖，无缺失系统库。
 >
@@ -27,7 +27,7 @@ spec §8 的里程碑顺序是 M1 骨架与语料（GPUI 脚手架 + 主界面�
 
 ## 为什么 core 能立刻开工而 UI 不能
 
-堵死 AI codegen 的那个前提——GPUI 是 pre-1.0、模型记忆中的 API 大概率过时，故 spec 附录 2 要求先建 `vendor-docs/`——**对 `rastery-core` 完全不适用**。core 依赖的 `image`、`imageproc`、`fast_image_resize`、`kamadak-exif`、`qrcode`、`gif` 全是 API 稳定、文档完备、模型掌握良好的 crate。
+堵死 AI codegen 的那个前提——GPUI 是 pre-1.0、模型记忆中的 API 大概率过时，故 spec 附录 2 要求先建 `vendor-docs/`——**对 `impressy-core` 完全不适用**。core 依赖的 `image`、`imageproc`、`fast_image_resize`、`kamadak-exif`、`qrcode`、`gif` 全是 API 稳定、文档完备、模型掌握良好的 crate。
 
 > **2026-07-15 更新**：本 ADR 写作时 `vendor-docs/` 不存在、GPUI 版本未锁定，故 UI 无法开工。**该门槛现已清除**：版本锁定为 `gpui = "=0.2.2"` + `gpui-component = "=0.5.1"`，`vendor-docs/` 已建立（内容全部从锁定版本的真实 crate 源码提取）。spec §9.2 第 5 项已关闭。
 >
@@ -35,11 +35,11 @@ spec §8 的里程碑顺序是 M1 骨架与语料（GPUI 脚手架 + 主界面�
 
 ## 后果
 
-- **i18n 不在第一阶段**。`rastery-core` 是库，没有任何用户可见文本，spec 附录 7 的「禁止硬编码、缺失键视为编译错误」对它无事可做。i18n 应在 UI 动工的那一刻就位，而非在库动工时。
+- **i18n 不在第一阶段**。`impressy-core` 是库，没有任何用户可见文本，spec 附录 7 的「禁止硬编码、缺失键视为编译错误」对它无事可做。i18n 应在 UI 动工的那一刻就位，而非在库动工时。
 - ~~**`vendor-docs/` 与 GPUI 版本锁定**从 spec M1 的第一个任务，变为 UI 阶段启动前的准入条件。它仍然是硬门槛，只是不再阻塞开工。~~ **已于 2026-07-15 完成**，见 [`vendor-docs/README.md`](../../vendor-docs/README.md)。锁定 `gpui = "=0.2.2"` + `gpui-component = "=0.5.1"`。
 - **UI 代码写完后必须在本机 `cargo check`**（Linux host target）。这能自动抓住幻觉 API——GPUI pre-1.0 的主要风险形态就是类型错误。不要跳过这一步直接推给真机。
 - **`cargo check` 通过 ≠ 可以声称「已验证」**。渲染、手感、冷启动需要真机。涉及这些的改动，如实说明「本机只做了类型检查」。
-- `rastery-core` 的三平台回归由 GitHub Actions（`windows-latest` / `macos-latest` / `ubuntu-latest`）承担，零人工成本。CI 也可编译 `rastery-app` 以捕获 API 误用与平台条件编译错误，但无法验证渲染正确性或冷启动耗时。
+- `impressy-core` 的三平台回归由 GitHub Actions（`windows-latest` / `macos-latest` / `ubuntu-latest`）承担，零人工成本。CI 也可编译 `impressy-app` 以捕获 API 误用与平台条件编译错误，但无法验证渲染正确性或冷启动耗时。
 
 ## 进度快照（2026-07-17，更新）
 
@@ -47,7 +47,7 @@ spec §8 的里程碑顺序是 M1 骨架与语料（GPUI 脚手架 + 主界面�
 
 | crate | 已完成且**本机可验证** | 已写但**只类型检查**（待真机） |
 | --- | --- | --- |
-| `rastery-core` | 全部本地引擎测试（含 Req 52–58 property test）全绿 | —— |
-| `rastery-app` | 编译、Clippy、测试全绿；配置恢复、参数边界、批量命名/进度及裁剪几何等 headless 测试 | 八个 v1 功能页、后台任务、剪贴板/拖放和 `crop_frame`（选区拖拽/缩放/比例锁，Req 47.1–3）均已接入。渲染、系统集成、性能与手感须按 `docs/testing/v1-desktop-acceptance.md` 真机验收 |
+| `impressy-core` | 全部本地引擎测试（含 Req 52–58 property test）全绿 | —— |
+| `impressy-app` | 编译、Clippy、测试全绿；配置恢复、参数边界、批量命名/进度及裁剪几何等 headless 测试 | 八个 v1 功能页、后台任务、剪贴板/拖放和 `crop_frame`（选区拖拽/缩放/比例锁，Req 47.1–3）均已接入。渲染、系统集成、性能与手感须按 `docs/testing/v1-desktop-acceptance.md` 真机验收 |
 
 **已实现但须真机验收的 v1**：全部 GPUI 功能页，尤其是裁剪用自定义 Canvas_Element（Req 47）。不得在本机声称其渲染与交互已经验证。

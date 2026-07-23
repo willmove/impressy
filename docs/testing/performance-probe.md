@@ -1,10 +1,10 @@
 # Core 性能探针
 
-`rastery-core` 提供一个无额外依赖的 release 性能探针，用于在相同机器上比较提交前后的
+`impressy-core` 提供一个无额外依赖的 release 性能探针，用于在相同机器上比较提交前后的
 相对性能：
 
 ```shell
-cargo bench -p rastery-core --bench v1_local
+cargo bench -p impressy-core --bench v1_local
 ```
 
 探针依次执行 12MP Lanczos3 缩放、1080p 截图美化，以及 100 张小图的缩放与 PNG 编码，

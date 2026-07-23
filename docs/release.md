@@ -8,7 +8,7 @@
 cargo check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo bench -p rastery-core --bench v1_local
+cargo bench -p impressy-core --bench v1_local
 ```
 
 随后完成 [`testing/v1-desktop-acceptance.md`](./testing/v1-desktop-acceptance.md) 的真机验收。
@@ -18,17 +18,17 @@ Core 探针只用于发现相对性能回退，不能代替 UI 响应与冷启�
 
 ## 应用图标
 
-唯一源文件是 `crates/rastery-app/assets/rastery-logo.svg`。图标生成器继续放在外部 Termior
-工具仓库，不复制到 Rastery。修改 SVG 后，在 PowerShell 中生成并校验全部平台资源：
+唯一源文件是 `crates/impressy-app/assets/impressy-logo.svg`。图标生成器继续放在外部 Termior
+工具仓库，不复制到 Impressy。修改 SVG 后，在 PowerShell 中生成并校验全部平台资源：
 
 ```powershell
 $generator = 'D:\Coding\ToolsProjects\termior\scripts\generate-icons.mjs'
 $iconArgs = @(
-  '--root', 'D:\Coding\DesignProjects\rastery\crates\rastery-app',
-  '--source', 'assets\rastery-logo.svg',
+  '--root', 'D:\Coding\DesignProjects\impressy\crates\impressy-app',
+  '--source', 'assets\impressy-logo.svg',
   '--output', 'assets\icons',
-  '--name', 'rastery',
-  '--app-id', 'app.rastery.Rastery'
+  '--name', 'impressy',
+  '--app-id', 'app.impressy.Impressy'
 )
 node $generator --write @iconArgs
 node $generator --check @iconArgs
@@ -41,7 +41,7 @@ node $generator --check @iconArgs
 
 `.github/workflows/release.yml` 可手动运行，也会在推送 `v*` 标签时运行：
 
-- Windows 2022：构建并签名 `rastery.exe`，使用固定版本 `cargo-wix 0.3.9` 生成 MSI，
+- Windows 2022：构建并签名 `impressy.exe`，使用固定版本 `cargo-wix 0.3.9` 生成 MSI，
   再签名和验证 MSI；EXE 内嵌应用图标，快捷方式、文件关联与“应用和功能”使用同一 ICO；
   EXE 或 MSI 超过 30 MiB 时失败。
 - Ubuntu 22.04：生成包含运行库依赖声明、`.desktop` 与 hicolor 图标树的 amd64 `.deb`；
@@ -72,19 +72,19 @@ Windows job 需要仓库 Actions secrets：
 
 ## Windows MSI
 
-WiX 定义位于 `crates/rastery-app/wix/main.wxs`，安装范围包括：
+WiX 定义位于 `crates/impressy-app/wix/main.wxs`，安装范围包括：
 
-- 内嵌 ICO 的 `rastery.exe` 与带图标的开始菜单快捷方式；
-- PNG、JPEG、WebP、BMP、GIF 的「Open with Rastery」文件关联；
-- “应用和功能”与文件关联使用 `assets/icons/rastery.ico`；
+- 内嵌 ICO 的 `impressy.exe` 与带图标的开始菜单快捷方式；
+- PNG、JPEG、WebP、BMP、GIF 的「Open with Impressy」文件关联；
+- “应用和功能”与文件关联使用 `assets/icons/impressy.ico`；
 - Major Upgrade 与卸载清理。
 
 本地生成 MSI 需要 Windows、WiX Toolset v3 和 `cargo-wix 0.3.9`：
 
 ```shell
 cargo install cargo-wix --version 0.3.9 --locked
-cargo build --release -p rastery-app
-cargo wix --package rastery-app --no-build
+cargo build --release -p impressy-app
+cargo wix --package impressy-app --no-build
 ```
 
 安装器必须在 Windows 10/11 x64 真机验证安装、文件关联、升级、卸载、SmartScreen 与

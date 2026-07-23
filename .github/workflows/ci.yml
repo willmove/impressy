@@ -1,7 +1,7 @@
 name: CI
 
 # 三平台质量门禁：cargo check + clippy(-D warnings) + test。
-# 这是 rastery-core 三平台回归的自动承担者（ADR-0001：零人工成本）。
+# 这是 impressy-core 三平台回归的自动承担者（ADR-0001：零人工成本）。
 on:
   push:
     branches: [main]
@@ -26,9 +26,9 @@ jobs:
           import struct
           import xml.etree.ElementTree as ET
 
-          root = Path("crates/rastery-app/assets")
+          root = Path("crates/impressy-app/assets")
           icons = root / "icons"
-          app_id = "app.rastery.Rastery"
+          app_id = "app.impressy.Impressy"
           sizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024]
 
           def png_size(path):
@@ -36,26 +36,26 @@ jobs:
               assert data[:8] == b"\x89PNG\r\n\x1a\n", f"invalid PNG: {path}"
               return struct.unpack(">II", data[16:24])
 
-          ET.parse(root / "rastery-logo.svg")
+          ET.parse(root / "impressy-logo.svg")
           scalable = icons / "hicolor/scalable/apps" / f"{app_id}.svg"
           ET.parse(scalable)
-          assert scalable.read_bytes() == (root / "rastery-logo.svg").read_bytes(), \
+          assert scalable.read_bytes() == (root / "impressy-logo.svg").read_bytes(), \
               "Linux scalable icon is stale"
 
-          assert png_size(icons / "rastery.png") == (512, 512)
+          assert png_size(icons / "impressy.png") == (512, 512)
           for size in sizes:
               assert png_size(icons / "png" / f"{size}x{size}.png") == (size, size)
               if size <= 512:
                   path = icons / "hicolor" / f"{size}x{size}" / "apps" / f"{app_id}.png"
                   assert png_size(path) == (size, size)
 
-          ico = (icons / "rastery.ico").read_bytes()
+          ico = (icons / "impressy.ico").read_bytes()
           reserved, kind, count = struct.unpack_from("<HHH", ico)
           assert (reserved, kind) == (0, 1) and len(ico) >= 6 + count * 16
           ico_sizes = sorted((ico[6 + index * 16] or 256) for index in range(count))
           assert ico_sizes == [16, 24, 32, 48, 64, 72, 96, 128, 256]
 
-          icns = (icons / "rastery.icns").read_bytes()
+          icns = (icons / "impressy.icns").read_bytes()
           assert icns[:4] == b"icns" and struct.unpack_from(">I", icns, 4)[0] == len(icns)
           print("verified 21 generated icon assets")
           PY
@@ -77,14 +77,14 @@ jobs:
 
       - name: Build release executable and MSI
         run: |
-          cargo build --release --locked -p rastery-app
-          cargo wix --package rastery-app --no-build
+          cargo build --release --locked -p impressy-app
+          cargo wix --package impressy-app --no-build
 
       - name: Verify MSI and executable size
         shell: pwsh
         run: |
           $artifacts = @(
-            Get-Item "target\release\rastery.exe"
+            Get-Item "target\release\impressy.exe"
             Get-ChildItem "target\wix" -Filter *.msi | Select-Object -First 1
           )
           if ($artifacts.Count -ne 2 -or $null -eq $artifacts[1]) {
@@ -101,8 +101,8 @@ jobs:
         shell: pwsh
         run: |
           $msi = (Get-ChildItem "target\wix" -Filter *.msi | Select-Object -First 1).FullName
-          $installLog = Join-Path $env:RUNNER_TEMP "rastery-msi-install.log"
-          $uninstallLog = Join-Path $env:RUNNER_TEMP "rastery-msi-uninstall.log"
+          $installLog = Join-Path $env:RUNNER_TEMP "impressy-msi-install.log"
+          $uninstallLog = Join-Path $env:RUNNER_TEMP "impressy-msi-uninstall.log"
 
           $install = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
             "/i", "`"$msi`"", "/qn", "/norestart", "/l*v", "`"$installLog`""
@@ -112,22 +112,22 @@ jobs:
             throw "MSI installation failed with exit code $($install.ExitCode)."
           }
 
-          $installedExe = Join-Path $env:ProgramFiles "Rastery\rastery.exe"
-          $shortcut = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\Rastery\Rastery.lnk"
+          $installedExe = Join-Path $env:ProgramFiles "Impressy\impressy.exe"
+          $shortcut = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\Impressy\Impressy.lnk"
           if (-not (Test-Path $installedExe)) {
-            throw "MSI did not install rastery.exe."
+            throw "MSI did not install impressy.exe."
           }
           if (-not (Test-Path $shortcut)) {
             throw "MSI did not install the Start menu shortcut."
           }
           foreach ($extension in "png", "jpg", "jpeg", "webp", "bmp", "gif") {
             $association = (Get-Item "Registry::HKEY_CLASSES_ROOT\.$extension").GetValue("")
-            if ($association -ne "Rastery.Image") {
-              throw ".$extension is not associated with Rastery.Image."
+            if ($association -ne "Impressy.Image") {
+              throw ".$extension is not associated with Impressy.Image."
             }
           }
-          $openCommand = (Get-Item "Registry::HKEY_CLASSES_ROOT\Rastery.Image\shell\open_png\command").GetValue("")
-          if ($openCommand -notlike "*rastery.exe*`"%1`"*") {
+          $openCommand = (Get-Item "Registry::HKEY_CLASSES_ROOT\Impressy.Image\shell\open_png\command").GetValue("")
+          if ($openCommand -notlike "*impressy.exe*`"%1`"*") {
             throw "The installed image open command is invalid: $openCommand"
           }
 
@@ -139,13 +139,13 @@ jobs:
             throw "MSI uninstallation failed with exit code $($uninstall.ExitCode)."
           }
           if (Test-Path $installedExe) {
-            throw "MSI uninstall left rastery.exe behind."
+            throw "MSI uninstall left impressy.exe behind."
           }
           if (Test-Path $shortcut) {
             throw "MSI uninstall left the Start menu shortcut behind."
           }
-          if (Test-Path "Registry::HKEY_CLASSES_ROOT\Rastery.Image") {
-            throw "MSI uninstall left Rastery.Image registration behind."
+          if (Test-Path "Registry::HKEY_CLASSES_ROOT\Impressy.Image") {
+            throw "MSI uninstall left Impressy.Image registration behind."
           }
 
   linux-package:
@@ -169,40 +169,40 @@ jobs:
       - name: Build release binary and Debian package
         shell: bash
         run: |
-          cargo build --release --locked -p rastery-app
-          desktop-file-validate packaging/linux/app.rastery.Rastery.desktop
+          cargo build --release --locked -p impressy-app
+          desktop-file-validate packaging/linux/app.impressy.Impressy.desktop
           version=$(cargo metadata --no-deps --format-version 1 | \
-            python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"] == "rastery-app"))')
-          stage="target/deb/rastery_${version}_amd64"
+            python3 -c 'import json,sys; data=json.load(sys.stdin); print(next(p["version"] for p in data["packages"] if p["name"] == "impressy-app"))')
+          stage="target/deb/impressy_${version}_amd64"
           mkdir -p "$stage/DEBIAN"
-          install -Dm755 target/release/rastery "$stage/usr/bin/rastery"
-          install -Dm644 packaging/linux/app.rastery.Rastery.desktop \
-            "$stage/usr/share/applications/app.rastery.Rastery.desktop"
+          install -Dm755 target/release/impressy "$stage/usr/bin/impressy"
+          install -Dm644 packaging/linux/app.impressy.Impressy.desktop \
+            "$stage/usr/share/applications/app.impressy.Impressy.desktop"
           mkdir -p "$stage/usr/share/icons"
-          cp -R crates/rastery-app/assets/icons/hicolor "$stage/usr/share/icons/"
+          cp -R crates/impressy-app/assets/icons/hicolor "$stage/usr/share/icons/"
           cat > "$stage/DEBIAN/control" <<EOF
-          Package: rastery
+          Package: impressy
           Version: ${version}
           Section: graphics
           Priority: optional
           Architecture: amd64
           Depends: libc6, libgcc-s1, libxcb1, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libfontconfig1, libfreetype6
-          Maintainer: Rastery <release@rastery.app>
+          Maintainer: Impressy <release@impressy.app>
           Description: Lightweight local image processing toolbox
            Native offline image editing, collage, batch processing, slicing,
            QR, EXIF, beautification, watermark, and GIF tools.
           EOF
-          dpkg-deb --build --root-owner-group "$stage" "target/rastery_${version}_amd64.deb"
+          dpkg-deb --build --root-owner-group "$stage" "target/impressy_${version}_amd64.deb"
 
       - name: Verify package contents, install, and uninstall
         shell: bash
         run: |
-          package=$(find target -maxdepth 1 -name 'rastery_*_amd64.deb' -print -quit)
+          package=$(find target -maxdepth 1 -name 'impressy_*_amd64.deb' -print -quit)
           test -n "$package"
           dpkg-deb --info "$package"
-          dpkg-deb --contents "$package" | grep -F './usr/bin/rastery'
-          dpkg-deb --contents "$package" | grep -F './usr/share/applications/app.rastery.Rastery.desktop'
-          for artifact in target/release/rastery "$package"; do
+          dpkg-deb --contents "$package" | grep -F './usr/bin/impressy'
+          dpkg-deb --contents "$package" | grep -F './usr/share/applications/app.impressy.Impressy.desktop'
+          for artifact in target/release/impressy "$package"; do
             size=$(wc -c < "$artifact")
             if [ "$size" -gt $((30 * 1024 * 1024)) ]; then
               echo "$artifact is $size bytes, above the 30 MB limit" >&2
@@ -211,13 +211,13 @@ jobs:
           done
 
           sudo dpkg -i "$package"
-          test -x /usr/bin/rastery
-          test -f /usr/share/applications/app.rastery.Rastery.desktop
-          grep -F 'Exec=rastery %F' /usr/share/applications/app.rastery.Rastery.desktop
-          sudo dpkg --verify rastery
-          sudo dpkg -r rastery
-          test ! -e /usr/bin/rastery
-          test ! -e /usr/share/applications/app.rastery.Rastery.desktop
+          test -x /usr/bin/impressy
+          test -f /usr/share/applications/app.impressy.Impressy.desktop
+          grep -F 'Exec=impressy %F' /usr/share/applications/app.impressy.Impressy.desktop
+          sudo dpkg --verify impressy
+          sudo dpkg -r impressy
+          test ! -e /usr/bin/impressy
+          test ! -e /usr/share/applications/app.impressy.Impressy.desktop
 
   quality:
     name: check + clippy + test (${{ matrix.os }})

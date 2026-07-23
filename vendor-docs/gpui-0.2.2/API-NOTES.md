@@ -180,7 +180,7 @@ default, inspector, leak-detection, macos-blade, runtime_shaders,
 screen-capture, test-support, wayland, windows-manifest, x11
 ```
 
-与 Rastery 直接相关的：
+与 Impressy 直接相关的：
 
 - **`screen-capture`** —— FR-08 屏幕截图。启用前先确认它与 `xcap` 的分工（spec §3.4 计划用 `xcap` 做跨平台截图，可能与此 feature 重叠，需要决策）。
 - **`x11` / `wayland`** —— Linux 后端。Linux 上截图还涉及 portal 权限，需实机验证。

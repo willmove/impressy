@@ -7,7 +7,7 @@
 
 ## 环境与安全
 
-- [ ] 记录精确 Git SHA、Rastery 版本、系统、GPU、显示缩放、日期和验收人。
+- [ ] 记录精确 Git SHA、Impressy 版本、系统、GPU、显示缩放、日期和验收人。
 - [ ] 三家 API Key 均可在设置中保存、替换和删除；应用 TOML 与日志中不存在密钥片段。
 - [ ] Windows Credential Manager / macOS Keychain / Linux Secret Service 中的条目可被系统工具确认。
 - [ ] 断网时所有 v1 本地功能仍可用；AI 请求显示双语网络错误且应用保持可复用。

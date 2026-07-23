@@ -1,0 +1,53 @@
+[package]
+name = "impressy-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Impressy 桌面应用：GPUI 主窗口与四板块导航。"
+
+# 包名保持 impressy-app（供 workspace 内 `-p impressy-app` 与路径依赖引用），
+# 但产出的可执行文件名为 impressy。
+[[bin]]
+name = "impressy"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+async-channel = "=2.5.0"
+cosmic-text = "=0.14.2"
+directories = "6.0.0"
+env_logger = "0.11.11"
+gpui = "=0.2.2"
+gpui-component = "=0.5.1"
+gpui-component-assets = "=0.5.1"
+image = "=0.25.8"
+log = "0.4.33"
+impressy-core = { path = "../impressy-core" }
+impressy-ai = { path = "../impressy-ai" }
+impressy-presets = { path = "../impressy-presets" }
+rust-i18n = "3"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[build-dependencies]
+winresource = "=0.1.31"
+
+[package.metadata.bundle]
+name = "Impressy"
+identifier = "app.impressy.Impressy"
+icon = [
+    "assets/icons/png/32x32.png",
+    "assets/icons/png/128x128.png",
+    "assets/icons/png/256x256.png",
+    "assets/icons/impressy.icns",
+    "assets/icons/impressy.ico",
+]
+category = "Graphics and Design"
+short_description = "A lightweight local image processing toolbox"
+long_description = "Impressy provides fast offline image processing plus BYOK AI generation, editing, industry presets, and poster design."
+
+[package.metadata.wix]
+product-icon = "assets/icons/impressy.ico"

@@ -1,17 +1,17 @@
-# Technical Design Document - Rastery 图像工具箱
+# Technical Design Document - Impressy 图像工具箱
 
 > **本文档与 [`requirements.md`](./requirements.md) 是本项目的唯一真相源。** 领域词汇见 [`CONTEXT.md`](../../CONTEXT.md)，范围与顺序决策见 [`docs/adr/`](../adr/)。
-> 早期的 `rastery-spec.md` 已冻结至 [`archive/rastery-spec-v0.3.md`](./archive/rastery-spec-v0.3.md)，**不要据此写代码**。
+> 早期的 `impressy-spec.md` 已冻结至 [`archive/impressy-spec-v0.3.md`](./archive/impressy-spec-v0.3.md)，**不要据此写代码**。
 >
-> **v1 / v2 范围**：v1 只做本地功能；v2 已按 [ADR-0004](../adr/0004-v2-provider-contract.md) 启动并建立 `rastery-ai` 与 `rastery-presets`。v2 不得削弱任何 v1 离线承诺。
+> **v1 / v2 范围**：v1 只做本地功能；v2 已按 [ADR-0004](../adr/0004-v2-provider-contract.md) 启动并建立 `impressy-ai` 与 `impressy-presets`。v2 不得削弱任何 v1 离线承诺。
 >
-> **截图能力已剥离**：`rastery-capture`、屏幕截图、全局热键、屏幕取色、覆盖层与截图标注不属于当前范围。截图美化仍是导入现有图片后的纯处理能力。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
+> **截图能力已剥离**：`impressy-capture`、屏幕截图、全局热键、屏幕取色、覆盖层与截图标注不属于当前范围。截图美化仍是导入现有图片后的纯处理能力。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
 >
-> **建设顺序已经按 ADR-0002 执行。** 已冻结的 spec §8 曾主张 M1 骨架 → M2 core（UI 优先）；实际项目先完成 `rastery-core` 的可自动验证闭环，再接入 GPUI UI。当前不再按旧里程碑推进，而按「自动验证 → 桌面真机验收 → 发布」收敛。
+> **建设顺序已经按 ADR-0002 执行。** 已冻结的 spec §8 曾主张 M1 骨架 → M2 core（UI 优先）；实际项目先完成 `impressy-core` 的可自动验证闭环，再接入 GPUI UI。当前不再按旧里程碑推进，而按「自动验证 → 桌面真机验收 → 发布」收敛。
 
 ## Overview
 
-Rastery is a cross-platform desktop image processing application built with Rust and GPUI framework, targeting Windows, macOS, and Linux. The system focuses on lightweight local image processing and is organized around four product **板块**:
+Impressy is a cross-platform desktop image processing application built with Rust and GPUI framework, targeting Windows, macOS, and Linux. The system focuses on lightweight local image processing and is organized around four product **板块**:
 
 1. **Basic Image Processing**: Offline-first operations including editing, collage, batch processing, slicing, QR codes, EXIF management, and screenshot beautification
 2. **AI Generation and Editing**: Text-to-image, image-to-image, and 12 preset AI editing scenarios
@@ -24,8 +24,8 @@ The current candidate implementation baseline is `fffdb2c`, one local commit ahe
 
 | Layer | Baseline state | Verification boundary |
 | --- | --- | --- |
-| `rastery-core` | Implemented as pure module functions over `image::RgbaImage`; no UI, network, or global state | Fully headless-testable; local quality gate and property tests pass |
-| `rastery-app` | Four-section GPUI shell, eight v1 pages, background jobs, config, i18n, drag/drop, clipboard, file export, and crop Element are wired | Type checks and headless state tests pass; Windows 11 release rendering, runtime locale switching, the native picker matrix, and all five performance metrics have partial real-machine evidence; the complete desktop matrix remains open |
+| `impressy-core` | Implemented as pure module functions over `image::RgbaImage`; no UI, network, or global state | Fully headless-testable; local quality gate and property tests pass |
+| `impressy-app` | Four-section GPUI shell, eight v1 pages, background jobs, config, i18n, drag/drop, clipboard, file export, and crop Element are wired | Type checks and headless state tests pass; Windows 11 release rendering, runtime locale switching, the native picker matrix, and all five performance metrics have partial real-machine evidence; the complete desktop matrix remains open |
 | Packaging | Windows MSI, Linux DEB, and macOS DMG pipelines are defined; Windows/Linux package smoke tests exist in CI; the exact local candidate produced a 5.10MiB unsigned MSI whose administratively extracted EXE matched the release SHA-256 | Elevated Windows install/association/upgrade/uninstall, signing, notarization, and SmartScreen/Gatekeeper behavior remain release evidence |
 | Acceptance evidence | Deterministic test-asset generator and JSON verifier exist; Windows 11 build 26200 partial evidence is recorded on issue #2 | `docs/testing/results/v1-desktop-acceptance.json` is not yet committed, Windows 10/macOS/Linux and package-security checks remain open, so v1 is not release-ready |
 
@@ -49,7 +49,7 @@ The 2026-07-19 v2 implementation supersedes this source baseline: the workspace 
 - **Image Processing**: Rust image processing libraries (offline)
 - **Credential Storage**: Windows Credential Manager, macOS Keychain, Linux Secret Service
 - **Configuration**: TOML format in standard app data directory
-- **Build**: Cargo workspace with `rastery-app`, `rastery-core`, `rastery-ai`, and `rastery-presets`
+- **Build**: Cargo workspace with `impressy-app`, `impressy-core`, `impressy-ai`, and `impressy-presets`
 
 ## Architecture
 
@@ -61,14 +61,14 @@ graph TB
         A["GPUI AppShell<br/>navigation + pages + settings"]
         B["Workspace<br/>main-thread state"]
         C["WorkspaceJob<br/>Send + background execution"]
-        D["rastery-core<br/>pure image modules"]
+        D["impressy-core<br/>pure image modules"]
         E["ConfigStore<br/>TOML in platform config dir"]
         F["File system / clipboard / native dialogs"]
     end
 
     subgraph "v2 AI layer"
-        G["rastery-ai<br/>Provider abstraction"]
-        H["rastery-presets<br/>locked prompt templates"]
+        G["impressy-ai<br/>Provider abstraction"]
+        H["impressy-presets<br/>locked prompt templates"]
         I["OS credential store + AI providers"]
     end
 
@@ -92,7 +92,7 @@ graph TB
 
 The current system is organized as a Cargo workspace with **four crates**:
 
-#### 1. **rastery-app** (Main Application)
+#### 1. **impressy-app** (Main Application)
 - GPUI application initialization, window identity, and four-section navigation
 - `AppShell` orchestration, feature parameters, preview state, and settings
 - `Workspace` command validation and `WorkspaceJob` / `WorkspaceOutcome` lifecycle
@@ -101,7 +101,7 @@ The current system is organized as a Cargo workspace with **four crates**:
 - Platform config persistence, drag/drop, clipboard, path prompts, and output-directory reveal
 - Custom three-phase crop selection Element
 
-#### 2. **rastery-core** (Image Processing Engine)
+#### 2. **impressy-core** (Image Processing Engine)
 - Pure Rust module functions over `image::RgbaImage`
 - Content-sniffed PNG/JPEG/WebP/GIF/BMP decoding and PNG/JPEG/WebP still-image encoding
 - Transformations: crop, resize, rotate, collage, slice
@@ -111,11 +111,11 @@ The current system is organized as a Cargo workspace with **four crates**:
 - GIF composition
 - Watermarking
 - Config serialization and deterministic output naming
-- **No façade trait**: the public API is the set of typed module functions; async scheduling belongs to `rastery-app`
+- **No façade trait**: the public API is the set of typed module functions; async scheduling belongs to `impressy-app`
 
 The following packages implement the v2 AI layer:
 
-#### 3. **rastery-ai** (AI Service Abstraction)
+#### 3. **impressy-ai** (AI Service Abstraction)
 - Provider trait abstraction
 - Unified request/response models
 - HTTPS-only Rustls transport with certificate validation
@@ -124,7 +124,7 @@ The following packages implement the v2 AI layer:
 - Provider implementations: Seedream, Google Nano Banana, OpenAI GPT-Image（Agnes 暂不实现）
 - **Key Trait**: `Provider` with capability declarations
 
-#### 4. **rastery-presets** (Industry Tool Templates)
+#### 4. **impressy-presets** (Industry Tool Templates)
 - Locked prompt template storage
 - Compile-time embedding of prompts into binary
 - Template organization by industry tool category
@@ -157,7 +157,7 @@ sequenceDiagram
 ```
 User Input → AppShell → Workspace::prepare → WorkspaceJob → Background Executor
                                                            ↓
-UI refresh ← Workspace::apply ← WorkspaceOutcome / progress ← rastery-core + file system
+UI refresh ← Workspace::apply ← WorkspaceOutcome / progress ← impressy-core + file system
 ```
 
 #### Pattern 2: Native Path Prompt
@@ -170,9 +170,9 @@ On Windows, a synchronous native dialog can start a nested message loop and re-e
 
 ## Components and Interfaces
 
-### Core Engine Contract (`rastery-core`)
+### Core Engine Contract (`impressy-core`)
 
-The core contract is a typed module API over `image::RgbaImage`. There is no `ImageProcessor` façade, no async runtime, and no file-system-owning service object. Callers select a module function and pass explicit values; errors use `rastery_core::Result<T>` / `CoreError`.
+The core contract is a typed module API over `image::RgbaImage`. There is no `ImageProcessor` façade, no async runtime, and no file-system-owning service object. Callers select a module function and pass explicit values; errors use `impressy_core::Result<T>` / `CoreError`.
 
 | Module | Public responsibility | Principal types / functions |
 | --- | --- | --- |
@@ -189,9 +189,9 @@ The core contract is a typed module API over `image::RgbaImage`. There is no `Im
 | `config` | v1 TOML data model and round-trip serialization | `AppConfig`, `Language`, `to_toml`, `from_toml` |
 | `naming` | Sanitized deterministic batch and tile filenames | `sanitize_stem`, `batch_filename`, `tile_filename` |
 
-`rastery-core` MUST remain synchronous and pure. Requirement 3 async behavior is fulfilled by the application layer scheduling these functions on GPUI's background executor; adding an async executor or UI text to the core would violate the crate boundary.
+`impressy-core` MUST remain synchronous and pure. Requirement 3 async behavior is fulfilled by the application layer scheduling these functions on GPUI's background executor; adding an async executor or UI text to the core would violate the crate boundary.
 
-### Application Contract (`rastery-app`)
+### Application Contract (`impressy-app`)
 
 | Component | Responsibility | Threading rule |
 | --- | --- | --- |
@@ -220,8 +220,8 @@ The implemented boundary is:
 
 - a `Provider` abstraction with capability declarations, text-to-image, image-to-image, edit, and normalized errors;
 - provider credentials stored only in OS credential stores;
-- locked prompt templates compiled into `rastery-presets` and selected by industry-tool **档位**;
-- `rastery-core` remains independent of both network crates; only `rastery-app` orchestrates them.
+- locked prompt templates compiled into `impressy-presets` and selected by industry-tool **档位**;
+- `impressy-core` remains independent of both network crates; only `impressy-app` orchestrates them.
 
 Provider request schemas and models are frozen by ADR-0004 and contract-tested through injected fake transports. A future model or endpoint upgrade is an explicit research/ADR task.
 
@@ -270,9 +270,9 @@ Generation history is non-secret TOML data and can be cleared in Settings. Provi
 
 ### Error Layers
 
-`rastery-core` exposes one structured `CoreError` with variants for image decode/encode, WebP, disk space, I/O, QR encode/decode, EXIF, GIF encode, config parse/serialize, and invalid arguments. Public core operations return `Result` and do not panic for user input.
+`impressy-core` exposes one structured `CoreError` with variants for image decode/encode, WebP, disk space, I/O, QR encode/decode, EXIF, GIF encode, config parse/serialize, and invalid arguments. Public core operations return `Result` and do not panic for user input.
 
-`rastery-app` does not expose a speculative application-wide error enum. Background jobs convert concrete failures into semantic `ErrorKind` categories:
+`impressy-app` does not expose a speculative application-wide error enum. Background jobs convert concrete failures into semantic `ErrorKind` categories:
 
 - unsupported format or corrupted image;
 - encode or image operation failure;
@@ -295,7 +295,7 @@ Generation history is non-secret TOML data and can be cleared in Settings. Provi
 
 ### Automated Baseline
 
-The 2026-07-19 workspace baseline executes 80 tests: `rastery-ai` provider/security/transport contracts, `rastery-presets` embedded-template coverage, the complete v1 core property suite, and app state/orchestration tests including AI masks, exact business dimensions, config secret exclusion, platform local cropping, and poster composition.
+The 2026-07-19 workspace baseline executes 80 tests: `impressy-ai` provider/security/transport contracts, `impressy-presets` embedded-template coverage, the complete v1 core property suite, and app state/orchestration tests including AI masks, exact business dimensions, config secret exclusion, platform local cropping, and poster composition.
 
 Property-based testing is required for pure transformations and invariants. Example-based unit tests are preferred for state transitions, platform-independent orchestration, validation, and known regressions. UI pixels, interaction feel, native dialogs, clipboard interoperability, signing, and timing are desktop acceptance concerns.
 
@@ -523,7 +523,7 @@ The DPI/capture property is no longer part of the current scope (ADR-0003).
 
 ### [v2] Property 29: Credential Storage Never Writes API Keys to Plaintext Files
 
-*For any* API key storage operation, the Rastery_System SHALL NOT write the API key to the configuration file or log files.
+*For any* API key storage operation, the Impressy_System SHALL NOT write the API key to the configuration file or log files.
 
 **Validates: Requirements 60.2, 60.3, 60.4**
 
@@ -547,7 +547,7 @@ Complete scope:
 - v1 correctness properties and regression tests;
 - cross-platform CI quality jobs.
 
-Exit criterion: `rastery-core` remains pure, synchronous, network-free, and green under all three quality gates on Windows, macOS, and Linux.
+Exit criterion: `impressy-core` remains pure, synchronous, network-free, and green under all three quality gates on Windows, macOS, and Linux.
 
 ### [v1] Stage B — Desktop Application: Implemented, Stabilization and Real-Machine Acceptance Open
 
@@ -604,7 +604,7 @@ v2 MUST NOT weaken the v1 guarantees: every 本地功能 remains usable without 
 
 - All tasks pass `cargo check`, `cargo clippy -- -D warnings`, and `cargo test`.
 - CI runs the workspace and all targets on Windows, macOS, and Linux.
-- `rastery-core` public operations return structured errors for invalid user input and contain no user-visible localized text.
+- `impressy-core` public operations return structured errors for invalid user input and contain no user-visible localized text.
 - Property tests run at least 100 cases, keep shrinking enabled, and preserve generated regression cases for deterministic replay.
 - Every property test identifies the corresponding property number in a nearby comment.
 - Existing user changes in a dirty worktree are never overwritten as part of unrelated work.
@@ -623,8 +623,8 @@ The baseline implements Properties 1–15 and 17–30. Property 16 was removed w
 
 | Layer | Purpose | Current mechanism |
 | --- | --- | --- |
-| Pure behavior | Pixel, count, order, round-trip, idempotence, and error invariants | `rastery-core` unit and property tests |
-| Headless app state | Parameters, config, job outcomes, naming containment, and crop math | `rastery-app` unit tests |
+| Pure behavior | Pixel, count, order, round-trip, idempotence, and error invariants | `impressy-core` unit and property tests |
+| Headless app state | Parameters, config, job outcomes, naming containment, and crop math | `impressy-app` unit tests |
 | Cross-platform build | API use, cfg paths, linking, package structure | GitHub Actions on three operating systems |
 | Desktop behavior | Rendering, interaction, dialogs, clipboard, drag/drop, file manager, performance | Four-environment desktop acceptance JSON |
 | Release trust | Signing, notarization, installation, uninstall, artifact size | release workflow plus real-machine checks |
@@ -640,7 +640,7 @@ The baseline implements Properties 1–15 and 17–30. Property 16 was removed w
 
 ## Document Metadata
 
-- **Feature Name**: rastery
+- **Feature Name**: impressy
 - **Spec Type**: Feature
 - **Workflow Type**: Requirements-First
 - **Document Version**: 1.3

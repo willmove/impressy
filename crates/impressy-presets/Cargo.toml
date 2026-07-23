@@ -1,0 +1,10 @@
+[package]
+name = "impressy-presets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Compile-time locked prompt templates and tiers for Impressy AI tools."
+
+[lints]
+workspace = true
+

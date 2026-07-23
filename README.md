@@ -1,11 +1,11 @@
-# Rastery
+# Impressy
 
-[![CI](https://github.com/willmove/rastery/actions/workflows/ci.yml/badge.svg)](https://github.com/willmove/rastery/actions/workflows/ci.yml)
+[![CI](https://github.com/willmove/impressy/actions/workflows/ci.yml/badge.svg)](https://github.com/willmove/impressy/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](#license)
 
 **English** | [简体中文](README.zh-CN.md)
 
-**Rastery** is a cross-platform native desktop image toolbox (Rust + [GPUI](https://www.gpui.rs/)) focused on lightweight, fast **local image processing**. It is **local-first**: every feature in v1 works fully offline, with no account and no API key.
+**Impressy** is a cross-platform native desktop image toolbox (Rust + [GPUI](https://www.gpui.rs/)) focused on lightweight, fast **local image processing**. It is **local-first**: every feature in v1 works fully offline, with no account and no API key.
 
 > Windows 10/11 · macOS · Linux (X11 / Wayland)
 
@@ -13,7 +13,7 @@
 
 ## Status
 
-Rastery was built in two stages:
+Impressy was built in two stages:
 
 - **v1 — Local features (implemented).** Completely offline image-processing tools. Screen capture, global hotkeys, and screen color picking remain outside the current scope.
 - **v2 — AI image features (implemented; live-provider acceptance open).** Text/image generation, 12 AI editing presets, 13 industry tools, and poster design via BYOK. Seedream, Nano Banana, and OpenAI keys are stored in the operating-system credential manager. The three video entries remain explicitly planned placeholders and are not part of the marked v1/v2 image scope.
@@ -30,20 +30,20 @@ The UI is organized into four **sections**. v1 fills the two local ones:
 
 | Feature | What it does | Engine |
 | --- | --- | --- |
-| Crop / Resize / Rotate | Aspect-ratio presets, lossless 90° rotation, high-quality resampling | `rastery_core::transform` |
-| Collage | Stack images vertically, horizontally, or in a grid | `rastery_core::collage` |
-| Batch Processing | Convert / compress / resize / watermark many images; failures isolated per item | `rastery_core::batch` · `watermark` |
-| Slicing | Split an image into an exact N×M grid of tiles | `rastery_core::slice` |
-| QR Code | Generate and recognize QR codes with custom colors | `rastery_core::qr` |
-| EXIF Manager | View and strip camera / GPS metadata **without changing a pixel** | `rastery_core::exif` |
-| Screenshot Beautify | Add rounded corners, padding, gradients, borders, and shadows to an imported image; no screen capture | `rastery_core::beautify` |
+| Crop / Resize / Rotate | Aspect-ratio presets, lossless 90° rotation, high-quality resampling | `impressy_core::transform` |
+| Collage | Stack images vertically, horizontally, or in a grid | `impressy_core::collage` |
+| Batch Processing | Convert / compress / resize / watermark many images; failures isolated per item | `impressy_core::batch` · `watermark` |
+| Slicing | Split an image into an exact N×M grid of tiles | `impressy_core::slice` |
+| QR Code | Generate and recognize QR codes with custom colors | `impressy_core::qr` |
+| EXIF Manager | View and strip camera / GPS metadata **without changing a pixel** | `impressy_core::exif` |
+| Screenshot Beautify | Add rounded corners, padding, gradients, borders, and shadows to an imported image; no screen capture | `impressy_core::beautify` |
 
 ### Creative Output
 
 | Feature | What it does | Engine |
 | --- | --- | --- |
-| GIF Maker | Compose frames into a GIF (delay + forward/reverse/ping-pong) | `rastery_core::animation` |
-| Poster Design | Generate a 9:16 AI background, position/resize three native text layers, and export a local offscreen composition | `rastery-ai` · `rastery_core::poster` |
+| GIF Maker | Compose frames into a GIF (delay + forward/reverse/ping-pong) | `impressy_core::animation` |
+| Poster Design | Generate a 9:16 AI background, position/resize three native text layers, and export a local offscreen composition | `impressy-ai` · `impressy_core::poster` |
 
 ### AI Generation and Industry Tools (v2)
 
@@ -58,10 +58,10 @@ A Cargo workspace of four crates:
 
 | Crate | Responsibility | Testable headless? |
 | --- | --- | --- |
-| [`rastery-core`](crates/rastery-core) | Pure local image engine: crop, compress, collage, slice, GIF, QR, EXIF, watermark, beautify. **No UI, no network, no global state.** | ✅ Fully — property-tested |
-| [`rastery-app`](crates/rastery-app) | GPUI UI: four-section navigation, feature pages, and a custom crop Element | ⚠️ Type-check only on headless machines |
-| [`rastery-ai`](crates/rastery-ai) | Provider trait, Seedream/Nano Banana/OpenAI adapters, HTTPS transport, capability declarations, and OS credential storage | ✅ Contract-tested with fake transports |
-| [`rastery-presets`](crates/rastery-presets) | Compile-time locked prompt templates for editing and all 13 industry tools | ✅ Embedded-resource tests |
+| [`impressy-core`](crates/impressy-core) | Pure local image engine: crop, compress, collage, slice, GIF, QR, EXIF, watermark, beautify. **No UI, no network, no global state.** | ✅ Fully — property-tested |
+| [`impressy-app`](crates/impressy-app) | GPUI UI: four-section navigation, feature pages, and a custom crop Element | ⚠️ Type-check only on headless machines |
+| [`impressy-ai`](crates/impressy-ai) | Provider trait, Seedream/Nano Banana/OpenAI adapters, HTTPS transport, capability declarations, and OS credential storage | ✅ Contract-tested with fake transports |
+| [`impressy-presets`](crates/impressy-presets) | Compile-time locked prompt templates for editing and all 13 industry tools | ✅ Embedded-resource tests |
 
 Design principles: local-first, privacy by design (no telemetry, no embedded keys), native and lightweight (single binary, **no browser-engine dependency**), GPU-direct rendering.
 
@@ -80,12 +80,12 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-`rastery-core` is covered by property tests (invariants such as lossless round-trip pixel-identity, exact crop ratios, N images → N GIF frames, EXIF strip preserving pixels).
+`impressy-core` is covered by property tests (invariants such as lossless round-trip pixel-identity, exact crop ratios, N images → N GIF frames, EXIF strip preserving pixels).
 
 ### Run the app
 
 ```bash
-cargo run -p rastery-app
+cargo run -p impressy-app
 ```
 
 ## Development
