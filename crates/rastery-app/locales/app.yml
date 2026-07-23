@@ -7,9 +7,6 @@ app:
     en: Native image toolbox
     zh-CN: 原生图片工具箱
 nav:
-  home:
-    en: Home
-    zh-CN: 首页
   search_placeholder:
     en: Search tools…
     zh-CN: 搜索工具…
@@ -29,9 +26,6 @@ nav:
     en: Video Tools
     zh-CN: 视频工具
 lang:
-  toggle:
-    en: 中文
-    zh-CN: English
   label:
     en: Language
     zh-CN: 语言
@@ -100,42 +94,9 @@ home:
   badge_dev:
     en: Planned
     zh-CN: 规划中
-  title:
-    en: Start
-    zh-CN: 开始
   privacy_note:
     en: Local tools need no network; API keys stay in the system credential manager.
     zh-CN: 本地功能无需网络；API Key 仅存入系统凭据管理器。
-  quick_start:
-    en: Quick start
-    zh-CN: 快速开始
-  quick_start_title:
-    en: Turn an image into a finished result
-    zh-CN: 从一张图片开始完成创作
-  quick_start_desc:
-    en: Open an editor or choose an AI workflow. Every existing tool remains available from the sidebar and the complete list below.
-    zh-CN: 打开编辑器或选择 AI 工作流。现有功能均可从左侧导航及下方完整工具列表进入。
-  sections:
-    en: Sections
-    zh-CN: 板块
-  all_tools:
-    en: All tools
-    zh-CN: 全部工具
-  section_basic_summary:
-    en: Five everyday offline image workflows
-    zh-CN: 5 个常用本地图片工作流
-  section_ai_summary:
-    en: Image generation and guided editing
-    zh-CN: 图片生成与引导式改图
-  section_industry_summary:
-    en: Thirteen locked-prompt workflows
-    zh-CN: 13 个锁定提示词工作流
-  section_creative_summary:
-    en: Collage, GIF, framing, and posters
-    zh-CN: 拼图、GIF、截图美化与海报
-  section_video_summary:
-    en: Three planned video workflows
-    zh-CN: 3 个规划中的视频工作流
   offline_available:
     en: Available offline
     zh-CN: 离线可用
@@ -247,9 +208,6 @@ action:
   copy:
     en: Copy result
     zh-CN: 复制结果
-  cycle_format:
-    en: Change format
-    zh-CN: 切换格式
   rotate90:
     en: Rotate 90°
     zh-CN: 旋转 90°

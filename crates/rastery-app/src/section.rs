@@ -23,14 +23,6 @@ pub enum Section {
 }
 
 impl Section {
-    /// 四大板块，按导航顺序。
-    pub const ALL: [Self; 4] = [
-        Self::BasicImage,
-        Self::AiGeneration,
-        Self::IndustryTools,
-        Self::CreativeOutput,
-    ];
-
     /// 导航标签的 i18n 键。
     pub fn nav_key(self) -> &'static str {
         match self {
@@ -41,54 +33,6 @@ impl Section {
         }
     }
 
-    /// 稳定的元素 id 片段（用于 GPUI 的 `.id(...)`）。
-    pub fn id(self) -> &'static str {
-        match self {
-            Self::BasicImage => "sec-basic",
-            Self::AiGeneration => "sec-ai",
-            Self::IndustryTools => "sec-industry",
-            Self::CreativeOutput => "sec-output",
-        }
-    }
-
-    /// 该板块下的功能入口，按展示顺序。
-    pub fn features(self) -> &'static [Feature] {
-        match self {
-            Self::BasicImage => &[
-                Feature::Edit,
-                Feature::Collage,
-                Feature::Batch,
-                Feature::Slice,
-                Feature::QrCode,
-                Feature::Exif,
-                Feature::Beautify,
-            ],
-            // 三个视频功能是 Requirement 34.5–34.7 要求提供的入口，均为 v2 占位。
-            Self::AiGeneration => &[
-                Feature::TextToImage,
-                Feature::ImageEdit,
-                Feature::VideoWatermark,
-                Feature::VideoSubtitle,
-                Feature::VideoClarity,
-            ],
-            Self::IndustryTools => &[
-                Feature::OldPhotoRestoration,
-                Feature::IdPhoto,
-                Feature::AvatarStudio,
-                Feature::MemeGenerator,
-                Feature::AiPortrait,
-                Feature::ModelTryOn,
-                Feature::ProductRecolor,
-                Feature::PromotionalPoster,
-                Feature::PlatformAdaptation,
-                Feature::CoverFactory,
-                Feature::ArticleIllustration,
-                Feature::FoodEnhancement,
-                Feature::InteriorPreview,
-            ],
-            Self::CreativeOutput => &[Feature::Gif, Feature::Poster],
-        }
-    }
 }
 
 /// 单个功能入口（Requirement 34）。

@@ -19,10 +19,14 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
 use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::select::{Select, SelectEvent, SelectState};
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 use gpui_component::spinner::Spinner;
 use gpui_component::tooltip::Tooltip;
-use gpui_component::{ActiveTheme, Colorize, Disableable, Icon, IconName, Sizable, WindowExt, h_flex, v_flex};
+use gpui_component::{
+    ActiveTheme, Colorize, Disableable, Icon, IconName, IndexPath, Sizable, WindowExt, h_flex,
+    v_flex,
+};
 use rastery_ai::{
     AiError, ApiKey, AspectRatio as AiAspectRatio, CredentialStore, GeneratedImage,
     GenerationQuality, GenerationRequest, ImageInput, ProviderId, ProviderRegistry,
@@ -174,6 +178,7 @@ pub struct AppShell {
     /// Windows / Linux 的窗口内菜单栏；macOS 由系统原生菜单栏呈现同一份 `set_menus` 数据。
     #[cfg(not(target_os = "macos"))]
     menu_bar: Entity<MenuBar>,
+    export_format_select: Entity<SelectState<Vec<SharedString>>>,
     quality_slider: Entity<SliderState>,
     batch_quality_slider: Entity<SliderState>,
     qr_foreground: Entity<ColorPickerState>,
@@ -181,6 +186,11 @@ pub struct AppShell {
     ai_custom_color: Entity<ColorPickerState>,
     estimate_state: EstimateState,
     estimate_generation: Arc<AtomicU64>,
+    /// 上一帧窗口客户区尺寸（逻辑像素）。渲染时更新，供预览画布随窗口伸缩计算可用空间。
+    viewport_width: f32,
+    viewport_height: f32,
+    /// 侧边栏中已收起的导航分组，用分组的 `label_key` 标识；默认全部展开（空集）。
+    collapsed_groups: std::collections::HashSet<&'static str>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -233,6 +243,14 @@ impl AppShell {
                 .masked(true)
         });
         let configured_provider = provider_from_config(&config.default_provider);
+        let export_format_select = cx.new(|cx| {
+            SelectState::new(
+                export_format_items(),
+                Some(IndexPath::default().row(export_format_index(config.default_export_format))),
+                window,
+                cx,
+            )
+        });
         let quality_slider = cx.new(|_| {
             SliderState::new()
                 .min(1.0)
@@ -260,6 +278,18 @@ impl AppShell {
                     }
                 }
             }),
+            cx.subscribe_in(
+                &export_format_select,
+                window,
+                |this, _, event: &SelectEvent<Vec<SharedString>>, _, cx| {
+                    if let SelectEvent::Confirm(Some(label)) = event {
+                        this.config.default_export_format = export_format_from_label(label);
+                        this.persist_config(true);
+                        this.schedule_size_estimate(cx);
+                        cx.notify();
+                    }
+                },
+            ),
             cx.subscribe(&quality_slider, |this, _, event: &SliderEvent, cx| {
                 let SliderEvent::Change(value) = event;
                 let value = value.start().round().clamp(1.0, 100.0) as u8;
@@ -316,6 +346,7 @@ impl AppShell {
             credential_store: Arc::new(SystemCredentialStore),
             #[cfg(not(target_os = "macos"))]
             menu_bar,
+            export_format_select,
             quality_slider,
             batch_quality_slider,
             qr_foreground,
@@ -323,6 +354,10 @@ impl AppShell {
             ai_custom_color,
             estimate_state: EstimateState::Unavailable,
             estimate_generation: Arc::new(AtomicU64::new(0)),
+            // 初始沿用窗口请求尺寸；首帧渲染即被真实客户区尺寸覆盖。
+            viewport_width: 1280.0,
+            viewport_height: 800.0,
+            collapsed_groups: std::collections::HashSet::new(),
             _subscriptions,
         }
     }
@@ -403,17 +438,6 @@ impl AppShell {
         cx.notify();
     }
 
-    fn cycle_export_format(&mut self, cx: &mut Context<Self>) {
-        self.config.default_export_format = match self.config.default_export_format {
-            OutputFormat::Png => OutputFormat::Jpeg,
-            OutputFormat::Jpeg => OutputFormat::Webp,
-            OutputFormat::Webp => OutputFormat::Png,
-        };
-        self.persist_config(true);
-        self.schedule_size_estimate(cx);
-        cx.notify();
-    }
-
     fn cycle_png_compression(&mut self, cx: &mut Context<Self>) {
         self.config.default_png_compression =
             next_png_compression(self.config.default_png_compression);
@@ -463,31 +487,12 @@ impl AppShell {
         .detach();
     }
 
-    fn home_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let active = !self.settings_open && self.open.is_none();
-        h_flex()
-            .id("nav-home")
-            .h(px(34.0))
-            .px_3()
-            .gap_2()
-            .rounded_md()
-            .text_sm()
-            .cursor_pointer()
-            .text_color(if active {
-                theme.sidebar_accent_foreground
-            } else {
-                theme.sidebar_foreground
-            })
-            .when(active, |this| this.bg(theme.sidebar_accent))
-            .hover(|this| this.bg(theme.sidebar_accent))
-            .child(Icon::new(IconName::LayoutDashboard).small())
-            .child(tr("nav.home"))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.open = None;
-                this.settings_open = false;
-                cx.notify();
-            }))
+    /// 切换某个导航分组的展开 / 收起状态。分组用其 `label_key` 标识。
+    fn toggle_group(&mut self, label_key: &'static str, cx: &mut Context<Self>) {
+        if !self.collapsed_groups.remove(label_key) {
+            self.collapsed_groups.insert(label_key);
+        }
+        cx.notify();
     }
 
     fn sidebar_feature_button(&self, feature: Feature, cx: &mut Context<Self>) -> impl IntoElement {
@@ -547,26 +552,41 @@ impl AppShell {
         if features.is_empty() {
             return None;
         }
+        // 搜索时强制展开，方便看到所有匹配项；否则遵循用户的收起状态。
+        let collapsed = query.is_empty() && self.collapsed_groups.contains(group.label_key);
+        let label_key = group.label_key;
+        let muted = cx.theme().muted_foreground;
+        let foreground = cx.theme().foreground;
         Some(
             v_flex()
                 .gap_0()
                 .child(
                     h_flex()
+                        .id(SharedString::from(format!("nav-group-{label_key}")))
                         .h(px(30.0))
                         .px_2()
                         .justify_between()
                         .text_xs()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
-                        .text_color(cx.theme().muted_foreground)
+                        .text_color(muted)
+                        .cursor_pointer()
+                        .hover(|this| this.text_color(foreground))
                         .child(
                             h_flex()
                                 .gap_2()
                                 .child(Icon::new(group.icon).small())
-                                .child(tr(group.label_key)),
+                                .child(tr(label_key)),
                         )
-                        .child(Icon::new(IconName::ChevronDown).small()),
+                        .child(Icon::new(if collapsed {
+                            IconName::ChevronRight
+                        } else {
+                            IconName::ChevronDown
+                        }))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.toggle_group(label_key, cx);
+                        })),
                 )
-                .children(features)
+                .when(!collapsed, |this| this.children(features))
                 .into_any_element(),
         )
     }
@@ -588,339 +608,85 @@ impl AppShell {
         cx.notify();
     }
 
-    fn settings_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        h_flex()
-            .id("settings-nav")
-            .h(px(36.0))
-            .px_3()
-            .gap_2()
-            .rounded_md()
-            .text_sm()
-            .cursor_pointer()
-            .text_color(if self.settings_open {
-                theme.sidebar_accent_foreground
-            } else {
-                theme.sidebar_foreground
-            })
-            .when(self.settings_open, |this| this.bg(theme.sidebar_accent))
-            .hover(|this| this.bg(theme.sidebar_accent))
-            .child(Icon::new(IconName::Settings2).small())
-            .child(tr("settings.title"))
-            .on_click(cx.listener(|this, _, _, cx| {
-                this.settings_open = true;
-                this.open = None;
-                cx.notify();
-            }))
-    }
-
-    fn language_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        h_flex()
-            .id("lang-toggle")
-            .h(px(30.0))
-            .px_2()
-            .gap_1()
-            .rounded_md()
-            .text_xs()
-            .cursor_pointer()
-            .text_color(theme.muted_foreground)
-            .hover(|this| this.bg(theme.secondary_hover))
-            .child(Icon::new(IconName::Globe).small())
-            .child(tr("lang.toggle"))
-            .on_click(cx.listener(|this, _, window, cx| this.toggle_language(window, cx)))
-    }
-
-    fn feature_card(&self, feature: Feature, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (badge, badge_color) = feature_badge(feature, cx);
-        h_flex()
-            .id(feature.id())
-            .w(px(270.0))
-            .min_h(px(68.0))
-            .gap_3()
-            .p_3()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.background)
-            .cursor_pointer()
-            .hover(|this| this.border_color(theme.primary).bg(theme.secondary_hover))
-            .child(
-                div()
-                    .size(px(34.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_md()
-                    .bg(theme.sidebar_accent)
-                    .text_color(theme.sidebar_accent_foreground)
-                    .child(Icon::new(feature_icon(feature)).small()),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(tr(feature.name_key())),
-                            )
-                            .child(div().text_xs().text_color(badge_color).child(badge)),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(tr(feature.desc_key())),
-                    ),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_feature(feature, cx);
-            }))
-    }
-
-    fn home_quick_action(&self, feature: Feature, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
-        h_flex()
-            .id(SharedString::from(format!("home-quick-{}", feature.id())))
-            .min_h(px(58.0))
-            .px_4()
-            .gap_3()
-            .border_t_1()
-            .border_color(theme.border)
-            .cursor_pointer()
-            .hover(|this| this.bg(theme.secondary_hover))
-            .child(
-                div()
-                    .size(px(34.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded_md()
-                    .bg(theme.sidebar_accent)
-                    .text_color(theme.sidebar_accent_foreground)
-                    .child(Icon::new(feature_icon(feature)).small()),
-            )
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .gap_0p5()
-                    .child(
-                        div()
-                            .text_sm()
-                            .font_weight(gpui::FontWeight::MEDIUM)
-                            .child(tr(feature.name_key())),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .whitespace_nowrap()
-                            .child(tr(feature.desc_key())),
-                    ),
-            )
-            .child(
-                Icon::new(IconName::ChevronRight)
-                    .small()
-                    .text_color(theme.muted_foreground),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_feature(feature, cx);
-            }))
-            .into_any_element()
-    }
-
-    fn section_home(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let cards = Section::ALL
-            .into_iter()
-            .flat_map(Section::features)
-            .copied()
-            .map(|feature| self.feature_card(feature, cx).into_any_element())
-            .collect::<Vec<_>>();
-        let quick_actions = [
-            Feature::Edit,
-            Feature::Batch,
-            Feature::Beautify,
-            Feature::TextToImage,
-            Feature::ImageEdit,
-        ]
-        .into_iter()
-        .map(|feature| self.home_quick_action(feature, cx))
-        .collect::<Vec<_>>();
-        let theme = cx.theme();
-        let section_rows = navigation_groups()
-            .into_iter()
-            .map(|group| {
-                let first = group.features[0];
-                h_flex()
-                    .id(SharedString::from(format!("home-section-{}", group.id)))
-                    .min_h(px(54.0))
-                    .px_4()
-                    .justify_between()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .cursor_pointer()
-                    .hover(|this| this.bg(theme.secondary_hover))
-                    .child(
-                        v_flex()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::MEDIUM)
-                                    .child(tr(group.label_key)),
-                            )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
-                                    .child(tr(group.summary_key)),
-                            ),
-                    )
-                    .child(
-                        Icon::new(IconName::ChevronRight)
-                            .small()
-                            .text_color(theme.muted_foreground),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.open_feature(first, cx);
-                    }))
-                    .into_any_element()
-            })
-            .collect::<Vec<_>>();
+    /// 启动后的空工作台：一整块可拖放的画布。拖入或打开图片后进入编辑器。
+    /// 取代原先罗列全部工具的门户首页——导航的唯一入口是左侧边栏。
+    fn workspace_home(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border = cx.theme().border;
+        let muted = cx.theme().muted_foreground;
+        let secondary = cx.theme().secondary;
+        let sidebar_accent = cx.theme().sidebar_accent;
+        let sidebar_accent_foreground = cx.theme().sidebar_accent_foreground;
+        let success = cx.theme().success;
+        let status = self.workspace.status_text();
 
         v_flex()
-            .id("home-scroll")
+            .id("workspace-home")
             .size_full()
-            .items_center()
-            .overflow_y_scroll()
+            .p_6()
+            .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
+                this.open = Some(Feature::Edit);
+                this.active = Section::BasicImage;
+                this.handle_drop(paths.paths().to_vec(), cx);
+            }))
             .child(
                 v_flex()
-                    .w(px(1080.0))
-                    .flex_shrink_0()
-                    .p_6()
-                    .pb_8()
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .items_center()
+                    .justify_center()
                     .gap_5()
+                    .rounded_lg()
+                    .border_1()
+                    .border_dashed()
+                    .border_color(border)
+                    .bg(secondary)
                     .child(
-                        h_flex()
-                            .justify_between()
+                        div()
+                            .size(px(64.0))
+                            .flex()
                             .items_center()
-                            .pb_4()
-                            .border_b_1()
-                            .border_color(theme.border)
-                            .child(
-                                v_flex()
-                                    .w(px(560.0))
-                                    .flex_shrink_0()
-                                    .gap_1()
-                                    .child(
-                                        h_flex()
-                                            .justify_between()
-                                            .child(
-                                                div()
-                                                    .text_xl()
-                                                    .font_weight(gpui::FontWeight::BOLD)
-                                                    .child(tr("home.title")),
-                                            )
-                                            .child(
-                                                Button::new("home-open-image")
-                                                    .primary()
-                                                    .icon(IconName::FolderOpen)
-                                                    .label(tr("action.open"))
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.prompt_for_images(false, cx);
-                                                    })),
-                                            ),
-                                    )
-                                    .child(
-                                        h_flex()
-                                            .gap_2()
-                                            .text_xs()
-                                            .text_color(theme.muted_foreground)
-                                            .child(
-                                                Icon::new(IconName::CircleCheck)
-                                                    .small()
-                                                    .text_color(theme.success),
-                                            )
-                                            .child(tr("home.privacy_note")),
-                                    ),
-                            ),
+                            .justify_center()
+                            .rounded_lg()
+                            .bg(sidebar_accent)
+                            .text_color(sidebar_accent_foreground)
+                            .child(Icon::new(IconName::GalleryVerticalEnd).size_6()),
+                    )
+                    .child(
+                        div()
+                            .text_xl()
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(tr("workspace.empty_title")),
+                    )
+                    .child(
+                        div()
+                            .max_w(px(460.0))
+                            .text_center()
+                            .text_sm()
+                            .text_color(muted)
+                            .child(tr("workspace.empty_desc")),
+                    )
+                    .child(
+                        Button::new("home-open-image")
+                            .primary()
+                            .icon(IconName::FolderOpen)
+                            .label(tr("action.open"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.open = Some(Feature::Edit);
+                                this.active = Section::BasicImage;
+                                this.prompt_for_images(false, cx);
+                            })),
                     )
                     .child(
                         h_flex()
-                            .items_start()
-                            .gap_5()
-                            .child(
-                                v_flex()
-                                    .w(px(560.0))
-                                    .flex_shrink_0()
-                                    .rounded_lg()
-                                    .border_1()
-                                    .border_color(theme.border)
-                                    .bg(theme.background)
-                                    .child(
-                                        h_flex()
-                                            .h(px(48.0))
-                                            .px_4()
-                                            .gap_2()
-                                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                                            .child(Icon::new(IconName::Star).small())
-                                            .child(tr("home.quick_start")),
-                                    )
-                                    .children(quick_actions),
-                            )
-                            .child(
-                                v_flex()
-                                    .w(px(280.0))
-                                    .gap_4()
-                                    .child(
-                                        v_flex()
-                                            .rounded_lg()
-                                            .border_1()
-                                            .border_color(theme.border)
-                                            .bg(theme.background)
-                                            .child(
-                                                h_flex()
-                                                    .h(px(46.0))
-                                                    .px_4()
-                                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                                    .child(tr("home.sections")),
-                                            )
-                                            .children(section_rows),
-                                    ),
-                            ),
+                            .gap_2()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(Icon::new(IconName::CircleCheck).small().text_color(success))
+                            .child(tr("home.privacy_note")),
                     )
-                    .child(
-                        v_flex()
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(theme.border)
-                            .bg(theme.background)
-                            .child(
-                                h_flex()
-                                    .h(px(48.0))
-                                    .px_4()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(tr("home.all_tools")),
-                            )
-                            .child(
-                                h_flex()
-                                    .flex_wrap()
-                                    .items_start()
-                                    .gap_3()
-                                    .p_4()
-                                    .pt_0()
-                                    .children(cards),
-                            ),
-                    ),
+                    .when(!status.is_empty(), |this| {
+                        this.child(div().text_xs().text_color(muted).child(status))
+                    }),
             )
     }
 
@@ -2225,9 +1991,25 @@ impl AppShell {
         buttons
     }
 
+    /// 预览画布可用的最大宽高（逻辑像素）：由窗口客户区减去侧栏、参数列、页头与各处
+    /// 内边距等固定占用得到。让预览随窗口伸缩，同时保证不挤占右侧控制区（估算偏保守，
+    /// 宁可略留白也不溢出，避免历史上出现过的裁剪问题）。
+    fn preview_budget(&self) -> (f32, f32) {
+        // 水平固定占用：侧栏 216 + 页面内边距 48 + 预览/参数间距 20 + 参数列 300
+        //   + 画布内边距 32 + 安全余量 24。
+        const HORIZONTAL_CHROME: f32 = 216.0 + 48.0 + 20.0 + 300.0 + 32.0 + 24.0;
+        // 垂直固定占用：顶栏 40 + 功能页头 88 + 页面内边距 48 + 画布标题与信息行约 64
+        //   + 画布内边距 32 + 安全余量 24。
+        const VERTICAL_CHROME: f32 = 40.0 + 88.0 + 48.0 + 64.0 + 32.0 + 24.0;
+        let width = (self.viewport_width - HORIZONTAL_CHROME).max(360.0);
+        let height = (self.viewport_height - VERTICAL_CHROME).max(320.0);
+        (width, height)
+    }
+
     fn preview_panel(&self, feature: Feature, cx: &mut Context<Self>) -> Option<AnyElement> {
         let image = self.workspace.preview()?;
-        let (width, height) = self.workspace.preview_size(720.0, 500.0)?;
+        let (max_width, max_height) = self.preview_budget();
+        let (width, height) = self.workspace.preview_size(max_width, max_height)?;
         let preview = div()
             .relative()
             .w(px(width))
@@ -2401,8 +2183,8 @@ impl AppShell {
             }))
             .child(
                 div()
-                    .w(px(640.0))
-                    .flex_shrink_0()
+                    .flex_1()
+                    .min_w(px(420.0))
                     .child(self.workspace_canvas(feature, cx)),
             )
             .child(
@@ -3134,8 +2916,8 @@ impl AppShell {
             }))
             .child(
                 v_flex()
-                    .w(px(640.0))
-                    .flex_shrink_0()
+                    .flex_1()
+                    .min_w(px(420.0))
                     .min_h(px(520.0))
                     .p_4()
                     .gap_4()
@@ -3501,14 +3283,13 @@ impl AppShell {
         v_flex()
             .id("settings-workspace")
             .size_full()
-            .items_start()
-            .pl(px(160.0))
+            .items_center()
             .flex_1()
             .overflow_y_scroll()
             .child(
                 v_flex()
-                    .w(px(900.0))
-                    .flex_shrink_0()
+                    .w_full()
+                    .max_w(px(940.0))
                     .p_6()
                     .pb_8()
                     .gap_5()
@@ -3650,16 +3431,7 @@ impl AppShell {
                                             .gap_2()
                                             .child(tr("settings.export_format"))
                                             .child(
-                                                Button::new("settings-format")
-                                                    .outline()
-                                                    .label(format!(
-                                                        "{} · {}",
-                                                        self.config.default_export_format,
-                                                        t!("action.cycle_format")
-                                                    ))
-                                                    .on_click(cx.listener(|this, _, _, cx| {
-                                                        this.cycle_export_format(cx)
-                                                    })),
+                                                Select::new(&self.export_format_select).w_full(),
                                             ),
                                     )
                                     .child(
@@ -3827,9 +3599,7 @@ fn section_for_feature(feature: Feature) -> Section {
 }
 
 struct NavigationGroup {
-    id: &'static str,
     label_key: &'static str,
-    summary_key: &'static str,
     icon: IconName,
     features: &'static [Feature],
 }
@@ -3837,9 +3607,7 @@ struct NavigationGroup {
 fn navigation_groups() -> [NavigationGroup; 5] {
     [
         NavigationGroup {
-            id: Section::BasicImage.id(),
             label_key: Section::BasicImage.nav_key(),
-            summary_key: "home.section_basic_summary",
             icon: IconName::GalleryVerticalEnd,
             features: &[
                 Feature::Edit,
@@ -3850,16 +3618,12 @@ fn navigation_groups() -> [NavigationGroup; 5] {
             ],
         },
         NavigationGroup {
-            id: Section::AiGeneration.id(),
             label_key: Section::AiGeneration.nav_key(),
-            summary_key: "home.section_ai_summary",
             icon: IconName::Bot,
             features: &[Feature::TextToImage, Feature::ImageEdit],
         },
         NavigationGroup {
-            id: Section::IndustryTools.id(),
             label_key: Section::IndustryTools.nav_key(),
-            summary_key: "home.section_industry_summary",
             icon: IconName::Building2,
             features: &[
                 Feature::OldPhotoRestoration,
@@ -3878,9 +3642,7 @@ fn navigation_groups() -> [NavigationGroup; 5] {
             ],
         },
         NavigationGroup {
-            id: Section::CreativeOutput.id(),
             label_key: Section::CreativeOutput.nav_key(),
-            summary_key: "home.section_creative_summary",
             icon: IconName::Palette,
             features: &[
                 Feature::Collage,
@@ -3890,9 +3652,7 @@ fn navigation_groups() -> [NavigationGroup; 5] {
             ],
         },
         NavigationGroup {
-            id: "video",
             label_key: "nav.video_tools",
-            summary_key: "home.section_video_summary",
             icon: IconName::WindowMaximize,
             features: &[
                 Feature::VideoWatermark,
@@ -4345,6 +4105,28 @@ fn next_png_compression(compression: PngCompression) -> PngCompression {
     }
 }
 
+/// 默认导出格式下拉的候选项，顺序必须与 [`export_format_index`] 保持一致。
+/// 用格式缩写（不翻译）作为条目文案，选中后由 [`export_format_from_label`] 映射回枚举。
+fn export_format_items() -> Vec<SharedString> {
+    vec!["PNG".into(), "JPEG".into(), "WebP".into()]
+}
+
+fn export_format_index(format: OutputFormat) -> usize {
+    match format {
+        OutputFormat::Png => 0,
+        OutputFormat::Jpeg => 1,
+        OutputFormat::Webp => 2,
+    }
+}
+
+fn export_format_from_label(label: &str) -> OutputFormat {
+    match label {
+        "PNG" => OutputFormat::Png,
+        "JPEG" => OutputFormat::Jpeg,
+        _ => OutputFormat::Webp,
+    }
+}
+
 fn png_compression_label_key(compression: PngCompression) -> &'static str {
     match compression {
         PngCompression::Fast => "option.png_fast",
@@ -4460,28 +4242,23 @@ fn feature_detail(feature: Feature) -> SharedString {
 }
 
 impl Render for AppShell {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // 记录当前客户区尺寸，供预览画布按可用空间自适应缩放。
+        let viewport = window.viewport_size();
+        self.viewport_width = f32::from(viewport.width);
+        self.viewport_height = f32::from(viewport.height);
         let query = self.nav_search.read(cx).value().to_string().to_lowercase();
         let nav_groups = navigation_groups()
             .into_iter()
             .filter_map(|group| self.sidebar_group(group, &query, cx))
             .collect::<Vec<_>>();
-        let settings = self.settings_button(cx).into_any_element();
-        let language = self.language_button(cx).into_any_element();
-        let page_title = if self.settings_open {
-            tr("settings.title")
-        } else if let Some(feature) = self.open {
-            tr(feature.name_key())
-        } else {
-            tr("nav.home")
-        };
 
         let content = if self.settings_open {
             self.settings_page(cx).into_any_element()
         } else {
             match self.open {
                 Some(feature) => self.feature_page(feature, cx).into_any_element(),
-                None => self.section_home(cx).into_any_element(),
+                None => self.workspace_home(cx).into_any_element(),
             }
         };
 
@@ -4489,7 +4266,6 @@ impl Render for AppShell {
         let border = cx.theme().border;
         let background = cx.theme().background;
         let foreground = cx.theme().foreground;
-        let muted = cx.theme().muted_foreground;
         let sidebar = cx.theme().sidebar;
         let sidebar_border = cx.theme().sidebar_border;
         v_flex()
@@ -4501,42 +4277,29 @@ impl Render for AppShell {
                     .h(px(40.0))
                     .flex_shrink_0()
                     .px_3()
-                    .justify_between()
+                    .gap_4()
+                    .items_center()
                     .border_b_1()
                     .border_color(border)
                     .bg(background)
                     .child(
-                        h_flex()
-                            .w(px(360.0))
-                            .gap_4()
-                            .child(
-                                div()
-                                    .size(px(26.0))
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .rounded_md()
-                                    .bg(foreground)
-                                    .text_color(background)
-                                    .child(Icon::new(IconName::GalleryVerticalEnd).small()),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .overflow_hidden()
-                                    .child(self.menu_bar_slot()),
-                            ),
+                        div()
+                            .size(px(26.0))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded_md()
+                            .bg(foreground)
+                            .text_color(background)
+                            .child(Icon::new(IconName::GalleryVerticalEnd).small()),
                     )
                     .child(
                         div()
                             .flex_1()
-                            .text_center()
-                            .text_sm()
-                            .text_color(muted)
-                            .child(format!("{} — {}", t!("app.title"), page_title)),
-                    )
-                    .child(h_flex().w(px(360.0)).justify_end().child(language)),
+                            .min_w(px(0.0))
+                            .overflow_hidden()
+                            .child(self.menu_bar_slot()),
+                    ),
             )
             .child(
                 h_flex()
@@ -4555,16 +4318,11 @@ impl Render for AppShell {
                             .border_r_1()
                             .border_color(sidebar_border)
                             .child(
-                                v_flex()
-                                    .p_3()
-                                    .gap_2()
-                                    .child(
-                                        Input::new(&self.nav_search)
-                                            .prefix(Icon::new(IconName::Search).small())
-                                            .cleanable(true),
-                                    )
-                                    .child(self.home_button(cx))
-                                    .child(settings),
+                                v_flex().p_3().child(
+                                    Input::new(&self.nav_search)
+                                        .prefix(Icon::new(IconName::Search).small())
+                                        .cleanable(true),
+                                ),
                             )
                             .child(
                                 v_flex()

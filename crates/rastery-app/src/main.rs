@@ -100,7 +100,15 @@ fn main() {
         // 平台菜单 + 菜单快捷键必须在创建窗口（及窗口内菜单栏）之前注册。
         menus::install(cx);
 
-        let bounds = Bounds::centered(None, size(px(1640.), px(920.)), cx);
+        // 默认窗口按较克制的尺寸开，并以主显示器可用尺寸的 85% 收敛，避免在
+        // 小屏或高分屏笔记本上一开就撑满甚至溢出。首帧后由真实客户区尺寸接管。
+        let mut window_size = size(px(1280.), px(800.));
+        if let Some(display) = cx.primary_display() {
+            let display_size = display.bounds().size;
+            window_size.width = window_size.width.min(display_size.width * 0.85);
+            window_size.height = window_size.height.min(display_size.height * 0.85);
+        }
+        let bounds = Bounds::centered(None, window_size, cx);
         let shell_slot = std::rc::Rc::new(std::cell::RefCell::new(None));
         let shell_slot_in_window = std::rc::Rc::clone(&shell_slot);
         cx.open_window(

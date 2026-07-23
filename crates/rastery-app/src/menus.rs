@@ -149,9 +149,9 @@ fn dispatch_to_shell(
 // —— Windows / Linux 的窗口内菜单栏 ——
 
 use gpui::{
-    Corner, DismissEvent, Focusable, InteractiveElement, IntoElement, OwnedMenuItem, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Subscription, anchored, deferred, div,
-    prelude::FluentBuilder, px,
+    Corner, DismissEvent, Focusable, InteractiveElement, IntoElement, MouseButton, OwnedMenuItem,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, anchored, deferred,
+    div, prelude::FluentBuilder, px,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::menu::PopupMenu;
@@ -168,24 +168,43 @@ use gpui_component::{Selectable, Sizable, h_flex};
 /// 只依赖已实测验证的普通 `Button` + `PopupMenu` 路径。
 pub struct MenuBar {
     open_ix: Option<usize>,
-    _subscriptions: Vec<Subscription>,
+    /// 当前展开菜单的下拉实体。**只在打开时构建一次并缓存**，渲染时复用；每帧重建
+    /// 会不断创建新实体并抢焦点，导致菜单项收不到点击（与上游 `AppMenuBar` 一致）。
+    popup: Option<Entity<PopupMenu>>,
+    _subscription: Option<Subscription>,
 }
 
 impl MenuBar {
     pub fn new(_cx: &mut Context<Self>) -> Self {
         Self {
             open_ix: None,
-            _subscriptions: Vec::new(),
+            popup: None,
+            _subscription: None,
         }
     }
 
     fn toggle_menu(&mut self, ix: usize, cx: &mut Context<Self>) {
-        self.open_ix = if self.open_ix == Some(ix) {
-            None
+        if self.open_ix == Some(ix) {
+            self.close_menu(cx);
         } else {
-            Some(ix)
-        };
-        self._subscriptions.clear();
+            self.open_menu(ix, cx);
+        }
+    }
+
+    /// 展开第 `ix` 个菜单。切换菜单时丢弃旧下拉，让 [`build_popup`] 重建对应内容。
+    fn open_menu(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if self.open_ix != Some(ix) {
+            self.open_ix = Some(ix);
+            self.popup = None;
+            self._subscription = None;
+            cx.notify();
+        }
+    }
+
+    fn close_menu(&mut self, cx: &mut Context<Self>) {
+        self.open_ix = None;
+        self.popup = None;
+        self._subscription = None;
         cx.notify();
     }
 
@@ -195,6 +214,15 @@ impl MenuBar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<PopupMenu> {
+        // 已有缓存：复用同一实体，仅在失焦时补焦点（键盘导航需要），避免每帧抢焦点。
+        if let Some(popup) = self.popup.clone() {
+            let focus_handle = popup.read(cx).focus_handle(cx);
+            if !focus_handle.contains_focused(window, cx) {
+                focus_handle.focus(window);
+            }
+            return popup;
+        }
+
         let items = cx
             .get_menus()
             .and_then(|menus| menus.into_iter().nth(ix))
@@ -217,12 +245,14 @@ impl MenuBar {
             popup
         });
         popup.read(cx).focus_handle(cx).focus(window);
-        self._subscriptions
-            .push(cx.subscribe_in(&popup, window, |this, _, _: &DismissEvent, _, cx| {
-                this.open_ix = None;
-                this._subscriptions.clear();
-                cx.notify();
-            }));
+        self._subscription = Some(cx.subscribe_in(
+            &popup,
+            window,
+            |this, _, _: &DismissEvent, _, cx| {
+                this.close_menu(cx);
+            },
+        ));
+        self.popup = Some(popup.clone());
         popup
     }
 }
@@ -250,6 +280,11 @@ impl Render for MenuBar {
                             .ghost()
                             .label(name)
                             .selected(is_open)
+                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
+                                // 阻止事件冒泡到窗口，避免触发拖拽 / 抢焦点吃掉点击。
+                                window.prevent_default();
+                                cx.stop_propagation();
+                            })
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.toggle_menu(ix, cx);
                             })),
@@ -257,9 +292,7 @@ impl Render for MenuBar {
                     .on_hover(cx.listener(move |this, hovered, _, cx| {
                         // 已有菜单展开时，悬停切换到相邻菜单（桌面菜单栏惯例）。
                         if *hovered && this.open_ix.is_some() && this.open_ix != Some(ix) {
-                            this.open_ix = Some(ix);
-                            this._subscriptions.clear();
-                            cx.notify();
+                            this.open_menu(ix, cx);
                         }
                     }))
                     .when(is_open, |this| {
