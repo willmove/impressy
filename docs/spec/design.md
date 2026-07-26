@@ -573,7 +573,7 @@ Exit criterion: all common and platform-specific checks in `v1-desktop-acceptanc
 
 ### [v1] Stage C — Performance and Release: Open
 
-1. Generate the deterministic acceptance assets and record their SHA-256. Completed reference: `b3f147092b8ca40044d4ba9dbb7c29f595038ff85de80c232332506adf5d2133`.
+1. Generate the deterministic acceptance assets and record their SHA-256. Current Impressy reference: `3a436a64acf820756e65739709978cc8f7e74a0cc3be7924bcde8e9478e9050f` (Rastery-era `b3f14709…` is obsolete after the acceptance QR URL rename).
 2. Measure at least three release-build samples for cold start, 50MP preview, beautify preview latency, 100-image click response, and progress frequency on the required platforms. Windows 11 is complete and within budget; Windows 10, macOS, and Linux remain open.
 3. Optimize any metric outside the requirement budget, then repeat the affected platform evidence.
 4. Build the Windows MSI, macOS DMG, and Linux DEB; verify size, install/uninstall, associations, shortcuts, runtime dependencies, signing, and notarization. The exact-candidate Windows MSI build, size, and extracted payload integrity pass; elevated install integration and signing remain open.

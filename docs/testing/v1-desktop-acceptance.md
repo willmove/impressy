@@ -25,9 +25,10 @@ cargo run --release -p impressy-core --example acceptance_assets -- target/accep
 EXIF 项另使用一张含真实相机、镜头、时间与 GPS 字段的照片，并把文件摘要写入
 `resources.exif_photo_sha256`。
 
-**参考值（2026-07-18，候选基线 `377d62c` 之后两次重跑一致）**：在同一源码与 `image` /
-`qrcode` 版本下，生成器输出的 `generated_sha256` 应为
-`b3f147092b8ca40044d4ba9dbb7c29f595038ff85de80c232332506adf5d2133`。若真机跑出的摘要
+**参考值（2026-07-26，Impressy 更名后 QR fixture URL 为 `impressy-acceptance`）**：在同一源码与
+`image` / `qrcode` 版本下，生成器输出的 `generated_sha256` 应为
+`3a436a64acf820756e65739709978cc8f7e74a0cc3be7924bcde8e9478e9050f`。更名前的
+`b3f14709…5d2133` 仅适用于 Rastery URL fixture，不得再用于 v0.1.0 汇总。若真机跑出的摘要
 与此不同，先核对 `Cargo.lock` 里的 `image` / `qrcode` / `rxing` 版本是否漂移，再判定为
 生成器回归。`exif_photo_sha256` 取决于验收人提供的真实照片，本仓库不固定其值。
 
