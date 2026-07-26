@@ -7,6 +7,10 @@
 //! 渲染正确性、交互手感、冷启动耗时以及 AI **保持不变项**须在对应真机和真实 Provider
 //! 上验收；类型检查与假传输契约测试不能替代这些证据。
 
+// Release 构建使用 Windows GUI 子系统，双击 / 快捷方式启动时不再附带控制台窗口。
+// Debug 保留 console，便于 `cargo run` 与 env_logger 输出。
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 // `i18n!` 生成 `crate::_rust_i18n_t!` 等条目，必须在任何模块（`shell` 等在其中用 `t!`）
 // 之前声明，否则子模块里的 `t!` 找不到 `crate::_rust_i18n_t`。
 rust_i18n::i18n!("locales");

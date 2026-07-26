@@ -78,6 +78,12 @@ menu:
   switch_language:
     en: Switch Language
     zh-CN: 切换语言
+  hide_sidebar:
+    en: Hide Sidebar
+    zh-CN: 隐藏侧栏
+  show_sidebar:
+    en: Show Sidebar
+    zh-CN: 显示侧栏
   about:
     en: About Impressy
     zh-CN: 关于 Impressy

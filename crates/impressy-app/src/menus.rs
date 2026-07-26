@@ -37,6 +37,8 @@ actions!(
         CopyResult,
         /// 视图 · 首页
         GoHome,
+        /// 视图 · 隐藏/显示侧栏（secondary-B）
+        ToggleSidebar,
         /// 视图 · 切换语言
         SwitchLanguage,
         /// 帮助 · 关于 Impressy
@@ -48,8 +50,15 @@ fn tr(key: &str) -> SharedString {
     t!(key).to_string().into()
 }
 
-/// 以当前语言构建四大菜单。语言切换后必须再次调用并 `set_menus`。
-pub fn build_menus() -> Vec<Menu> {
+/// 以当前语言构建四大菜单。语言切换或侧栏显隐变化后必须再次调用并 `set_menus`。
+///
+/// `sidebar_open` 决定视图菜单中侧栏项的文案：打开时为「隐藏侧栏」，关闭时为「显示侧栏」。
+pub fn build_menus(sidebar_open: bool) -> Vec<Menu> {
+    let sidebar_label = if sidebar_open {
+        tr("menu.hide_sidebar")
+    } else {
+        tr("menu.show_sidebar")
+    };
     vec![
         Menu {
             name: tr("menu.file"),
@@ -76,6 +85,7 @@ pub fn build_menus() -> Vec<Menu> {
             name: tr("menu.view"),
             items: vec![
                 MenuItem::action(tr("menu.home"), GoHome),
+                MenuItem::action(sidebar_label, ToggleSidebar),
                 MenuItem::action(tr("menu.switch_language"), SwitchLanguage),
             ],
         },
@@ -96,8 +106,10 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("secondary-shift-c", CopyResult, None),
         KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("secondary-q", QuitApp, None),
+        KeyBinding::new("secondary-b", ToggleSidebar, None),
     ]);
-    cx.set_menus(build_menus());
+    // 启动时侧栏默认展开。
+    cx.set_menus(build_menus(true));
 }
 
 /// 把菜单动作转发到唯一的 `AppShell` 窗口。菜单 / 快捷键都从全局 bubble 阶段进来，
@@ -128,6 +140,7 @@ pub fn register_actions(cx: &mut App, shell: &Entity<AppShell>) {
     on_menu_action!(PasteImage, menu_paste_image);
     on_menu_action!(CopyResult, menu_copy_result);
     on_menu_action!(GoHome, menu_go_home);
+    on_menu_action!(ToggleSidebar, menu_toggle_sidebar);
     on_menu_action!(SwitchLanguage, menu_switch_language);
     on_menu_action!(ShowAbout, menu_show_about);
 }
@@ -333,7 +346,7 @@ mod tests {
 
     #[test]
     fn menus_cover_every_action_exactly_once() {
-        let menus = build_menus();
+        let menus = build_menus(true);
         assert_eq!(menus.len(), 4);
 
         let mut expected = [
@@ -346,6 +359,7 @@ mod tests {
             "app_menus::PasteImage",
             "app_menus::CopyResult",
             "app_menus::GoHome",
+            "app_menus::ToggleSidebar",
             "app_menus::SwitchLanguage",
             "app_menus::ShowAbout",
         ]
@@ -359,7 +373,7 @@ mod tests {
 
     #[test]
     fn menu_names_come_from_i18n_keys() {
-        let menus = build_menus();
+        let menus = build_menus(true);
         let names = menus
             .iter()
             .map(|menu| menu.name.to_string())
@@ -370,5 +384,29 @@ mod tests {
                 .iter()
                 .all(|name| !name.starts_with("menu.") && !name.is_empty())
         );
+    }
+
+    #[test]
+    fn sidebar_menu_label_follows_visibility() {
+        let hide = action_label(&build_menus(true), "app_menus::ToggleSidebar");
+        let show = action_label(&build_menus(false), "app_menus::ToggleSidebar");
+        assert_ne!(hide, show);
+        assert!(!hide.is_empty());
+        assert!(!show.is_empty());
+        assert!(!hide.starts_with("menu."));
+        assert!(!show.starts_with("menu."));
+    }
+
+    fn action_label(menus: &[Menu], action_name: &str) -> String {
+        menus
+            .iter()
+            .flat_map(|menu| menu.items.iter())
+            .find_map(|item| match item {
+                MenuItem::Action { name, action, .. } if action.name() == action_name => {
+                    Some(name.to_string())
+                }
+                _ => None,
+            })
+            .expect("ToggleSidebar should be present in View menu")
     }
 }

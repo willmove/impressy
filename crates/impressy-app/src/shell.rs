@@ -191,6 +191,8 @@ pub struct AppShell {
     viewport_height: f32,
     /// 侧边栏中已收起的导航分组，用分组的 `label_key` 标识；默认全部展开（空集）。
     collapsed_groups: std::collections::HashSet<&'static str>,
+    /// 左侧导航侧栏是否显示；默认展开。隐藏时不渲染侧栏子树，内部状态保留以便恢复。
+    sidebar_open: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -358,6 +360,7 @@ impl AppShell {
             viewport_width: 1280.0,
             viewport_height: 800.0,
             collapsed_groups: std::collections::HashSet::new(),
+            sidebar_open: true,
             _subscriptions,
         }
     }
@@ -406,8 +409,8 @@ impl AppShell {
     fn set_language(&mut self, language: Language, window: &mut Window, cx: &mut Context<Self>) {
         self.config.language = language;
         gpui_component::set_locale(self.config.language.locale());
-        // 菜单文案随语言重建：MenuBar 每次渲染都重读 get_menus()，此处只需更新数据。
-        cx.set_menus(crate::menus::build_menus());
+        // 菜单文案随语言重建，并带上当前侧栏显隐以保持 hide/show 文案正确。
+        cx.set_menus(crate::menus::build_menus(self.sidebar_open));
         self.nav_search.update(cx, |input, input_cx| {
             input.set_placeholder(tr("nav.search_placeholder"), window, input_cx);
         });
@@ -1202,6 +1205,12 @@ impl AppShell {
     pub(crate) fn menu_go_home(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.open = None;
         self.settings_open = false;
+        cx.notify();
+    }
+
+    pub(crate) fn menu_toggle_sidebar(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_open = !self.sidebar_open;
+        cx.set_menus(crate::menus::build_menus(self.sidebar_open));
         cx.notify();
     }
 
@@ -4307,35 +4316,37 @@ impl Render for AppShell {
                     .h(px(0.0))
                     .min_h(px(0.0))
                     .overflow_hidden()
-                    .child(
-                        v_flex()
-                            .w(px(216.0))
-                            .h_full()
-                            .min_h(px(0.0))
-                            .flex_shrink_0()
-                            .relative()
-                            .bg(sidebar)
-                            .border_r_1()
-                            .border_color(sidebar_border)
-                            .child(
-                                v_flex().p_3().child(
-                                    Input::new(&self.nav_search)
-                                        .prefix(Icon::new(IconName::Search).small())
-                                        .cleanable(true),
+                    .when(self.sidebar_open, |this| {
+                        this.child(
+                            v_flex()
+                                .w(px(216.0))
+                                .h_full()
+                                .min_h(px(0.0))
+                                .flex_shrink_0()
+                                .relative()
+                                .bg(sidebar)
+                                .border_r_1()
+                                .border_color(sidebar_border)
+                                .child(
+                                    v_flex().p_3().child(
+                                        Input::new(&self.nav_search)
+                                            .prefix(Icon::new(IconName::Search).small())
+                                            .cleanable(true),
+                                    ),
+                                )
+                                .child(
+                                    v_flex()
+                                        .id("navigation-scroll")
+                                        .flex_1()
+                                        .h(px(0.0))
+                                        .overflow_y_scroll()
+                                        .px_3()
+                                        .pb_3()
+                                        .gap_2()
+                                        .children(nav_groups),
                                 ),
-                            )
-                            .child(
-                                v_flex()
-                                    .id("navigation-scroll")
-                                    .flex_1()
-                                    .h(px(0.0))
-                                    .overflow_y_scroll()
-                                    .px_3()
-                                    .pb_3()
-                                    .gap_2()
-                                    .children(nav_groups),
-                            ),
-                    )
+                        )
+                    })
                     .child(
                         v_flex()
                             .flex_1()
