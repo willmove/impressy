@@ -34,7 +34,7 @@ Impressy 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处
 - **已实现**：对应代码路径已经存在并接入应用。
 - **自动验证通过**：对应行为可由 headless 测试、编译器或 CI 证明，并已通过质量门禁。
 - **待真机验收**：代码已实现且能类型检查，但渲染、交互手感、系统集成或性能只能在桌面真机上判断。
-- **可发布**：自动验证与 [`v1-desktop-acceptance.md`](../testing/v1-desktop-acceptance.md) 全部通过，正式结果文件 `docs/testing/results/v1-desktop-acceptance.json` 存在且通过验证器，安装包签名 / 公证及平台专项均通过。
+- **可发布**：自动验证与 [`v1-desktop-acceptance.md`](../testing/v1-desktop-acceptance.md) 通过，正式结果文件 `docs/testing/results/v1-desktop-acceptance.json` 存在且通过验证器（Windows 桌面真机 + macOS/Linux GitHub Actions 证据，见 [ADR-0005](../adr/0005-ci-macos-linux-release-evidence.md)），安装包签名 / 公证及平台专项均通过。
 
 截至 2026-07-19，当前 Windows 11 真机验收的 release 源码候选为 `fffdb2c`，已推送到
 `origin/feature/ongoing`。其后的提交只更新验收文档，没有改变 release 源码。`377d62c`

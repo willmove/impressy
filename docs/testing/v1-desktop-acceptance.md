@@ -1,18 +1,24 @@
 # v1 桌面真机验收清单
 
 本清单覆盖无法在 headless 开发机验证的 GPUI 渲染、交互手感、系统集成与性能指标。
-每个平台均使用 `cargo build --release -p impressy-app` 的 release 构建验收；不要用 debug
-构建记录性能数据。
+**Windows 桌面真机**使用 `cargo build --release -p impressy-app` 的 release 构建验收；不要用
+debug 构建记录性能数据。
+
+按 [ADR-0005](../adr/0005-ci-macos-linux-release-evidence.md)，macOS 与 Linux 的**发布硬证据**
+来自 GitHub Actions（`ci.yml` 三平台 quality、Linux DEB 冒烟；`release.yml` 在 tag 上签名 /
+公证），不再等待维护者自备 macOS / Linux 桌面真机。Windows 仍跑本清单的完整交互与性能矩阵。
 
 正式记录复制 [`results/v1-desktop-acceptance.example.json`](./results/v1-desktop-acceptance.example.json)
-为 `results/v1-desktop-acceptance.json`，填写完整 Git SHA、四种桌面环境、三次以上性能样本、
-测试资源 SHA-256 与安装包结论。提交前运行：
+为 `results/v1-desktop-acceptance.json`：Windows 填 `evidence: "desktop"` 与完整 checks /
+性能样本；macOS / Linux 填 `evidence: "github-actions"`、成功的 `ci_run_url` 与 CI checks。
+提交前运行：
 
 ```shell
 python scripts/verify_desktop_acceptance.py
 ```
 
-发布工作流把该验证器作为第一道门禁；缺记录、记录过期、指标不合格或安装包未验收都会阻止发布。
+发布工作流把该验证器作为第一道门禁；缺记录、记录过期、Windows 指标不合格或安装包结论缺失
+都会阻止发布。
 
 可复测资源用确定性生成器创建，不把 50MP 图片和 100 张批处理样本提交进 Git：
 
@@ -86,13 +92,16 @@ EXIF 项另使用一张含真实相机、镜头、时间与 GPS 字段的照片�
 
 ## 平台专项
 
-- [ ] Windows：DirectX 11 渲染正常；中文 / Emoji 由 DirectWrite 正确整形；安装器快捷方式、
-      文件关联、卸载和签名验证通过。
-- [ ] macOS：Metal 渲染正常；应用包可启动；Gatekeeper / 签名 / 公证状态符合发布要求。
-- [ ] Linux：X11 与 Wayland 均可启动；文件对话框、拖放、剪贴板和 `xdg-open` 可用；记录
-      实测发行版及所需系统运行库。
+- [ ] Windows（桌面真机）：DirectX 11 渲染正常；中文 / Emoji 由 DirectWrite 正确整形；
+      安装器快捷方式、文件关联、卸载和签名验证通过。
+- [ ] macOS（GitHub Actions）：`CI` 在 `macos-latest` 上 check / clippy / test 通过；打
+      `v*` tag 后 `release.yml` 的签名 + 公证 DMG job 通过。可选：日后在真机补 Metal /
+      Gatekeeper 手感，不阻塞发布。
+- [ ] Linux（GitHub Actions）：`CI` quality 与 `linux-package` DEB 安装/卸载冒烟通过。
+      可选：日后在 X11 / Wayland 真机补对话框与拖放，不阻塞发布。
 
 ## 结论规则
 
-只有质量门禁全绿、上述共通功能通过、三平台专项通过、性能表有实测数据，并且安装包
-验收通过后，v1 才能标记为可发布。类型检查通过不能替代本清单中的渲染与交互验收。
+Windows 桌面矩阵、Windows 性能样本、资源 SHA、以及 macOS / Linux 的 Actions 证据均通过
+验证器，且 tag 工作流完成签名/公证安装包后，v1 才能标记为可发布。类型检查通过不能替代
+Windows 渲染与交互验收；Actions 不能替代 Windows 真机手感。

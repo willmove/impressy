@@ -6,6 +6,7 @@
   },
   "platforms": {
     "windows": {
+      "evidence": "desktop",
       "system_version": "",
       "gpu": "",
       "display": "",
@@ -15,31 +16,37 @@
       "checks": []
     },
     "macos": {
-      "system_version": "",
-      "gpu": "",
-      "display": "",
-      "tester": "",
+      "evidence": "github-actions",
+      "system_version": "GitHub Actions macos-latest",
+      "gpu": "n/a (CI quality gate)",
+      "display": "n/a (CI quality gate)",
+      "tester": "github-actions",
       "date": "",
       "result": "pending",
-      "checks": []
+      "ci_run_url": "",
+      "checks": ["ci-quality"]
     },
     "linux-x11": {
-      "system_version": "",
-      "gpu": "",
-      "display": "",
-      "tester": "",
+      "evidence": "github-actions",
+      "system_version": "GitHub Actions ubuntu-22.04 / ubuntu-latest",
+      "gpu": "n/a (CI quality + DEB smoke)",
+      "display": "n/a (CI package smoke)",
+      "tester": "github-actions",
       "date": "",
       "result": "pending",
-      "checks": []
+      "ci_run_url": "",
+      "checks": ["ci-quality", "ci-deb-package-smoke"]
     },
     "linux-wayland": {
-      "system_version": "",
-      "gpu": "",
-      "display": "",
-      "tester": "",
+      "evidence": "github-actions",
+      "system_version": "GitHub Actions ubuntu-22.04 / ubuntu-latest",
+      "gpu": "n/a (CI quality + DEB smoke)",
+      "display": "n/a (CI package smoke)",
+      "tester": "github-actions",
       "date": "",
       "result": "pending",
-      "checks": []
+      "ci_run_url": "",
+      "checks": ["ci-quality", "ci-deb-package-smoke"]
     }
   },
   "performance": {

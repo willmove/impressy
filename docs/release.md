@@ -112,11 +112,18 @@ cargo bench -p impressy-core --bench v1_local
 
 Core bench 只用于发现相对性能回退，不能代替桌面冷启动与 UI 响应测量。
 
-### 4.2 桌面验收证据（发布硬门禁）
+### 4.2 验收证据（发布硬门禁，ADR-0005）
 
-按 [`testing/v1-desktop-acceptance.md`](./testing/v1-desktop-acceptance.md) 在四类桌面环境完成真机验收：
+按 [`testing/v1-desktop-acceptance.md`](./testing/v1-desktop-acceptance.md) 与
+[ADR-0005](./adr/0005-ci-macos-linux-release-evidence.md)：
 
-1. 生成确定性资源并记录摘要：
+1. **Windows**：本机 release 构建完成完整交互 / 性能 / 安装包矩阵（`evidence: "desktop"`）。
+2. **macOS / Linux**：使用 GitHub Actions，**不要**等待自备桌面真机。
+   - 确认 `source_commit` 上 `CI` workflow 全绿（含 `macos-latest` quality、
+     `ubuntu` quality、`linux-package` DEB 冒烟、Windows MSI 冒烟）。
+   - 在 JSON 中填写 `evidence: "github-actions"`、`ci_run_url`，以及
+     `ci-quality` / `ci-deb-package-smoke` 等 CI checks。
+3. 生成确定性资源并记录摘要：
 
 ```bash
 cargo run --release -p impressy-core --example acceptance_assets -- target/acceptance-assets
@@ -126,24 +133,24 @@ cargo run --release -p impressy-core --example acceptance_assets -- target/accep
 `3a436a64acf820756e65739709978cc8f7e74a0cc3be7924bcde8e9478e9050f`。
 `exif_photo_sha256` 来自验收人提供的真实 EXIF 照片。
 
-2. 将结果写入 `docs/testing/results/v1-desktop-acceptance.json`
+4. 将结果写入 `docs/testing/results/v1-desktop-acceptance.json`
    （结构见 `v1-desktop-acceptance.example.json`）。
-3. `source_commit` 必须是完整 40 字符 SHA，且是当前 HEAD 的祖先；其后不得再有
-   release-affecting 路径变更（`Cargo.toml` / `Cargo.lock` / `crates` / `packaging` /
-   `vendor` / `.github`）。
-4. 四个平台 `result` 均为 `pass`，common + platform checks 齐全，每项性能 ≥ 3 个样本且达标，
-   `package_checks` 三平台均为 `true`。
-5. 提交该 JSON 后运行：
+5. `source_commit` 必须是完整 40 字符 SHA，且是当前 HEAD 的祖先；其后不得再有
+   release-affecting 路径变更。
+6. 验证器要求：Windows 全量 checks + `performance.windows`；macOS/Linux 为 Actions
+   证据；`package_checks` 三平台均为 `true`（macOS 预 tag 表示 Actions quality 已通过，
+   签名/公证仍由 tag 上的 `release.yml` 强制）。
+7. 提交该 JSON 后运行：
 
 ```bash
 python scripts/verify_desktop_acceptance.py
 ```
 
-缺文件、过期、指标不合格或安装包未验收都会让 `.github/workflows/release.yml` 的
-`acceptance-gate` job 失败，从而阻止正式 Release。
+缺文件、过期、Windows 指标不合格、Actions 证据缺失或安装包结论缺失都会让
+`acceptance-gate` 失败。
 
-**禁止臆造或补填未实测的平台结果。** 平台证据来自不同 SHA 时必须先对齐候选再汇总
-（见 issue #5）。
+**禁止臆造未跑过的 Windows 真机结果或伪造成功的 `ci_run_url`。**
+Windows 与 Actions 证据必须落在同一 `source_commit`（见 issue #5）。
 
 ### 4.3 发布前 diff 检查
 
