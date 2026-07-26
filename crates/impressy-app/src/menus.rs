@@ -160,14 +160,20 @@ fn dispatch_to_shell(
 }
 
 // —— Windows / Linux 的窗口内菜单栏 ——
+// macOS 使用系统菜单栏（见 `shell.rs`），本模块的 MenuBar 不参与链接，故整段 cfg 掉，
+// 避免 `-D warnings` 下的 dead_code。
 
+#[cfg(not(target_os = "macos"))]
 use gpui::{
     Corner, DismissEvent, Focusable, InteractiveElement, IntoElement, MouseButton, OwnedMenuItem,
     ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, anchored, deferred,
     div, prelude::FluentBuilder, px,
 };
+#[cfg(not(target_os = "macos"))]
 use gpui_component::button::{Button, ButtonVariants};
+#[cfg(not(target_os = "macos"))]
 use gpui_component::menu::PopupMenu;
+#[cfg(not(target_os = "macos"))]
 use gpui_component::{Selectable, Sizable, h_flex};
 
 /// 窗口内菜单栏（Windows / Linux）。
@@ -179,6 +185,7 @@ use gpui_component::{Selectable, Sizable, h_flex};
 /// 不直接用 gpui-component 的 `AppMenuBar`：在本开发机上其触发按钮始终无法接收
 /// 点击（最小复现中同样失效，而相同样式的普通 `Button` 正常），根因未明；自有实现
 /// 只依赖已实测验证的普通 `Button` + `PopupMenu` 路径。
+#[cfg(not(target_os = "macos"))]
 pub struct MenuBar {
     open_ix: Option<usize>,
     /// 当前展开菜单的下拉实体。**只在打开时构建一次并缓存**，渲染时复用；每帧重建
@@ -187,6 +194,7 @@ pub struct MenuBar {
     _subscription: Option<Subscription>,
 }
 
+#[cfg(not(target_os = "macos"))]
 impl MenuBar {
     pub fn new(_cx: &mut Context<Self>) -> Self {
         Self {
@@ -270,6 +278,7 @@ impl MenuBar {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 impl Render for MenuBar {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let names = cx
