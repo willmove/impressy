@@ -59,6 +59,20 @@ fn tr(key: &str) -> SharedString {
     t!(key).to_string().into()
 }
 
+/// 仓库主页（在线文档入口）。仅在用户主动点击「在线文档」时打开，不构成联网依赖。
+const IMPRESSY_README_URL: &str = "https://github.com/willmove/impressy#readme";
+/// 问题反馈入口。
+const IMPRESSY_ISSUES_URL: &str = "https://github.com/willmove/impressy/issues/new";
+
+/// 快捷键对照表里显示的修饰键前缀：macOS 用 ⌘，其余平台用 Ctrl。
+fn shortcut_modifier() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "⌘"
+    } else {
+        "Ctrl"
+    }
+}
+
 enum WorkspaceEvent {
     Progress { completed: usize, total: usize },
     Finished(Box<WorkspaceOutcome>),
@@ -1236,9 +1250,101 @@ impl AppShell {
                             env!("CARGO_PKG_VERSION")
                         )),
                     )
-                    .child(div().text_sm().child(tr("app.subtitle"))),
+                    .child(div().text_sm().child(tr("app.subtitle")))
+                    .child(div().text_sm().child(format!(
+                        "{}: Apache-2.0",
+                        tr("menu.about_license")
+                    )))
+                    .child(div().text_sm().child(format!(
+                        "{}: {IMPRESSY_README_URL}",
+                        tr("menu.about_repo")
+                    )))
+                    .child(div().text_sm().child(format!(
+                        "{}: GPUI · gpui-component · image · rust-i18n",
+                        tr("menu.about_built_with")
+                    ))),
             )
         });
+    }
+
+    pub(crate) fn menu_show_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let modifier = shortcut_modifier();
+        // （操作名, 键位）对照：键位用平台修饰符前缀。文案复用 menu.* 键。
+        let rows: [(SharedString, String); 11] = [
+            (tr("menu.open"), format!("{modifier}+O")),
+            (tr("menu.open_multi"), format!("{modifier}+Shift+O")),
+            (tr("menu.save"), format!("{modifier}+S")),
+            (tr("menu.reveal_output"), format!("{modifier}+Shift+R")),
+            (tr("menu.paste"), format!("{modifier}+V")),
+            (tr("menu.copy"), format!("{modifier}+Shift+C")),
+            (tr("menu.settings"), format!("{modifier}+,")),
+            (tr("menu.quit"), format!("{modifier}+Q")),
+            (tr("menu.home"), format!("{modifier}+Shift+H")),
+            (tr("menu.hide_sidebar"), format!("{modifier}+B")),
+            (tr("menu.switch_language"), format!("{modifier}+Shift+L")),
+        ];
+        window.open_dialog(cx, move |dialog, _, _| {
+            let mut body = v_flex().gap_1().child(
+                h_flex()
+                    .gap_4()
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(tr("menu.kbd_action")),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .child(tr("menu.kbd_shortcut")),
+                    ),
+            );
+            for (name, keys) in &rows {
+                body = body.child(
+                    h_flex()
+                        .gap_4()
+                        .child(div().text_sm().child(name.clone()))
+                        .child(div().text_sm().child(keys.clone())),
+                );
+            }
+            dialog.title(tr("menu.shortcuts")).child(body)
+        });
+    }
+
+    pub(crate) fn menu_open_docs(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.open_url(IMPRESSY_README_URL);
+    }
+
+    pub(crate) fn menu_open_issue_tracker(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        cx.open_url(IMPRESSY_ISSUES_URL);
+    }
+
+    pub(crate) fn menu_goto_basic_image(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.open_feature(Feature::Edit, cx);
+    }
+
+    pub(crate) fn menu_goto_ai_generation(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.open_feature(Feature::TextToImage, cx);
+    }
+
+    pub(crate) fn menu_goto_industry_tools(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.open_feature(Feature::OldPhotoRestoration, cx);
+    }
+
+    pub(crate) fn menu_goto_creative_output(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // 创作输出板块：选 GIF 作为代表入口（其 Section 归属为 CreativeOutput，
+        // 能让侧栏正确高亮该板块；Collage 虽列在创作输出分组，但 Section 归属为
+        // BasicImage，跳它会让侧栏高亮错位）。
+        self.open_feature(Feature::Gif, cx);
     }
 
     fn adjust_param(&mut self, action: ParamAction, cx: &mut Context<Self>) {

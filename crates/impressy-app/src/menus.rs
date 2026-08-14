@@ -1,8 +1,9 @@
 //! 应用菜单栏：菜单结构、快捷键与全局动作分发。
 //!
 //! 菜单通过 `App::set_menus` 注册为平台菜单：macOS 由系统原生菜单栏直接呈现；
-//! Windows / Linux 没有平台菜单栏，由 gpui-component 的 `AppMenuBar` 读取同一份
-//! `set_menus` 数据在窗口标题行内渲染，两端共享同一套结构与动作。
+//! Windows / Linux 没有平台菜单栏，由本模块自研的 `MenuBar`（普通 `Button` +
+//! `PopupMenu`）读取同一份 `set_menus` 数据在窗口标题行内渲染，两端共享同一套
+//! 结构与动作（含 `MenuItem::submenu` 子菜单）。
 //!
 //! 动作经 `App::on_action` 注册为**全局**监听器（bubble 阶段末尾触发）：菜单点击、
 //! 快捷键、无焦点起始分发三条路径都能到达同一个处理器。快捷键用 `secondary-`
@@ -43,6 +44,20 @@ actions!(
         SwitchLanguage,
         /// 帮助 · 关于 Impressy
         ShowAbout,
+        /// 帮助 · 快捷键参考
+        ShowShortcuts,
+        /// 帮助 · 在线文档
+        OpenDocs,
+        /// 帮助 · 反馈问题
+        OpenIssueTracker,
+        /// 视图 · 转到基础图片处理
+        GoToBasicImage,
+        /// 视图 · 转到 AI 生成与改图
+        GoToAiGeneration,
+        /// 视图 · 转到行业定制 AI 工具
+        GoToIndustryTools,
+        /// 视图 · 转到创作输出
+        GoToCreativeOutput,
     ]
 );
 
@@ -85,13 +100,29 @@ pub fn build_menus(sidebar_open: bool) -> Vec<Menu> {
             name: tr("menu.view"),
             items: vec![
                 MenuItem::action(tr("menu.home"), GoHome),
+                MenuItem::submenu(Menu {
+                    name: tr("menu.goto"),
+                    items: vec![
+                        MenuItem::action(tr("nav.basic_image"), GoToBasicImage),
+                        MenuItem::action(tr("nav.ai_generation"), GoToAiGeneration),
+                        MenuItem::action(tr("nav.industry_tools"), GoToIndustryTools),
+                        MenuItem::action(tr("nav.creative_output"), GoToCreativeOutput),
+                    ],
+                }),
+                MenuItem::separator(),
                 MenuItem::action(sidebar_label, ToggleSidebar),
                 MenuItem::action(tr("menu.switch_language"), SwitchLanguage),
             ],
         },
         Menu {
             name: tr("menu.help"),
-            items: vec![MenuItem::action(tr("menu.about"), ShowAbout)],
+            items: vec![
+                MenuItem::action(tr("menu.shortcuts"), ShowShortcuts),
+                MenuItem::action(tr("menu.docs"), OpenDocs),
+                MenuItem::action(tr("menu.report_issue"), OpenIssueTracker),
+                MenuItem::separator(),
+                MenuItem::action(tr("menu.about"), ShowAbout),
+            ],
         },
     ]
 }
@@ -107,6 +138,9 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("secondary-q", QuitApp, None),
         KeyBinding::new("secondary-b", ToggleSidebar, None),
+        KeyBinding::new("secondary-shift-h", GoHome, None),
+        KeyBinding::new("secondary-shift-l", SwitchLanguage, None),
+        KeyBinding::new("secondary-shift-r", RevealOutputDirectory, None),
     ]);
     // 启动时侧栏默认展开。
     cx.set_menus(build_menus(true));
@@ -143,6 +177,13 @@ pub fn register_actions(cx: &mut App, shell: &Entity<AppShell>) {
     on_menu_action!(ToggleSidebar, menu_toggle_sidebar);
     on_menu_action!(SwitchLanguage, menu_switch_language);
     on_menu_action!(ShowAbout, menu_show_about);
+    on_menu_action!(ShowShortcuts, menu_show_shortcuts);
+    on_menu_action!(OpenDocs, menu_open_docs);
+    on_menu_action!(OpenIssueTracker, menu_open_issue_tracker);
+    on_menu_action!(GoToBasicImage, menu_goto_basic_image);
+    on_menu_action!(GoToAiGeneration, menu_goto_ai_generation);
+    on_menu_action!(GoToIndustryTools, menu_goto_industry_tools);
+    on_menu_action!(GoToCreativeOutput, menu_goto_creative_output);
 }
 
 fn dispatch_to_shell(
@@ -260,6 +301,30 @@ impl MenuBar {
                         popup.menu(name.clone(), action.boxed_clone())
                     }
                     OwnedMenuItem::Separator => popup.separator(),
+                    // 子菜单（如「转到」）：PopupMenu 的 with_menu_items 是模块私有，
+                    // 这里手动遍历子项构建。本应用子菜单内只有 Action，不再嵌套。
+                    OwnedMenuItem::Submenu(sub) => {
+                        let sub_name = sub.name.clone();
+                        let sub_items = sub.items.clone();
+                        popup.submenu(
+                            sub_name,
+                            window,
+                            cx,
+                            move |menu, _window, _cx| {
+                                let mut menu = menu;
+                                for item in &sub_items {
+                                    menu = match item {
+                                        OwnedMenuItem::Action { name, action, .. } => {
+                                            menu.menu(name.clone(), action.boxed_clone())
+                                        }
+                                        OwnedMenuItem::Separator => menu.separator(),
+                                        _ => menu,
+                                    };
+                                }
+                                menu
+                            },
+                        )
+                    }
                     _ => popup,
                 };
             }
@@ -341,14 +406,20 @@ mod tests {
     use super::*;
 
     fn action_names(menus: &[Menu]) -> Vec<String> {
-        let mut names = menus
-            .iter()
-            .flat_map(|menu| menu.items.iter())
-            .filter_map(|item| match item {
-                MenuItem::Action { action, .. } => Some(action.name().to_string()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
+        fn collect(items: &[MenuItem], out: &mut Vec<String>) {
+            for item in items {
+                match item {
+                    MenuItem::Action { action, .. } => out.push(action.name().to_string()),
+                    // 递归子菜单，确保「转到」里的动作也被覆盖（每个 action 恰好出现一次）。
+                    MenuItem::Submenu(sub) => collect(&sub.items, out),
+                    _ => {}
+                }
+            }
+        }
+        let mut names = Vec::new();
+        for menu in menus {
+            collect(&menu.items, &mut names);
+        }
         names.sort();
         names
     }
@@ -371,6 +442,13 @@ mod tests {
             "app_menus::ToggleSidebar",
             "app_menus::SwitchLanguage",
             "app_menus::ShowAbout",
+            "app_menus::ShowShortcuts",
+            "app_menus::OpenDocs",
+            "app_menus::OpenIssueTracker",
+            "app_menus::GoToBasicImage",
+            "app_menus::GoToAiGeneration",
+            "app_menus::GoToIndustryTools",
+            "app_menus::GoToCreativeOutput",
         ]
         .into_iter()
         .map(str::to_string)

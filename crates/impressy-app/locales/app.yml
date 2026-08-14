@@ -90,6 +90,33 @@ menu:
   about_version:
     en: Version
     zh-CN: 版本
+  goto:
+    en: Go to
+    zh-CN: 转到
+  shortcuts:
+    en: Keyboard Shortcuts…
+    zh-CN: 快捷键参考…
+  docs:
+    en: Online Documentation…
+    zh-CN: 在线文档…
+  report_issue:
+    en: Report an Issue…
+    zh-CN: 反馈问题…
+  about_license:
+    en: License
+    zh-CN: 许可证
+  about_repo:
+    en: Repository
+    zh-CN: 仓库
+  about_built_with:
+    en: Built with
+    zh-CN: 构建自
+  kbd_action:
+    en: Action
+    zh-CN: 操作
+  kbd_shortcut:
+    en: Shortcut
+    zh-CN: 快捷键
 home:
   badge_local:
     en: Local
