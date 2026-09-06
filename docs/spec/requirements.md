@@ -19,7 +19,7 @@ Impressy 是一款跨平台（Windows、macOS、Linux）的原生桌面图像处
 
 **v1 只交付本地功能**——完全离线、不需要 API Key 的功能集合；**v2 在不削弱该承诺的前提下叠加 AI 功能**。每条需求的标题都标了 `[v1]` 或 `[v2]`：
 
-- **`[v1]` 35 条**：已实现的本地图片处理功能及其支撑需求（架构、导航、i18n、格式、质量、剪贴板、性能、property test 等）。
+- **`[v1]` 36 条**：本地图片处理功能及其支撑需求（架构、导航、i18n、格式、质量、剪贴板、性能、property test，以及当前文档与编辑历史）。
 - **`[v2]` 21 条**：已进入实现基线的 AI 图片功能——Requirement 4、5、16、17、18、19–31、33、50、59。Provider 契约、四 crate 边界与安全约束见 [ADR-0004](../adr/0004-v2-provider-contract.md)。
 - **`[removed]` 4 条**：Requirement 13、14、48、49，以及其他需求中的截图专用 AC。它们不属于当前交付范围，见 ADR-0003。
 
@@ -60,6 +60,14 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 该状态仍是「已实现；自动验证通过；待真实服务商与人眼验收」，不是「可发布」：真实 Seedream / Nano Banana / OpenAI 请求需要验收人提供各自 API Key 和额度；所有**保持不变项**、内容过滤、服务商账户错误与生成质量必须按 [`v2-ai-acceptance.md`](../testing/v2-ai-acceptance.md) 在真实服务上验收。v2 改动也已使此前 v1 候选 SHA 的桌面证据过期，四平台桌面与安装包门禁须以新的精确候选重新执行。
 
+### 当前 v2 UX 稳定化门禁（2026-09-06）
+
+[`2026-09-06 UX 审查`](../reviews/2026-09-06-ux/report.md) 发现预览与实际处理输入可能不一致、批量/切图可能静默覆盖旧文件、图像编辑缺少撤销，以及导出与批量流程不完整。ADR-0006 已冻结统一的**当前文档**、**输入集合**、**临时预览**、**编辑历史**与**导出**语义。
+
+Requirement 5、6、8、15、34、36、37、39、41、42、47、51、58、59、60 与新增 Requirement 61 的相关 AC 是当前 v2 发布门禁。它们仍按“本地功能 / AI 功能”标记归属，不把本地功能误标成 AI 功能。导航的最近使用/固定工具、任务同义词搜索以及纯视觉精修属于本次稳定化之后的增强，不阻塞当前门禁。
+
+截至 2026-09-06，这些 UX 稳定化 AC 已完成编码实现，并通过工作区 132 项自动测试（含编辑历史与批量相对尺寸 property test、步骤顺序、跨编辑工具预览决策、文档实例身份、历史预算与过期 AI 任务收敛验证）、`cargo check` 与零警告 clippy。Windows release 构建与启动冒烟通过；中英文桌面任务脚本、同一候选提交的跨平台 CI/打包证据和真实 Provider 验收仍待完成，因此尚不能宣称本门禁全部通过。
+
 ## Glossary
 
 > 这是**组件清单**（crate 与技术构件的命名），不是领域词汇表。领域词汇（板块、档位、保持不变项、本地功能 / AI 功能）见 [`CONTEXT.md`](../../CONTEXT.md)。
@@ -78,6 +86,9 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 - **Canvas_Element**: GPUI 自定义 UI 元素，用于交互式画布功能
 - **Text_Layer**: 海报设计中的本地渲染文字图层
 - **Batch_Queue**: 批量处理任务队列
+- **Current_Document**: 单图工作流中的**当前文档**，包含原图、最新已应用结果、未导出状态与会话编辑历史；领域定义见 [`CONTEXT.md`](../../CONTEXT.md)
+- **Input_Set**: 多图工作流中的**输入集合**，与 Current_Document 的单图临时预览相互独立
+- **Transient_Preview**: 参数调整期间的**临时预览**，尚未成为 Current_Document 的已应用结果
 - **Tier**: 行业工具的**档位**——用户唯一需要做的选择，一组预置的、语义化的参数选项（如证件照的「一寸/二寸」、头像工坊的「日漫风/赛博朋克」）。档位背后的提示词对用户不可见。定义见 [`CONTEXT.md`](../../CONTEXT.md)。
   _注：本条此前误作 `Archive_Mode` —— 「档位」的「档」被当成了「档案 archive」，实为 gear/tier 之意。请勿在代码中使用 `ArchiveMode` 一名。_
 
@@ -166,6 +177,15 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 6. IF an AI generation request fails due to content policy violation, THEN THE UI_Layer SHALL display a content blocked error message
 7. WHEN an AI generation completes with multiple results, THE UI_Layer SHALL display all generated images
 8. WHEN multiple generated images are displayed, THE UI_Layer SHALL allow the user to select any subset for download
+9. WHEN an AI feature uses reference images, THE UI_Layer SHALL display the exact image version that will be transmitted
+10. WHEN region editing is selected, THE displayed reference image, selection coordinates, and transmitted image SHALL belong to the same Current_Document version
+11. BEFORE the user starts an AI request with a reference image, THE UI_Layer SHALL display an inline disclosure naming the selected Provider and stating that the displayed image will be transmitted to it
+12. WHEN the user clicks the generate action while the inline disclosure is visible, THE action SHALL constitute explicit initiation of that request without an additional recurring confirmation dialog
+13. WHEN the user switches Provider, THE inline disclosure and available parameters SHALL update before generation can start
+14. WHEN a user returns to an AI feature during the same application session, THE UI_Layer SHALL preserve that feature's unsubmitted selections unless they are invalid under current Provider capabilities
+15. THE UI_Layer SHALL keep the primary generate action visible while its parameter panel scrolls independently
+16. THE UI_Layer SHALL place Provider, quality, and count controls in an expandable advanced section while displaying a summary of their current values
+17. WHEN AI results are available, THE UI_Layer SHALL allow comparison with the submitted reference image and SHALL allow a selected result to become a Current_Document for subsequent local processing
 
 ### [v1] Requirement 6: 图片编辑
 
@@ -178,11 +198,18 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 3. WHEN a user selects an aspect ratio preset, THE UI_Layer SHALL display a crop frame with the selected ratio
 4. THE UI_Layer SHALL allow the user to drag and adjust the crop frame position
 5. THE UI_Layer SHALL allow the user to drag and adjust the crop frame size while maintaining aspect ratio
-6. THE Core_Engine SHALL support PNG output format with adjustable quality
+6. THE Core_Engine SHALL support PNG output format with adjustable compression level
 7. THE Core_Engine SHALL support JPEG output format with adjustable quality
 8. THE Core_Engine SHALL support WebP output format with adjustable quality
 9. WHEN a user exports a cropped image, THE Core_Engine SHALL apply the crop region to produce the output file
 10. WHEN a user exports an image, THE Core_Engine SHALL apply the selected format and quality settings
+11. WHEN a Current_Document is opened, THE resize width and height SHALL initially equal the Current_Document dimensions
+12. WHEN the user changes one resize dimension while aspect-ratio lock is enabled, THE UI_Layer SHALL update the other dimension proportionally
+13. THE UI_Layer SHALL enable aspect-ratio lock by default and SHALL require an explicit user action before allowing non-proportional stretching
+14. THE UI_Layer SHALL distinguish crop parameters, resize parameters, and rotation actions as separate editing tools
+15. THE UI_Layer SHALL provide resize modes for percentage and longest side
+16. THE UI_Layer SHALL provide an option that prevents enlargement when the source already fits within the requested dimensions
+17. WHEN a crop ratio is selected, the selected ratio indicator, crop frame, displayed crop dimensions, and exported crop SHALL remain synchronized
 
 
 ### [v1] Requirement 7: 拼图拼接
@@ -209,7 +236,7 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 
 #### Acceptance Criteria
 
-1. THE UI_Layer SHALL provide a unified batch processing page with four modes: format conversion, compression, resize, and watermark
+1. THE UI_Layer SHALL organize the batch processing page in the order Input_Set → ordered processing steps → output settings → results
 2. WHEN a user drags 50 or more images into the batch processor, THE UI_Layer SHALL accept all images for processing
 3. WHERE watermark mode is selected, THE UI_Layer SHALL support text watermark
 4. WHERE watermark mode is selected, THE UI_Layer SHALL support image watermark
@@ -219,6 +246,16 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 8. IF an individual item in the batch fails, THEN THE Batch_Queue SHALL continue processing remaining items without interruption
 9. WHEN a batch export completes, THE Core_Engine SHALL produce output files with the selected watermark applied at the chosen position
 10. WHILE batch processing executes, THE UI_Layer SHALL remain responsive to user interactions
+11. THE UI_Layer SHALL allow resize and watermark steps to be added, removed, and reordered in one batch pipeline
+12. THE UI_Layer SHALL treat output format and compression or quality as output settings rather than mutually exclusive processing modes
+13. FOR EACH batch item, THE Batch_Queue SHALL apply every enabled processing step in the displayed order before encoding the selected output format
+14. THE UI_Layer SHALL preview the selected input after the complete displayed pipeline and SHALL NOT reuse an unrelated Current_Document preview
+15. THE UI_Layer SHALL distinguish appending files to an Input_Set from replacing the entire Input_Set
+16. THE UI_Layer SHALL allow cancellation between batch items without corrupting files already completed
+17. WHEN batch processing finishes or is cancelled, THE UI_Layer SHALL display per-item input name, output dimensions, output size, and success or failure reason
+18. WHEN one or more items fail, THE UI_Layer SHALL allow retrying only failed items without rewriting successful outputs
+19. THE UI_Layer SHALL allow saving the ordered steps and their parameters as a reusable batch preset
+20. A batch preset SHALL NOT store input files or an output directory
 
 
 ### [v1] Requirement 9: 切图
@@ -312,6 +349,10 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 6. WHEN a user exports a GIF, THE Core_Engine SHALL encode the frames with the configured delay and playback mode
 7. FOR ALL GIFs exported by the Core_Engine, playback in system image viewers SHALL display correctly
 8. FOR ALL GIFs exported by the Core_Engine, playback in messaging applications SHALL display correctly
+9. THE UI_Layer SHALL render an animated preview of the configured frame order, delay, dimensions, and playback mode before export
+10. THE UI_Layer SHALL provide play and pause controls and SHALL display the current frame index and total duration
+11. WHEN the user changes frame order, delay, dimensions, or playback mode, THE animated preview SHALL update to match the next exported GIF
+12. THE UI_Layer SHALL NOT represent a static first frame as a completed GIF preview
 
 ### [v2] Requirement 16: 海报设计
 
@@ -606,6 +647,11 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 10. WHEN a user clicks on video clarity enhancement entry, THE UI_Layer SHALL display an under development placeholder
 11. DURING v1, WHEN a user opens the AI generation and editing section, THE UI_Layer SHALL display an under development placeholder and SHALL NOT request network access or an API_Key
 12. DURING v1, WHEN a user opens the industry-specific AI tools section, THE UI_Layer SHALL display an under development placeholder and SHALL NOT request network access or an API_Key
+13. FOR EACH feature, the sidebar, search results, platform menus, and active-section indicator SHALL use one canonical section assignment
+14. AFTER a Current_Document is opened, THE UI_Layer SHALL keep document identity, undo, redo, original comparison, and export actions visible above the workspace
+15. THE UI_Layer SHALL place parameters for only the active tool in a side panel that scrolls independently from the image canvas
+16. THE UI_Layer SHALL keep the active tool's primary apply, generate, or export action visible without requiring the user to scroll the canvas
+17. THE image canvas SHALL provide fit-to-window, 100%, zoom, and pan controls and SHALL distinguish transparent pixels from an opaque background
 
 
 ### [v1] Requirement 35: 多语言支持
@@ -633,6 +679,11 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 5. IF an export operation fails due to permission issues, THEN THE UI_Layer SHALL display a permission error message
 6. THE UI_Layer SHALL provide user-friendly error messages in the selected interface language
 7. THE UI_Layer SHALL categorize errors to help users understand the root cause
+8. THE UI_Layer SHALL associate progress, success, and failure messages with the task that produced them and SHALL clear or relabel them when the user changes to an unrelated task
+9. WHEN source and current-result properties differ, THE UI_Layer SHALL label their dimensions, format, and file size separately
+10. WHEN an operation fails and a recovery action is available, THE UI_Layer SHALL present that action next to the failure message
+11. THE UI_Layer SHALL keep implementation names such as crate, executor, and internal state identifiers out of ordinary user guidance
+12. THE UI_Layer SHALL communicate selected, disabled, warning, success, and failure states with text or icon semantics in addition to color
 
 ### [v1] Requirement 37: 性能与响应式
 
@@ -645,6 +696,8 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 3. WHILE batch processing 100 images, THE UI_Layer SHALL update progress indicators smoothly
 4. WHILE batch processing 100 images, THE UI_Layer SHALL respond to user clicks within 100 milliseconds
 5. WHEN applying real-time preview effects, THE UI_Layer SHALL update the preview within 200 milliseconds of parameter adjustment
+6. AT application content sizes corresponding to 1280×800 and 1366×768 desktop windows, THE UI_Layer SHALL keep the active primary action visible and SHALL NOT clip the Current_Document canvas or active parameter controls
+7. WHEN parameter controls exceed available vertical space, THE parameter panel SHALL scroll independently while the Current_Document canvas remains visible
 
 
 ### [v1] Requirement 38: 图像格式支持
@@ -677,6 +730,10 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 4. WHEN a user adjusts quality settings, THE UI_Layer SHALL display estimated file size
 5. WHEN a user exports with quality setting 85, THE Core_Engine SHALL encode the image with quality parameter 85
 6. FOR ALL quality settings, THE Core_Engine SHALL apply the exact specified quality value to the encoder
+7. WHEN the user invokes export, THE UI_Layer SHALL display format, dimensions, format-appropriate quality or compression, estimated file size, filename, and destination in one export flow
+8. THE settings page SHALL store export defaults, while a one-time export change SHALL apply only to that export unless the user explicitly saves it as a default
+9. WHERE PNG export is selected, THE UI_Layer SHALL describe compression as a file-size and encoding-speed choice and SHALL NOT present it as lossy visual quality
+10. WHERE JPEG export is selected for a Current_Document containing transparency, THE UI_Layer SHALL display the opaque background treatment in the export preview
 
 
 ### [v1] Requirement 40: 剪贴板集成
@@ -702,6 +759,13 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 5. 〔v2〕WHEN multiple AI images are generated, THE Core_Engine SHALL use timestamp-based filenames to prevent overwrites
 6. THE Impressy_System SHALL remember the last used output directory in local configuration
 7. THE UI_Layer SHALL provide an option to open the output directory after export completes
+8. THE UI_Layer SHALL use the term export for writing ordinary image files and SHALL NOT imply that Impressy saves a reopenable project file
+9. WHEN exporting a single Current_Document, THE UI_Layer SHALL default to creating a copy rather than overwriting the source file
+10. WHEN batch or slicing output collides with an existing filename, THE default policy SHALL preserve both files by generating a stable non-conflicting filename
+11. THE UI_Layer SHALL allow the user to select preserve-both, skip, or replace as the collision policy for a multi-file export
+12. THE Impressy_System SHALL overwrite an existing output only after the user explicitly selects the replace policy
+13. WHEN replacing an existing output, THE Impressy_System SHALL finish writing and validating a temporary file before atomically replacing the destination where the platform supports atomic replacement
+14. IF a multi-file export is interrupted, every reported successful output SHALL remain a complete decodable file and no partial file SHALL be reported as successful
 
 
 ### [v1] Requirement 42: 输入验证与用户引导
@@ -717,6 +781,9 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 5. WHERE a field has specific format requirements, THE UI_Layer SHALL display format hints below the input field
 6. WHEN a user hovers over an unfamiliar option, THE UI_Layer SHALL display a tooltip explanation
 7. IF a user attempts batch processing with no files selected, THEN THE UI_Layer SHALL display a no files selected warning
+8. WHEN the user changes tools or starts export while a Transient_Preview exists, THE UI_Layer SHALL require a choice among apply, discard, or return before continuing
+9. WHEN the user closes or replaces a Current_Document that contains unexported applied changes, THE UI_Layer SHALL require a choice among export, discard, or cancel
+10. THE UI_Layer SHALL distinguish resetting the active tool from restoring the Current_Document to its original image
 
 ### [v1] Requirement 43: 版本锁定与依赖管理
 
@@ -790,6 +857,11 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 5. 〔v2〕THE text layer Canvas_Element SHALL support position adjustment through drag gestures
 6. 〔v2〕THE text layer Canvas_Element SHALL support size adjustment through corner handle dragging
 7. FOR ALL Canvas_Element implementations, THE UI_Layer SHALL follow GPUI three-phase rendering pipeline: request_layout, prepaint, and paint
+8. THE UI_Layer SHALL expose an accessible name, role, enabled state, and selected state for every interactive control when the platform accessibility API supports those semantics
+9. THE UI_Layer SHALL provide a visible keyboard focus indicator and a logical Tab order for all core workflow controls
+10. THE UI_Layer SHALL allow keyboard-only completion of image open, proportional resize, undo, redo, export, and export confirmation
+11. THE crop frame Canvas_Element SHALL provide keyboard operations for moving and resizing the selection and SHALL expose the current selection bounds to assistive technology where supported
+12. WHEN a text input owns focus, text-field undo and redo SHALL take precedence over Current_Document undo and redo
 
 
 ### [removed] Requirement 48: 多显示器与 DPI 支持
@@ -964,15 +1036,36 @@ v2 图片功能代码已接入四 crate workspace：三家 Provider、操作系�
 7. 〔v2〕FOR ALL network requests to AI providers, THE AI_Engine SHALL use HTTPS protocol
 8. 〔v2〕FOR ALL network requests to AI providers, THE AI_Engine SHALL validate TLS certificates
 
+### [v1] Requirement 61: 当前文档、临时预览与编辑历史
+
+**User Story:** 作为用户，我希望界面展示的图片就是实际处理的图片，并能放心尝试、应用和撤销编辑，以免得到与预期不一致的结果。
+
+#### Acceptance Criteria
+
+1. THE Current_Document SHALL retain an immutable original image and exactly one latest applied result
+2. FOR EVERY single-image local operation, THE image shown as its input preview SHALL be the exact Current_Document version submitted to the Core_Engine
+3. 〔v2〕FOR EVERY AI operation using a reference image, THE image shown as its input preview SHALL be the exact Current_Document version submitted to the selected Provider
+4. THE UI_Layer SHALL use the latest applied Current_Document result as the default input for subsequent single-image tools
+5. THE UI_Layer SHALL keep Input_Set state for batch processing, collage, and GIF separate from Current_Document preview state
+6. WHEN crop, resize, or beautification parameters change, THE UI_Layer SHALL update a Transient_Preview without changing the latest applied result or edit history
+7. WHEN the user applies a Transient_Preview, THE Current_Document SHALL replace its latest applied result and append exactly one edit-history entry
+8. WHEN the user invokes a discrete rotation action, THE Current_Document SHALL apply it immediately and append exactly one edit-history entry
+9. WHEN a slider or drag gesture produces multiple preview updates before one apply action, THE edit history SHALL contain no more than one entry for that apply action
+10. THE UI_Layer SHALL support undo and redo of applied crop, resize, rotation, and beautification operations using platform-standard shortcuts and visible controls
+11. FOR ANY sequence of applied edits, undoing every available entry SHALL restore the corresponding earlier Current_Document states and redoing them SHALL restore the same later states
+12. THE edit history SHALL exist only for the open Current_Document session and SHALL NOT be serialized as AI generation history or application configuration
+13. THE Impressy_System SHALL enforce a documented memory budget for edit history and SHALL expose the actually available undo range when older entries are evicted
+14. WHEN beautification parameters are adjusted repeatedly before apply, every Transient_Preview SHALL use the Current_Document state captured when the tool was entered, so the same effect is not compounded by preview refreshes
+
 ---
 
 ## Document Metadata
 
 - **Feature Name**: impressy
 - **Spec Type**: Feature
-- **Document Version**: 1.3
-- **Total Requirements**: 60（v1: 35 / v2: 21 / removed: 4，见各条标题、ADR-0001 与 ADR-0003）
-- **Total Acceptance Criteria**: 442
-- **Last Updated**: 2026-07-18
+- **Document Version**: 1.4
+- **Total Requirements**: 61（v1: 36 / v2: 21 / removed: 4，见各条标题、ADR-0001、ADR-0003 与 ADR-0006）
+- **Total Acceptance Criteria**: 517
+- **Last Updated**: 2026-09-06
 - **Language**: 简体中文 + English
-- **Status**: 真相源（Source of Truth）。范围与顺序决策见 docs/adr/。
+- **Status**: 真相源（Source of Truth）；ADR-0006 UX 稳定化已实现并通过自动门禁，桌面、跨平台打包与真实 Provider 验收仍开放。范围与顺序决策见 docs/adr/。

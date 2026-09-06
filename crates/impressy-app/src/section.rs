@@ -32,7 +32,6 @@ impl Section {
             Self::CreativeOutput => "nav.creative_output",
         }
     }
-
 }
 
 /// 单个功能入口（Requirement 34）。
@@ -86,6 +85,26 @@ pub enum Feature {
 }
 
 impl Feature {
+    /// Canonical section assignment shared by navigation, search, menus, and active highlighting.
+    pub fn section(self) -> Section {
+        match self {
+            Self::Edit
+            | Self::Collage
+            | Self::Batch
+            | Self::Slice
+            | Self::QrCode
+            | Self::Exif
+            | Self::Beautify => Section::BasicImage,
+            Self::TextToImage
+            | Self::ImageEdit
+            | Self::VideoWatermark
+            | Self::VideoSubtitle
+            | Self::VideoClarity => Section::AiGeneration,
+            Self::Gif | Self::Poster => Section::CreativeOutput,
+            _ => Section::IndustryTools,
+        }
+    }
+
     /// 是否为 v1 功能（完全离线、无 API Key）。false 表示联网的 v2 功能或视频占位。
     pub fn is_v1(self) -> bool {
         matches!(

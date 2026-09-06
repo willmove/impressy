@@ -29,7 +29,11 @@ impressy-ai = { path = "../impressy-ai" }
 impressy-presets = { path = "../impressy-presets" }
 rust-i18n = "3"
 
+[target.'cfg(windows)'.dependencies]
+winsafe = { version = "0.0.19", features = ["kernel"] }
+
 [dev-dependencies]
+proptest = "1.11.0"
 tempfile = "3.27.0"
 
 [build-dependencies]

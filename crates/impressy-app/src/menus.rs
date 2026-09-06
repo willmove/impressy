@@ -34,6 +34,10 @@ actions!(
         QuitApp,
         /// 编辑 · 粘贴图片（secondary-V）
         PasteImage,
+        /// 编辑 · 撤销当前文档（secondary-Z）
+        UndoDocument,
+        /// 编辑 · 重做当前文档（secondary-Shift-Z）
+        RedoDocument,
         /// 编辑 · 复制结果（secondary-Shift-C）
         CopyResult,
         /// 视图 · 首页
@@ -92,6 +96,9 @@ pub fn build_menus(sidebar_open: bool) -> Vec<Menu> {
         Menu {
             name: tr("menu.edit"),
             items: vec![
+                MenuItem::action(tr("menu.undo"), UndoDocument),
+                MenuItem::action(tr("menu.redo"), RedoDocument),
+                MenuItem::separator(),
                 MenuItem::action(tr("menu.paste"), PasteImage),
                 MenuItem::action(tr("menu.copy"), CopyResult),
             ],
@@ -134,6 +141,8 @@ pub fn install(cx: &mut App) {
         KeyBinding::new("secondary-shift-o", OpenMultipleImages, None),
         KeyBinding::new("secondary-s", SaveResult, None),
         KeyBinding::new("secondary-v", PasteImage, None),
+        KeyBinding::new("secondary-z", UndoDocument, None),
+        KeyBinding::new("secondary-shift-z", RedoDocument, None),
         KeyBinding::new("secondary-shift-c", CopyResult, None),
         KeyBinding::new("secondary-,", OpenSettings, None),
         KeyBinding::new("secondary-q", QuitApp, None),
@@ -172,6 +181,8 @@ pub fn register_actions(cx: &mut App, shell: &Entity<AppShell>) {
     on_menu_action!(OpenSettings, menu_open_settings);
     on_menu_action!(QuitApp, menu_quit);
     on_menu_action!(PasteImage, menu_paste_image);
+    on_menu_action!(UndoDocument, menu_undo_document);
+    on_menu_action!(RedoDocument, menu_redo_document);
     on_menu_action!(CopyResult, menu_copy_result);
     on_menu_action!(GoHome, menu_go_home);
     on_menu_action!(ToggleSidebar, menu_toggle_sidebar);
@@ -306,24 +317,19 @@ impl MenuBar {
                     OwnedMenuItem::Submenu(sub) => {
                         let sub_name = sub.name.clone();
                         let sub_items = sub.items.clone();
-                        popup.submenu(
-                            sub_name,
-                            window,
-                            cx,
-                            move |menu, _window, _cx| {
-                                let mut menu = menu;
-                                for item in &sub_items {
-                                    menu = match item {
-                                        OwnedMenuItem::Action { name, action, .. } => {
-                                            menu.menu(name.clone(), action.boxed_clone())
-                                        }
-                                        OwnedMenuItem::Separator => menu.separator(),
-                                        _ => menu,
-                                    };
-                                }
-                                menu
-                            },
-                        )
+                        popup.submenu(sub_name, window, cx, move |menu, _window, _cx| {
+                            let mut menu = menu;
+                            for item in &sub_items {
+                                menu = match item {
+                                    OwnedMenuItem::Action { name, action, .. } => {
+                                        menu.menu(name.clone(), action.boxed_clone())
+                                    }
+                                    OwnedMenuItem::Separator => menu.separator(),
+                                    _ => menu,
+                                };
+                            }
+                            menu
+                        })
                     }
                     _ => popup,
                 };
@@ -331,13 +337,12 @@ impl MenuBar {
             popup
         });
         popup.read(cx).focus_handle(cx).focus(window);
-        self._subscription = Some(cx.subscribe_in(
-            &popup,
-            window,
-            |this, _, _: &DismissEvent, _, cx| {
-                this.close_menu(cx);
-            },
-        ));
+        self._subscription =
+            Some(
+                cx.subscribe_in(&popup, window, |this, _, _: &DismissEvent, _, cx| {
+                    this.close_menu(cx);
+                }),
+            );
         self.popup = Some(popup.clone());
         popup
     }
@@ -437,6 +442,8 @@ mod tests {
             "app_menus::OpenSettings",
             "app_menus::QuitApp",
             "app_menus::PasteImage",
+            "app_menus::UndoDocument",
+            "app_menus::RedoDocument",
             "app_menus::CopyResult",
             "app_menus::GoHome",
             "app_menus::ToggleSidebar",

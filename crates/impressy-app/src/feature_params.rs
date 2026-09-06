@@ -18,11 +18,23 @@ pub(crate) enum ParamAction {
     SetEditRatio(usize),
     SetEditWidth(u32),
     SetEditHeight(u32),
+    SetEditResizeMode(ResizeMode),
+    SetEditAspectLock(bool),
+    SetEditPercentage(u32),
+    SetEditLongestSide(u32),
+    SetEditPreventEnlarge(bool),
     SetCollageMode(CollageMode),
     SetCollageColumns(u32),
     SetCollageSpacing(u32),
     SetCollageBackground(usize),
-    SetBatchMode(BatchMode),
+    SetBatchResizeEnabled(bool),
+    SetBatchResizeMode(ResizeMode),
+    SetBatchAspectLock(bool),
+    SetBatchPercentage(u32),
+    SetBatchLongestSide(u32),
+    SetBatchWatermarkEnabled(bool),
+    SetBatchResizeFirst(bool),
+    SetBatchPreventEnlarge(bool),
     SetBatchFormat(OutputFormat),
     SetBatchPngCompression(PngCompression),
     SetBatchWidth(u32),
@@ -53,7 +65,26 @@ pub(crate) const FREE_RATIO_INDEX: usize = 5;
 pub(crate) enum ParamEffect {
     None,
     CropRatioChanged,
+    ResizePreview,
     BeautifyPreview,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum ResizeMode {
+    #[default]
+    Pixels,
+    Percentage,
+    LongestSide,
+}
+
+impl ResizeMode {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Pixels => "option.resize_pixels",
+            Self::Percentage => "option.resize_percentage",
+            Self::LongestSide => "option.resize_longest_side",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -70,26 +101,6 @@ impl CollageMode {
             Self::Vertical => "option.vertical",
             Self::Horizontal => "option.horizontal",
             Self::Grid => "option.grid",
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(crate) enum BatchMode {
-    #[default]
-    Convert,
-    Compress,
-    Resize,
-    Watermark,
-}
-
-impl BatchMode {
-    pub fn label_key(self) -> &'static str {
-        match self {
-            Self::Convert => "option.convert",
-            Self::Compress => "option.compress",
-            Self::Resize => "option.resize",
-            Self::Watermark => "option.watermark",
         }
     }
 }
@@ -149,6 +160,13 @@ pub(crate) struct EditParams {
     pub ratio_index: usize,
     pub width: u32,
     pub height: u32,
+    pub source_width: u32,
+    pub source_height: u32,
+    pub aspect_locked: bool,
+    pub mode: ResizeMode,
+    pub percentage: u32,
+    pub longest_side: u32,
+    pub prevent_enlarge: bool,
 }
 
 impl Default for EditParams {
@@ -157,6 +175,13 @@ impl Default for EditParams {
             ratio_index: 0,
             width: 1024,
             height: 1024,
+            source_width: 1024,
+            source_height: 1024,
+            aspect_locked: true,
+            mode: ResizeMode::Pixels,
+            percentage: 100,
+            longest_side: 1024,
+            prevent_enlarge: true,
         }
     }
 }
@@ -165,6 +190,74 @@ impl EditParams {
     pub fn ratio(self) -> Option<AspectRatio> {
         AspectRatio::PRESETS.get(self.ratio_index).copied()
     }
+
+    pub fn set_source_dimensions(&mut self, width: u32, height: u32) {
+        self.source_width = width.max(1);
+        self.source_height = height.max(1);
+        self.width = self.source_width;
+        self.height = self.source_height;
+        self.longest_side = self.source_width.max(self.source_height);
+        self.percentage = 100;
+    }
+
+    pub fn set_width(&mut self, width: u32) {
+        self.width = width.clamp(16, 16_384);
+        if self.aspect_locked {
+            self.height = proportional_dimension(self.width, self.source_height, self.source_width);
+        }
+    }
+
+    pub fn set_height(&mut self, height: u32) {
+        self.height = height.clamp(16, 16_384);
+        if self.aspect_locked {
+            self.width = proportional_dimension(self.height, self.source_width, self.source_height);
+        }
+    }
+
+    pub fn output_dimensions(self) -> (u32, u32) {
+        let dimensions = match self.mode {
+            ResizeMode::Pixels => (self.width, self.height),
+            ResizeMode::Percentage => (
+                proportional_dimension(self.percentage, self.source_width, 100),
+                proportional_dimension(self.percentage, self.source_height, 100),
+            ),
+            ResizeMode::LongestSide => {
+                if self.source_width >= self.source_height {
+                    (
+                        self.longest_side,
+                        proportional_dimension(
+                            self.longest_side,
+                            self.source_height,
+                            self.source_width,
+                        ),
+                    )
+                } else {
+                    (
+                        proportional_dimension(
+                            self.longest_side,
+                            self.source_width,
+                            self.source_height,
+                        ),
+                        self.longest_side,
+                    )
+                }
+            }
+        };
+        if self.prevent_enlarge
+            && dimensions.0 >= self.source_width
+            && dimensions.1 >= self.source_height
+        {
+            (self.source_width, self.source_height)
+        } else {
+            dimensions
+        }
+    }
+}
+
+fn proportional_dimension(value: u32, numerator: u32, denominator: u32) -> u32 {
+    ((u64::from(value) * u64::from(numerator) + u64::from(denominator) / 2)
+        / u64::from(denominator.max(1)))
+    .clamp(1, 16_384) as u32
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,7 +306,14 @@ impl CollageParams {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BatchParams {
-    pub mode: BatchMode,
+    pub resize_enabled: bool,
+    pub resize_mode: ResizeMode,
+    pub aspect_locked: bool,
+    pub percentage: u32,
+    pub longest_side: u32,
+    pub watermark_enabled: bool,
+    pub resize_first: bool,
+    pub prevent_enlarge: bool,
     pub format: OutputFormat,
     pub quality: Quality,
     pub png_compression: PngCompression,
@@ -227,7 +327,14 @@ pub(crate) struct BatchParams {
 impl Default for BatchParams {
     fn default() -> Self {
         Self {
-            mode: BatchMode::Convert,
+            resize_enabled: false,
+            resize_mode: ResizeMode::Pixels,
+            aspect_locked: true,
+            percentage: 100,
+            longest_side: 1024,
+            watermark_enabled: false,
+            resize_first: true,
+            prevent_enlarge: true,
             format: OutputFormat::Png,
             quality: Quality::default(),
             png_compression: PngCompression::default(),
@@ -406,12 +513,32 @@ impl FeatureParams {
                 ParamEffect::CropRatioChanged
             }
             ParamAction::SetEditWidth(value) => {
-                self.edit.width = value.clamp(16, 16_384);
-                ParamEffect::None
+                self.edit.set_width(value);
+                ParamEffect::ResizePreview
             }
             ParamAction::SetEditHeight(value) => {
-                self.edit.height = value.clamp(16, 16_384);
-                ParamEffect::None
+                self.edit.set_height(value);
+                ParamEffect::ResizePreview
+            }
+            ParamAction::SetEditResizeMode(mode) => {
+                self.edit.mode = mode;
+                ParamEffect::ResizePreview
+            }
+            ParamAction::SetEditAspectLock(locked) => {
+                self.edit.aspect_locked = locked;
+                ParamEffect::ResizePreview
+            }
+            ParamAction::SetEditPercentage(value) => {
+                self.edit.percentage = value.clamp(1, 1_000);
+                ParamEffect::ResizePreview
+            }
+            ParamAction::SetEditLongestSide(value) => {
+                self.edit.longest_side = value.clamp(16, 16_384);
+                ParamEffect::ResizePreview
+            }
+            ParamAction::SetEditPreventEnlarge(enabled) => {
+                self.edit.prevent_enlarge = enabled;
+                ParamEffect::ResizePreview
             }
             ParamAction::SetCollageMode(mode) => {
                 self.collage.mode = mode;
@@ -429,11 +556,36 @@ impl FeatureParams {
                 self.collage.background_index = index.min(3);
                 ParamEffect::None
             }
-            ParamAction::SetBatchMode(mode) => {
-                self.batch.mode = mode;
-                if mode == BatchMode::Compress && self.batch.format == OutputFormat::Png {
-                    self.batch.format = OutputFormat::Jpeg;
-                }
+            ParamAction::SetBatchResizeEnabled(enabled) => {
+                self.batch.resize_enabled = enabled;
+                ParamEffect::None
+            }
+            ParamAction::SetBatchResizeMode(mode) => {
+                self.batch.resize_mode = mode;
+                ParamEffect::None
+            }
+            ParamAction::SetBatchAspectLock(locked) => {
+                self.batch.aspect_locked = locked;
+                ParamEffect::None
+            }
+            ParamAction::SetBatchPercentage(value) => {
+                self.batch.percentage = value.clamp(1, 800);
+                ParamEffect::None
+            }
+            ParamAction::SetBatchLongestSide(value) => {
+                self.batch.longest_side = value.clamp(16, 16_384);
+                ParamEffect::None
+            }
+            ParamAction::SetBatchWatermarkEnabled(enabled) => {
+                self.batch.watermark_enabled = enabled;
+                ParamEffect::None
+            }
+            ParamAction::SetBatchResizeFirst(resize_first) => {
+                self.batch.resize_first = resize_first;
+                ParamEffect::None
+            }
+            ParamAction::SetBatchPreventEnlarge(enabled) => {
+                self.batch.prevent_enlarge = enabled;
                 ParamEffect::None
             }
             ParamAction::SetBatchFormat(format) => {
@@ -534,9 +686,13 @@ mod tests {
         params.apply(ParamAction::SetGifDelay(0));
         params.apply(ParamAction::SetSliceRows(0));
         params.apply(ParamAction::SetBatchOpacity(0));
+        params.apply(ParamAction::SetBatchPercentage(0));
+        params.apply(ParamAction::SetBatchLongestSide(0));
         assert_eq!(params.gif.delay_ms, 100);
         assert_eq!(params.slice.rows, 1);
         assert_eq!(params.batch.watermark_opacity_percent, 5);
+        assert_eq!(params.batch.percentage, 1);
+        assert_eq!(params.batch.longest_side, 16);
 
         params.apply(ParamAction::SetGifDelay(9_000));
         params.apply(ParamAction::SetSliceRows(9_000));
@@ -549,12 +705,12 @@ mod tests {
     #[test]
     fn enum_and_ratio_choices_set_exactly() {
         let mut params = FeatureParams::default();
-        params.apply(ParamAction::SetBatchMode(BatchMode::Watermark));
+        params.apply(ParamAction::SetBatchWatermarkEnabled(true));
         params.apply(ParamAction::SetCollageMode(CollageMode::Grid));
         params.apply(ParamAction::SetGifPlayback(Playback::PingPong));
         params.apply(ParamAction::SetBatchPngCompression(PngCompression::Best));
         params.apply(ParamAction::SetEditRatio(FREE_RATIO_INDEX));
-        assert_eq!(params.batch.mode, BatchMode::Watermark);
+        assert!(params.batch.watermark_enabled);
         assert_eq!(params.collage.mode, CollageMode::Grid);
         assert_eq!(params.gif.playback, Playback::PingPong);
         assert_eq!(params.batch.png_compression, PngCompression::Best);
@@ -565,11 +721,22 @@ mod tests {
     }
 
     #[test]
-    fn compress_mode_rejects_png_as_output() {
+    fn batch_steps_and_output_settings_are_independent() {
         let mut params = FeatureParams::default();
         params.apply(ParamAction::SetBatchFormat(OutputFormat::Png));
-        params.apply(ParamAction::SetBatchMode(BatchMode::Compress));
-        assert_eq!(params.batch.format, OutputFormat::Jpeg);
+        params.apply(ParamAction::SetBatchResizeEnabled(true));
+        params.apply(ParamAction::SetBatchWatermarkEnabled(true));
+        params.apply(ParamAction::SetBatchResizeFirst(false));
+        params.apply(ParamAction::SetBatchResizeMode(ResizeMode::LongestSide));
+        params.apply(ParamAction::SetBatchLongestSide(2048));
+        params.apply(ParamAction::SetBatchPercentage(75));
+        assert_eq!(params.batch.format, OutputFormat::Png);
+        assert!(params.batch.resize_enabled);
+        assert!(params.batch.watermark_enabled);
+        assert!(!params.batch.resize_first);
+        assert_eq!(params.batch.resize_mode, ResizeMode::LongestSide);
+        assert_eq!(params.batch.longest_side, 2048);
+        assert_eq!(params.batch.percentage, 75);
     }
 
     #[test]
@@ -582,5 +749,33 @@ mod tests {
         let options = params.options();
         assert_eq!(options.foreground, params.foreground);
         assert_eq!(options.background, params.background);
+    }
+
+    #[test]
+    fn resize_defaults_to_locked_source_dimensions_and_supports_relative_modes() {
+        let mut edit = EditParams::default();
+        edit.set_source_dimensions(1_920, 1_080);
+        assert_eq!(edit.output_dimensions(), (1_920, 1_080));
+
+        edit.set_width(960);
+        assert_eq!(edit.output_dimensions(), (960, 540));
+
+        edit.mode = ResizeMode::Percentage;
+        edit.percentage = 25;
+        assert_eq!(edit.output_dimensions(), (480, 270));
+
+        edit.mode = ResizeMode::LongestSide;
+        edit.longest_side = 800;
+        assert_eq!(edit.output_dimensions(), (800, 450));
+    }
+
+    #[test]
+    fn prevent_enlarge_keeps_source_dimensions() {
+        let mut edit = EditParams::default();
+        edit.set_source_dimensions(640, 480);
+        edit.mode = ResizeMode::LongestSide;
+        edit.longest_side = 2_000;
+        edit.prevent_enlarge = true;
+        assert_eq!(edit.output_dimensions(), (640, 480));
     }
 }

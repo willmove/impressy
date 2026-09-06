@@ -6,15 +6,16 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use gpui::{RenderImage, SharedString};
 use image::{Frame, RgbaImage};
 
 use impressy_core::animation::{self, GifParams};
-use impressy_core::batch::{self, BatchOp};
+use impressy_core::batch::{self, BatchPipeline, BatchResizeMode, BatchStep};
 use impressy_core::beautify::{self, BeautifyParams};
 use impressy_core::collage::{self, CollageLayout, CollageOptions};
-use impressy_core::format::{self, EncodeSettings, OutputFormat, PngCompression};
+use impressy_core::format::{self, EncodeSettings, PngCompression};
 use impressy_core::naming;
 use impressy_core::qr::QrOptions;
 use impressy_core::slice::{self, SliceGrid};
@@ -23,9 +24,13 @@ use impressy_core::watermark;
 use impressy_core::{CoreError, exif, qr};
 use rust_i18n::t;
 
+use crate::document::{
+    CurrentDocument, DocumentSnapshot, DocumentVersion, EditKind, InputSet, InputSetVersion,
+};
+use crate::export_plan::{self, CollisionPolicy, PublishOutcome};
 use crate::feature_params::{WatermarkPlacement, WatermarkSource};
 use crate::text_watermark;
-use crate::ui_message::{BatchItemFailure, ErrorKind, InfoMessage, UiMessage};
+use crate::ui_message::{BatchItemOutcome, BatchItemResult, ErrorKind, InfoMessage, UiMessage};
 
 const IMAGE_EXTS: &[&str] = &["png", "jpg", "jpeg", "webp", "bmp", "gif"];
 
@@ -44,8 +49,10 @@ pub(crate) fn is_supported_image_path(path: &Path) -> bool {
 pub(crate) enum WorkspaceCommand {
     OpenSingle,
     OpenMultiple,
+    AppendMultiple,
     SaveResult,
     Transform(TransformOperation),
+    PreviewTransform(TransformOperation),
     ReadExif,
     StripExif,
     GenerateQr {
@@ -57,25 +64,32 @@ pub(crate) enum WorkspaceCommand {
         layout: CollageLayout,
         options: CollageOptions,
     },
-    Slice(SliceGrid),
+    Slice {
+        grid: SliceGrid,
+        collision_policy: CollisionPolicy,
+    },
     MakeGif(GifParams),
     Batch(BatchRequest),
 }
 
 pub(crate) enum WorkspaceCommandRoute {
-    OpenImages { multiple: bool },
+    OpenImages { multiple: bool, append: bool },
     SaveResult,
     OutputDirectory(OutputDirectoryCommand),
     Direct(WorkspaceOperation),
 }
 
 pub(crate) enum OutputDirectoryCommand {
-    Slice(SliceGrid),
+    Slice {
+        grid: SliceGrid,
+        collision_policy: CollisionPolicy,
+    },
     Batch(BatchRequest),
 }
 
 pub(crate) enum WorkspaceOperation {
     Transform(TransformOperation),
+    PreviewTransform(TransformOperation),
     ReadExif,
     StripExif,
     GenerateQr {
@@ -93,17 +107,34 @@ pub(crate) enum WorkspaceOperation {
 impl WorkspaceCommand {
     pub fn route(self) -> WorkspaceCommandRoute {
         match self {
-            Self::OpenSingle => WorkspaceCommandRoute::OpenImages { multiple: false },
-            Self::OpenMultiple => WorkspaceCommandRoute::OpenImages { multiple: true },
+            Self::OpenSingle => WorkspaceCommandRoute::OpenImages {
+                multiple: false,
+                append: false,
+            },
+            Self::OpenMultiple => WorkspaceCommandRoute::OpenImages {
+                multiple: true,
+                append: false,
+            },
+            Self::AppendMultiple => WorkspaceCommandRoute::OpenImages {
+                multiple: true,
+                append: true,
+            },
             Self::SaveResult => WorkspaceCommandRoute::SaveResult,
-            Self::Slice(grid) => {
-                WorkspaceCommandRoute::OutputDirectory(OutputDirectoryCommand::Slice(grid))
-            }
+            Self::Slice {
+                grid,
+                collision_policy,
+            } => WorkspaceCommandRoute::OutputDirectory(OutputDirectoryCommand::Slice {
+                grid,
+                collision_policy,
+            }),
             Self::Batch(request) => {
                 WorkspaceCommandRoute::OutputDirectory(OutputDirectoryCommand::Batch(request))
             }
             Self::Transform(operation) => {
                 WorkspaceCommandRoute::Direct(WorkspaceOperation::Transform(operation))
+            }
+            Self::PreviewTransform(operation) => {
+                WorkspaceCommandRoute::Direct(WorkspaceOperation::PreviewTransform(operation))
             }
             Self::ReadExif => WorkspaceCommandRoute::Direct(WorkspaceOperation::ReadExif),
             Self::StripExif => WorkspaceCommandRoute::Direct(WorkspaceOperation::StripExif),
@@ -123,13 +154,23 @@ impl WorkspaceCommand {
 
 #[derive(Debug, Clone)]
 pub(crate) enum BatchRequest {
-    Convert {
-        format: OutputFormat,
-        settings: EncodeSettings,
+    Pipeline {
+        steps: Vec<BatchRequestStep>,
+        output: EncodeSettings,
+        collision_policy: CollisionPolicy,
     },
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum BatchRequestStep {
     Resize {
+        mode: crate::feature_params::ResizeMode,
         width: u32,
         height: u32,
+        aspect_locked: bool,
+        percentage: u32,
+        longest_side: u32,
+        prevent_enlarge: bool,
     },
     Watermark {
         source: WatermarkSource,
@@ -142,10 +183,10 @@ pub(crate) enum BatchRequest {
 /// 单个功能页共享的图像工作区状态。
 #[derive(Default)]
 pub(crate) struct Workspace {
-    images: Arc<Vec<RgbaImage>>,
-    source_names: Arc<Vec<String>>,
+    document: Option<CurrentDocument>,
+    document_name: Option<String>,
+    input_set: InputSet,
     source_bytes: Option<Arc<Vec<u8>>>,
-    result_image: Option<Arc<RgbaImage>>,
     result_bytes: Option<Arc<EncodedResult>>,
     preview: Option<Arc<RenderImage>>,
     preview_dimensions: Option<(u32, u32)>,
@@ -154,22 +195,29 @@ pub(crate) struct Workspace {
     status: UiMessage,
     info: InfoMessage,
     busy: bool,
+    preview_generation: u64,
+    batch_cancel: Option<Arc<AtomicBool>>,
+    retry_batch: Option<RetryBatch>,
+}
+
+pub(crate) struct RetryBatch {
+    images: Arc<Vec<RgbaImage>>,
+    names: Arc<Vec<String>>,
+    operations: Vec<BatchStepOperation>,
+    output: EncodeSettings,
+    directory: PathBuf,
+    collision_policy: CollisionPolicy,
 }
 
 #[derive(Clone)]
 pub(crate) enum ImageSource {
-    Result(Arc<RgbaImage>),
-    Input {
-        images: Arc<Vec<RgbaImage>>,
-        index: usize,
-    },
+    Document(DocumentSnapshot),
 }
 
 impl ImageSource {
     pub fn image(&self) -> &RgbaImage {
         match self {
-            Self::Result(image) => image,
-            Self::Input { images, index } => &images[*index],
+            Self::Document(snapshot) => &snapshot.image,
         }
     }
 }
@@ -178,6 +226,13 @@ impl ImageSource {
 pub(crate) struct EncodedResult {
     bytes: Vec<u8>,
     extension: &'static str,
+    kind: EncodedResultKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EncodedResultKind {
+    Gif,
+    Exif,
 }
 
 impl Workspace {
@@ -194,18 +249,35 @@ impl Workspace {
     }
 
     pub fn current_dimensions(&self) -> Option<(u32, u32)> {
-        self.result_image
-            .as_deref()
-            .map(RgbaImage::dimensions)
-            .or_else(|| self.images.first().map(RgbaImage::dimensions))
+        self.document
+            .as_ref()
+            .map(CurrentDocument::snapshot)
+            .map(|snapshot| snapshot.image.dimensions())
     }
 
     pub fn has_image(&self) -> bool {
         self.current_dimensions().is_some()
     }
 
+    pub fn has_encoded_result(&self, kind: EncodedResultKind) -> bool {
+        self.result_bytes
+            .as_ref()
+            .is_some_and(|result| result.kind == kind)
+    }
+
+    pub fn encoded_result_byte_len(&self, kind: EncodedResultKind) -> Option<usize> {
+        self.result_bytes
+            .as_ref()
+            .filter(|result| result.kind == kind)
+            .map(|result| result.bytes.len())
+    }
+
+    pub fn clear_encoded_result(&mut self) {
+        self.result_bytes = None;
+    }
+
     pub fn image_count(&self) -> usize {
-        self.images.len()
+        self.input_set.len()
     }
 
     pub fn focus_index(&self) -> usize {
@@ -213,7 +285,11 @@ impl Workspace {
     }
 
     pub fn source_name(&self, index: usize) -> Option<&str> {
-        self.source_names.get(index).map(String::as_str)
+        self.input_set.name(index)
+    }
+
+    pub fn input_dimensions(&self, index: usize) -> Option<(u32, u32)> {
+        self.input_set.image(index).map(RgbaImage::dimensions)
     }
 
     pub fn thumb(&self, index: usize) -> Option<Arc<RenderImage>> {
@@ -221,34 +297,26 @@ impl Workspace {
     }
 
     pub fn set_focus(&mut self, index: usize) {
-        if index >= self.images.len() {
+        if index >= self.input_set.len() {
             return;
         }
         self.focus_index = index;
-        if self.result_image.is_none() && self.result_bytes.is_none() {
-            self.preview_source_at(index);
-        }
+        self.preview_source_at(index);
     }
 
     /// 删除一张输入图。来源变更后丢掉当前结果，避免拼图/GIF 仍显示过期合成。
     pub fn remove_image(&mut self, index: usize) -> bool {
-        if self.busy || index >= self.images.len() {
+        if self.busy || index >= self.input_set.len() {
             return false;
         }
         let old_focus = self.focus_index;
-        let images = Arc::make_mut(&mut self.images);
-        images.remove(index);
-        let names = Arc::make_mut(&mut self.source_names);
-        if index < names.len() {
-            names.remove(index);
-        }
+        self.input_set.remove(index);
         if index < self.thumbs.len() {
             self.thumbs.remove(index);
         }
-        self.source_bytes = None;
-        self.result_image = None;
         self.result_bytes = None;
-        if self.images.is_empty() {
+        self.retry_batch = None;
+        if self.input_set.is_empty() {
             self.focus_index = 0;
             self.preview = None;
             self.preview_dimensions = None;
@@ -259,11 +327,11 @@ impl Workspace {
         self.focus_index = if index < old_focus {
             old_focus - 1
         } else {
-            old_focus.min(self.images.len() - 1)
+            old_focus.min(self.input_set.len() - 1)
         };
         self.preview_source_at(self.focus_index);
         self.status = UiMessage::LoadedMultiple {
-            successes: self.images.len(),
+            successes: self.input_set.len(),
             failures: 0,
         };
         true
@@ -271,41 +339,210 @@ impl Workspace {
 
     /// 把 `from` 移到 `to`（用于图条左右排序）。
     pub fn move_image(&mut self, from: usize, to: usize) -> bool {
-        if self.busy || from == to || from >= self.images.len() || to >= self.images.len() {
+        if self.busy || from == to || from >= self.input_set.len() || to >= self.input_set.len() {
             return false;
         }
-        let images = Arc::make_mut(&mut self.images);
-        let image = images.remove(from);
-        images.insert(to, image);
-        let names = Arc::make_mut(&mut self.source_names);
-        if from < names.len() && to <= names.len() {
-            let name = names.remove(from);
-            names.insert(to.min(names.len()), name);
-        }
+        self.input_set.move_item(from, to);
         if from < self.thumbs.len() && to <= self.thumbs.len() {
             let thumb = self.thumbs.remove(from);
             self.thumbs.insert(to.min(self.thumbs.len()), thumb);
         }
-        self.source_bytes = None;
-        self.result_image = None;
         self.result_bytes = None;
+        self.retry_batch = None;
         self.focus_index = to;
         self.preview_source_at(to);
         true
     }
 
     fn preview_source_at(&mut self, index: usize) {
-        if let Some(image) = self.images.get(index) {
+        if let Some(image) = self.input_set.image(index) {
             self.preview = Some(to_render_image(image));
             self.preview_dimensions = Some(image.dimensions());
-            if let Some(name) = self.source_names.get(index) {
+            if let Some(name) = self.input_set.name(index) {
                 self.info = InfoMessage::Image {
-                    name: name.clone(),
+                    name: name.to_string(),
                     width: image.width(),
                     height: image.height(),
                 };
             }
         }
+    }
+
+    pub fn preview_dimensions(&self) -> Option<(u32, u32)> {
+        self.preview_dimensions
+    }
+
+    pub fn show_document_preview(&mut self) {
+        if let Some(document) = &self.document {
+            let image = document.displayed_image();
+            self.preview = Some(to_render_image(&image));
+            self.preview_dimensions = Some(image.dimensions());
+        }
+    }
+
+    pub fn show_input_set_preview(&mut self) {
+        if !self.input_set.is_empty() {
+            self.preview_source_at(self.focus_index.min(self.input_set.len() - 1));
+        }
+    }
+
+    pub fn document_name(&self) -> Option<&str> {
+        self.document_name.as_deref()
+    }
+
+    pub fn has_transient_preview(&self) -> bool {
+        self.document
+            .as_ref()
+            .is_some_and(CurrentDocument::has_transient)
+    }
+
+    pub fn transient_edit_kind(&self) -> Option<EditKind> {
+        self.document
+            .as_ref()
+            .and_then(CurrentDocument::transient_kind)
+    }
+
+    pub fn apply_transient_preview(&mut self) -> bool {
+        if self.busy {
+            return false;
+        }
+        let applied = self
+            .document
+            .as_mut()
+            .is_some_and(CurrentDocument::apply_transient);
+        if applied {
+            self.invalidate_preview_requests();
+            self.result_bytes = None;
+            self.show_document_preview();
+            self.status = UiMessage::SavedReady;
+        }
+        applied
+    }
+
+    pub fn apply_transient_preview_for(&mut self, kind: EditKind) -> bool {
+        if self.busy {
+            return false;
+        }
+        let applied = self
+            .document
+            .as_mut()
+            .is_some_and(|document| document.apply_transient_kind(kind));
+        if applied {
+            self.invalidate_preview_requests();
+            self.result_bytes = None;
+            self.show_document_preview();
+            self.status = UiMessage::SavedReady;
+        }
+        applied
+    }
+
+    pub fn discard_transient_preview(&mut self) -> bool {
+        if self.busy {
+            return false;
+        }
+        let discarded = self
+            .document
+            .as_mut()
+            .is_some_and(CurrentDocument::discard_transient);
+        if discarded {
+            self.invalidate_preview_requests();
+            self.show_document_preview();
+        }
+        discarded
+    }
+
+    pub fn invalidate_preview_requests(&mut self) {
+        self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
+    }
+
+    pub fn can_undo(&self) -> bool {
+        self.document
+            .as_ref()
+            .is_some_and(CurrentDocument::can_undo)
+    }
+
+    pub fn can_redo(&self) -> bool {
+        self.document
+            .as_ref()
+            .is_some_and(CurrentDocument::can_redo)
+    }
+
+    pub fn undo(&mut self) -> bool {
+        if self.busy {
+            return false;
+        }
+        let changed = self.document.as_mut().is_some_and(CurrentDocument::undo);
+        if changed {
+            self.result_bytes = None;
+            self.show_document_preview();
+            self.status = UiMessage::UndoApplied {
+                remaining: self
+                    .document
+                    .as_ref()
+                    .map_or(0, CurrentDocument::undo_steps),
+            };
+        }
+        changed
+    }
+
+    pub fn redo(&mut self) -> bool {
+        if self.busy {
+            return false;
+        }
+        let changed = self.document.as_mut().is_some_and(CurrentDocument::redo);
+        if changed {
+            self.result_bytes = None;
+            self.show_document_preview();
+            self.status = UiMessage::RedoApplied {
+                remaining: self
+                    .document
+                    .as_ref()
+                    .map_or(0, CurrentDocument::redo_steps),
+            };
+        }
+        changed
+    }
+
+    pub fn restore_original(&mut self) -> bool {
+        if self.busy {
+            return false;
+        }
+        let Some(document) = self.document.as_mut() else {
+            return false;
+        };
+        let version = document.snapshot().version;
+        let original = document.original();
+        let changed = document.commit(version, (*original).clone(), EditKind::RestoreOriginal);
+        if changed {
+            self.result_bytes = None;
+            self.show_document_preview();
+            self.status = UiMessage::OriginalRestored;
+        }
+        changed
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.document
+            .as_ref()
+            .is_some_and(CurrentDocument::is_dirty)
+    }
+
+    pub fn original_preview(&self) -> Option<Arc<RenderImage>> {
+        self.document
+            .as_ref()
+            .map(CurrentDocument::original)
+            .map(|image| to_render_image(&image))
+    }
+
+    pub fn original_dimensions(&self) -> Option<(u32, u32)> {
+        self.document
+            .as_ref()
+            .map(CurrentDocument::original)
+            .map(|image| image.dimensions())
+    }
+
+    pub fn source_byte_len(&self) -> Option<usize> {
+        self.source_bytes.as_ref().map(|bytes| bytes.len())
     }
 
     pub fn image_for_estimate(&self) -> Option<ImageSource> {
@@ -314,8 +551,43 @@ impl Workspace {
 
     /// Immutable decoded inputs for v2 reference-image requests. Encoding is performed on the
     /// background executor so large images never block the GPUI thread.
-    pub fn ai_reference_images(&self) -> Arc<Vec<RgbaImage>> {
-        Arc::clone(&self.images)
+    pub fn ai_reference_snapshot(&self) -> Option<DocumentSnapshot> {
+        self.document.as_ref().map(CurrentDocument::snapshot)
+    }
+
+    pub fn document_version(&self) -> Option<DocumentVersion> {
+        self.document
+            .as_ref()
+            .map(CurrentDocument::snapshot)
+            .map(|snapshot| snapshot.version)
+    }
+
+    pub fn use_ai_result(&mut self, image: RgbaImage) -> bool {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return false;
+        }
+        self.document = Some(CurrentDocument::new_unexported(image));
+        self.document_name = Some(t!("workspace.ai_result_name").to_string());
+        self.source_bytes = None;
+        self.result_bytes = None;
+        self.show_document_preview();
+        self.status = UiMessage::AiResultOpened;
+        true
+    }
+
+    pub fn use_generated_result(&mut self, image: RgbaImage, status: UiMessage) -> bool {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return false;
+        }
+        self.document = Some(CurrentDocument::new_unexported(image));
+        self.document_name = None;
+        self.source_bytes = None;
+        self.result_bytes = None;
+        self.show_document_preview();
+        self.status = status;
+        true
     }
 
     pub fn status_text(&self) -> SharedString {
@@ -324,6 +596,10 @@ impl Workspace {
 
     pub fn info_text(&self) -> SharedString {
         self.info.text()
+    }
+
+    pub fn batch_results_text(&self) -> Option<SharedString> {
+        matches!(self.info, InfoMessage::BatchResults(_)).then(|| self.info.text())
     }
 
     pub fn is_busy(&self) -> bool {
@@ -346,12 +622,31 @@ impl Workspace {
 
         let job = match operation {
             WorkspaceOperation::Transform(operation) => {
-                let image = if matches!(operation, TransformOperation::Beautify(_)) {
-                    self.source_image_or_status(UiMessage::NeedImage)?
-                } else {
-                    self.current_image_or_status(UiMessage::NeedImage)?
-                };
-                WorkspaceJob::Transform { image, operation }
+                let document = self.document_snapshot_or_status(UiMessage::NeedImage)?;
+                WorkspaceJob::Transform {
+                    document,
+                    operation,
+                    preview: false,
+                    preview_generation: None,
+                }
+            }
+            WorkspaceOperation::PreviewTransform(operation) => {
+                let discarded = self
+                    .document
+                    .as_mut()
+                    .is_some_and(CurrentDocument::discard_transient);
+                if discarded {
+                    self.show_document_preview();
+                }
+                let document = self.document_snapshot_or_status(UiMessage::NeedImage)?;
+                self.preview_generation = self.preview_generation.wrapping_add(1).max(1);
+                self.status = UiMessage::Processing;
+                return Some(WorkspaceJob::Transform {
+                    document,
+                    operation,
+                    preview: true,
+                    preview_generation: Some(self.preview_generation),
+                });
             }
             WorkspaceOperation::ReadExif => {
                 let Some(bytes) = &self.source_bytes else {
@@ -363,13 +658,8 @@ impl Workspace {
                 }
             }
             WorkspaceOperation::StripExif => {
-                let Some(bytes) = &self.source_bytes else {
-                    self.status = UiMessage::NeedExifImage;
-                    return None;
-                };
-                WorkspaceJob::StripExif {
-                    bytes: Arc::clone(bytes),
-                }
+                let document = self.document_snapshot_or_status(UiMessage::NeedExifImage)?;
+                WorkspaceJob::StripExif { document }
             }
             WorkspaceOperation::GenerateQr { text, options } => {
                 WorkspaceJob::GenerateQr { text, options }
@@ -379,11 +669,13 @@ impl Workspace {
             },
             WorkspaceOperation::Collage { layout, options } => WorkspaceJob::Collage {
                 images: self.all_images()?,
+                input_version: self.input_set.version(),
                 layout,
                 options,
             },
             WorkspaceOperation::MakeGif(params) => WorkspaceJob::Gif {
                 images: self.all_images()?,
+                input_version: self.input_set.version(),
                 params,
             },
         };
@@ -404,6 +696,19 @@ impl Workspace {
 
     /// 准备由操作系统拖放进来的路径；`multiple` 决定是否保留全部有效图片。
     pub fn prepare_paths(&mut self, paths: Vec<PathBuf>, multiple: bool) -> Option<WorkspaceJob> {
+        self.prepare_paths_mode(paths, multiple, false)
+    }
+
+    pub fn prepare_append_paths(&mut self, paths: Vec<PathBuf>) -> Option<WorkspaceJob> {
+        self.prepare_paths_mode(paths, true, true)
+    }
+
+    fn prepare_paths_mode(
+        &mut self,
+        paths: Vec<PathBuf>,
+        multiple: bool,
+        append: bool,
+    ) -> Option<WorkspaceJob> {
         if self.busy {
             self.status = UiMessage::Busy;
             return None;
@@ -419,6 +724,7 @@ impl Workspace {
         self.start_job(WorkspaceJob::LoadPaths {
             paths,
             single: !multiple,
+            append,
         })
     }
 
@@ -427,25 +733,77 @@ impl Workspace {
         &mut self,
         path: PathBuf,
         default_export: EncodeSettings,
+        encoded_kind: Option<EncodedResultKind>,
+    ) -> Option<WorkspaceJob> {
+        self.prepare_export_path(
+            path,
+            default_export,
+            CollisionPolicy::PreserveBoth,
+            encoded_kind,
+        )
+    }
+
+    pub fn prepare_export_path(
+        &mut self,
+        path: PathBuf,
+        export: EncodeSettings,
+        collision_policy: CollisionPolicy,
+        encoded_kind: Option<EncodedResultKind>,
     ) -> Option<WorkspaceJob> {
         if self.busy {
             self.status = UiMessage::Busy;
             return None;
         }
-        let source = if let Some(result) = &self.result_bytes {
+        let source = if let Some(result) = self
+            .result_bytes
+            .as_ref()
+            .filter(|result| Some(result.kind) == encoded_kind)
+        {
             SaveSource::Bytes {
                 bytes: Arc::clone(result),
             }
         } else if let Some(image) = self.current_image_source() {
             SaveSource::Image {
                 image,
-                settings: default_export,
+                settings: export,
             }
         } else {
             self.status = UiMessage::NeedResult;
             return None;
         };
-        self.start_job(WorkspaceJob::Save { source, path })
+        self.start_job(WorkspaceJob::Save {
+            source,
+            path,
+            collision_policy,
+        })
+    }
+
+    /// Prepare an export of the applied document, even when the active feature also owns an
+    /// encoded result (for example, a GIF assembled from the current input set). Dirty-document
+    /// continuations use this path so exporting before replace or quit always saves the document
+    /// that triggered the guard.
+    pub fn prepare_document_export_path(
+        &mut self,
+        path: PathBuf,
+        export: EncodeSettings,
+        collision_policy: CollisionPolicy,
+    ) -> Option<WorkspaceJob> {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return None;
+        }
+        let Some(image) = self.current_image_source() else {
+            self.status = UiMessage::NeedResult;
+            return None;
+        };
+        self.start_job(WorkspaceJob::Save {
+            source: SaveSource::Image {
+                image,
+                settings: export,
+            },
+            path,
+            collision_policy,
+        })
     }
 
     /// 用异步目录 prompt 返回的具体路径准备切图任务。
@@ -453,16 +811,21 @@ impl Workspace {
         &mut self,
         grid: SliceGrid,
         directory: PathBuf,
+        collision_policy: CollisionPolicy,
     ) -> Option<WorkspaceJob> {
         if self.busy {
             self.status = UiMessage::Busy;
             return None;
         }
-        let images = self.first_images()?;
+        let document = self.document_snapshot_or_status(UiMessage::NeedImage)?;
+        let document_version = document.version;
+        let images = Arc::new(vec![(*document.image).clone()]);
         self.start_job(WorkspaceJob::Slice {
             images,
+            document_version,
             grid,
             directory,
+            collision_policy,
         })
     }
 
@@ -478,75 +841,167 @@ impl Workspace {
             return None;
         }
         let images = self.all_images()?;
-        let names = Arc::clone(&self.source_names);
-        let operation = match request {
-            BatchRequest::Convert { format, settings } => {
-                BatchOperation::Ready(BatchOp::Convert { format, settings })
-            }
-            BatchRequest::Resize { width, height } => BatchOperation::Ready(BatchOp::Resize {
-                width,
-                height,
-                filter: ResizeFilter::default(),
-            }),
-            BatchRequest::Watermark {
-                source,
-                text,
-                opacity,
-                placement,
-            } => {
-                let position = match placement {
-                    WatermarkPlacement::BottomRight => {
-                        watermark::Position::BottomRight { margin: 24 }
-                    }
-                    WatermarkPlacement::Tiled => watermark::Position::Tiled { spacing: 64 },
-                };
-                match source {
-                    WatermarkSource::Text => BatchOperation::TextWatermark {
-                        text,
-                        opacity,
-                        position,
+        let names = self.input_set.names();
+        let BatchRequest::Pipeline {
+            steps,
+            output,
+            collision_policy,
+        } = request;
+        let mut operations = Vec::with_capacity(steps.len());
+        for step in steps {
+            let operation = match step {
+                BatchRequestStep::Resize {
+                    mode,
+                    width,
+                    height,
+                    aspect_locked,
+                    percentage,
+                    longest_side,
+                    prevent_enlarge,
+                } => BatchStepOperation::Ready(BatchStep::Resize {
+                    mode: match mode {
+                        crate::feature_params::ResizeMode::Pixels => BatchResizeMode::Pixels {
+                            width,
+                            height,
+                            preserve_aspect: aspect_locked,
+                        },
+                        crate::feature_params::ResizeMode::Percentage => {
+                            BatchResizeMode::Percentage(percentage)
+                        }
+                        crate::feature_params::ResizeMode::LongestSide => {
+                            BatchResizeMode::LongestSide(longest_side)
+                        }
                     },
-                    WatermarkSource::Image => {
-                        let Some(path) =
-                            watermark_path.filter(|path| is_supported_image_path(path))
-                        else {
-                            self.status = UiMessage::NeedImage;
-                            return None;
-                        };
-                        BatchOperation::ImageWatermark {
-                            path,
+                    filter: ResizeFilter::default(),
+                    prevent_enlarge,
+                }),
+                BatchRequestStep::Watermark {
+                    source,
+                    text,
+                    opacity,
+                    placement,
+                } => {
+                    let position = match placement {
+                        WatermarkPlacement::BottomRight => {
+                            watermark::Position::BottomRight { margin: 24 }
+                        }
+                        WatermarkPlacement::Tiled => watermark::Position::Tiled { spacing: 64 },
+                    };
+                    match source {
+                        WatermarkSource::Text => BatchStepOperation::TextWatermark {
+                            text,
                             opacity,
                             position,
+                        },
+                        WatermarkSource::Image => {
+                            let Some(path) = watermark_path
+                                .as_ref()
+                                .filter(|path| is_supported_image_path(path))
+                                .cloned()
+                            else {
+                                self.status = UiMessage::NeedImage;
+                                return None;
+                            };
+                            BatchStepOperation::ImageWatermark {
+                                path,
+                                opacity,
+                                position,
+                            }
                         }
                     }
                 }
-            }
-        };
+            };
+            operations.push(operation);
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.batch_cancel = Some(Arc::clone(&cancel));
+        self.retry_batch = None;
         self.start_job(WorkspaceJob::Batch {
             images,
             names,
-            operation,
+            input_version: self.input_set.version(),
+            operations,
+            output,
             directory,
+            collision_policy,
+            cancel,
+            preview_index: self.focus_index,
         })
     }
 
-    /// 当前结果建议使用的保存文件名。
-    pub fn suggested_save_name(&self, default_export: EncodeSettings) -> String {
-        let extension = self
-            .result_bytes
-            .as_deref()
-            .map(|result| result.extension)
-            .unwrap_or_else(|| default_export.format().extension());
-        t!("dialog.output_filename", extension = extension).to_string()
+    pub fn cancel_batch(&mut self) -> bool {
+        let Some(cancel) = &self.batch_cancel else {
+            return false;
+        };
+        cancel.store(true, Ordering::Relaxed);
+        true
     }
 
-    /// 准备把当前结果编码后复制到系统剪贴板。
-    pub fn prepare_copy(&mut self) -> Option<WorkspaceJob> {
+    pub fn has_retry_batch(&self) -> bool {
+        self.retry_batch.is_some() && !self.busy
+    }
+
+    pub fn prepare_retry_batch(&mut self) -> Option<WorkspaceJob> {
         if self.busy {
             self.status = UiMessage::Busy;
             return None;
         }
-        let job = if let Some(result) = &self.result_bytes {
+        let retry = self.retry_batch.take()?;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.batch_cancel = Some(Arc::clone(&cancel));
+        self.start_job(WorkspaceJob::Batch {
+            images: retry.images,
+            names: retry.names,
+            input_version: self.input_set.version(),
+            operations: retry.operations,
+            output: retry.output,
+            directory: retry.directory,
+            collision_policy: retry.collision_policy,
+            cancel,
+            preview_index: 0,
+        })
+    }
+
+    /// 当前结果建议使用的保存文件名。
+    pub fn suggested_save_name(
+        &self,
+        default_export: EncodeSettings,
+        encoded_kind: Option<EncodedResultKind>,
+    ) -> String {
+        let extension = self.export_extension(default_export, encoded_kind);
+        t!("dialog.output_filename", extension = extension).to_string()
+    }
+
+    pub fn export_extension(
+        &self,
+        default_export: EncodeSettings,
+        encoded_kind: Option<EncodedResultKind>,
+    ) -> &'static str {
+        if let Some(kind) = encoded_kind {
+            self.result_bytes
+                .as_deref()
+                .filter(|result| result.kind == kind)
+                .map(|result| result.extension)
+                .unwrap_or_else(|| default_export.format().extension())
+        } else {
+            default_export.format().extension()
+        }
+    }
+
+    /// 准备把当前结果编码后复制到系统剪贴板。
+    pub fn prepare_copy(
+        &mut self,
+        encoded_kind: Option<EncodedResultKind>,
+    ) -> Option<WorkspaceJob> {
+        if self.busy {
+            self.status = UiMessage::Busy;
+            return None;
+        }
+        let job = if let Some(result) = self
+            .result_bytes
+            .as_ref()
+            .filter(|result| Some(result.kind) == encoded_kind)
+        {
             WorkspaceJob::CopyBytes {
                 bytes: Arc::clone(result),
             }
@@ -563,7 +1018,37 @@ impl Workspace {
 
     /// 把后台任务结果应用到 UI 状态，返回需要由 App context 执行的副作用。
     pub fn apply(&mut self, outcome: WorkspaceOutcome) -> WorkspaceEffects {
-        self.busy = false;
+        let normal_job_running = self.busy;
+        let outcome = match outcome {
+            WorkspaceOutcome::InputVersioned { version, outcome } => {
+                self.busy = false;
+                if version != self.input_set.version() {
+                    return WorkspaceEffects::default();
+                }
+                *outcome
+            }
+            WorkspaceOutcome::DocumentVersioned { version, outcome } => {
+                self.busy = false;
+                if self.document_version() != Some(version) {
+                    return WorkspaceEffects::default();
+                }
+                *outcome
+            }
+            outcome => outcome,
+        };
+        let is_transient_preview = matches!(
+            &outcome,
+            WorkspaceOutcome::Image {
+                update: Some(DocumentUpdate { preview: true, .. }),
+                ..
+            }
+        ) || matches!(&outcome, WorkspaceOutcome::PreviewFailed { .. });
+        if is_transient_preview && normal_job_running {
+            return WorkspaceEffects::default();
+        }
+        if !is_transient_preview {
+            self.busy = false;
+        }
         let mut effects = WorkspaceEffects::default();
         match outcome {
             WorkspaceOutcome::Loaded {
@@ -573,36 +1058,79 @@ impl Workspace {
                 thumbs,
                 info,
                 status,
+                single,
+                append,
             } => {
-                self.thumbs = if thumbs.is_empty() {
-                    images.iter().map(to_thumb).collect()
+                if single {
+                    let mut images = images.into_iter();
+                    if let Some(image) = images.next() {
+                        self.document = Some(CurrentDocument::new(image));
+                        self.document_name = source_names.into_iter().next();
+                        self.source_bytes = source_bytes.map(Arc::new);
+                        self.result_bytes = None;
+                        self.show_document_preview();
+                    }
                 } else {
-                    thumbs
-                };
-                self.focus_index = 0;
-                if let Some(first) = images.first() {
-                    self.preview = Some(to_render_image(first));
-                    self.preview_dimensions = Some(first.dimensions());
+                    let loaded_thumbs = if thumbs.is_empty() {
+                        images.iter().map(to_thumb).collect()
+                    } else {
+                        thumbs
+                    };
+                    if append {
+                        self.thumbs.extend(loaded_thumbs);
+                        self.input_set.append(images, source_names);
+                    } else {
+                        self.thumbs = loaded_thumbs;
+                        self.input_set.replace(images, source_names);
+                    }
+                    self.retry_batch = None;
+                    if !append {
+                        self.focus_index = 0;
+                    }
+                    self.result_bytes = None;
+                    self.preview_source_at(self.focus_index);
                 }
-                self.images = Arc::new(images);
-                self.source_names = Arc::new(source_names);
-                self.source_bytes = source_bytes.map(Arc::new);
-                self.result_image = None;
-                self.result_bytes = None;
                 self.info = info;
                 self.status = status;
             }
-            WorkspaceOutcome::Image { image, status } => {
-                let image = Arc::new(image);
-                self.preview = Some(to_render_image(&image));
-                self.preview_dimensions = Some(image.dimensions());
-                self.result_image = Some(image);
-                self.result_bytes = None;
-                self.status = status;
+            WorkspaceOutcome::Image {
+                image,
+                status,
+                update,
+            } => {
+                let accepted = if let Some(update) = update {
+                    let Some(document) = self.document.as_mut() else {
+                        return effects;
+                    };
+                    if update.preview {
+                        update.preview_generation == Some(self.preview_generation)
+                            && document.set_transient(update.base_version, image, update.kind)
+                    } else {
+                        document.commit(update.base_version, image, update.kind)
+                    }
+                } else {
+                    if self
+                        .document
+                        .as_ref()
+                        .is_some_and(CurrentDocument::is_dirty)
+                    {
+                        effects.replacement_document =
+                            Some(PendingDocumentReplacement { image, status });
+                        return effects;
+                    }
+                    self.use_generated_result(image, status.clone());
+                    true
+                };
+                if accepted {
+                    self.result_bytes = None;
+                    self.show_document_preview();
+                    self.status = status;
+                }
             }
             WorkspaceOutcome::Bytes {
                 bytes,
                 extension,
+                kind,
                 preview,
                 status,
             } => {
@@ -610,8 +1138,11 @@ impl Workspace {
                     self.preview = Some(to_render_image(&preview));
                     self.preview_dimensions = Some(preview.dimensions());
                 }
-                self.result_bytes = Some(Arc::new(EncodedResult { bytes, extension }));
-                self.result_image = None;
+                self.result_bytes = Some(Arc::new(EncodedResult {
+                    bytes,
+                    extension,
+                    kind,
+                }));
                 self.status = status;
             }
             WorkspaceOutcome::Info { info, status } => {
@@ -622,11 +1153,32 @@ impl Workspace {
                 status,
                 directory,
                 info,
+                exported_version,
             } => {
                 self.status = status;
                 if let Some(info) = info {
                     self.info = info;
                 }
+                effects.last_output_dir = Some(directory);
+                if let (Some(version), Some(document)) = (exported_version, &mut self.document) {
+                    effects.document_exported = document.mark_exported(version);
+                }
+            }
+            WorkspaceOutcome::BatchFinished {
+                status,
+                directory,
+                results,
+                retry,
+                preview,
+            } => {
+                self.batch_cancel = None;
+                self.retry_batch = retry;
+                self.info = InfoMessage::BatchResults(results);
+                if let Some(preview) = preview {
+                    self.preview = Some(to_render_image(&preview));
+                    self.preview_dimensions = Some(preview.dimensions());
+                }
+                self.status = status;
                 effects.last_output_dir = Some(directory);
             }
             WorkspaceOutcome::Clipboard {
@@ -638,62 +1190,60 @@ impl Workspace {
                 effects.clipboard = Some(ClipboardPayload { bytes, format });
             }
             WorkspaceOutcome::Failed { kind, detail } => {
+                self.batch_cancel = None;
                 log::error!("workspace operation failed: {detail}");
                 self.status = UiMessage::Error(kind);
+            }
+            WorkspaceOutcome::PreviewFailed {
+                generation,
+                base_version,
+                kind,
+                detail,
+            } => {
+                if generation == Some(self.preview_generation)
+                    && self.document_version() == Some(base_version)
+                {
+                    log::error!("workspace preview failed: {detail}");
+                    self.status = UiMessage::Error(kind);
+                }
+            }
+            WorkspaceOutcome::InputVersioned { .. }
+            | WorkspaceOutcome::DocumentVersioned { .. } => {
+                unreachable!("input-version wrapper is removed before applying its outcome")
             }
         }
         effects
     }
 
-    fn first_images(&mut self) -> Option<Arc<Vec<RgbaImage>>> {
-        self.first_images_with(UiMessage::NeedImage)
-    }
-
     fn first_images_with(&mut self, missing: UiMessage) -> Option<Arc<Vec<RgbaImage>>> {
-        if self.images.is_empty() {
+        let Some(document) = &self.document else {
             self.status = missing;
             return None;
-        }
-        Some(Arc::clone(&self.images))
+        };
+        Some(Arc::new(vec![(*document.snapshot().image).clone()]))
     }
 
     fn all_images(&mut self) -> Option<Arc<Vec<RgbaImage>>> {
-        if self.images.is_empty() {
+        if self.input_set.is_empty() {
             self.status = UiMessage::NeedMultipleImages;
             return None;
         }
-        Some(Arc::clone(&self.images))
+        Some(self.input_set.images())
     }
 
     fn current_image_source(&self) -> Option<ImageSource> {
-        self.result_image
+        self.document
             .as_ref()
-            .map(|image| ImageSource::Result(Arc::clone(image)))
-            .or_else(|| {
-                (!self.images.is_empty()).then(|| ImageSource::Input {
-                    images: Arc::clone(&self.images),
-                    index: 0,
-                })
-            })
+            .map(CurrentDocument::snapshot)
+            .map(ImageSource::Document)
     }
 
-    fn current_image_or_status(&mut self, missing: UiMessage) -> Option<ImageSource> {
-        let image = self.current_image_source();
-        if image.is_none() {
+    fn document_snapshot_or_status(&mut self, missing: UiMessage) -> Option<DocumentSnapshot> {
+        let snapshot = self.document.as_ref().map(CurrentDocument::snapshot);
+        if snapshot.is_none() {
             self.status = missing;
         }
-        image
-    }
-
-    fn source_image_or_status(&mut self, missing: UiMessage) -> Option<ImageSource> {
-        let image = (!self.images.is_empty()).then(|| ImageSource::Input {
-            images: Arc::clone(&self.images),
-            index: 0,
-        });
-        if image.is_none() {
-            self.status = missing;
-        }
-        image
+        snapshot
     }
 
     fn start_job(&mut self, job: WorkspaceJob) -> Option<WorkspaceJob> {
@@ -708,6 +1258,7 @@ pub(crate) enum WorkspaceJob {
     LoadPaths {
         paths: Vec<PathBuf>,
         single: bool,
+        append: bool,
     },
     LoadClipboard {
         bytes: Vec<u8>,
@@ -715,16 +1266,19 @@ pub(crate) enum WorkspaceJob {
     Save {
         source: SaveSource,
         path: PathBuf,
+        collision_policy: CollisionPolicy,
     },
     Transform {
-        image: ImageSource,
+        document: DocumentSnapshot,
         operation: TransformOperation,
+        preview: bool,
+        preview_generation: Option<u64>,
     },
     ReadExif {
         bytes: Arc<Vec<u8>>,
     },
     StripExif {
-        bytes: Arc<Vec<u8>>,
+        document: DocumentSnapshot,
     },
     GenerateQr {
         text: String,
@@ -735,23 +1289,32 @@ pub(crate) enum WorkspaceJob {
     },
     Collage {
         images: Arc<Vec<RgbaImage>>,
+        input_version: InputSetVersion,
         layout: CollageLayout,
         options: CollageOptions,
     },
     Slice {
         images: Arc<Vec<RgbaImage>>,
+        document_version: DocumentVersion,
         grid: SliceGrid,
         directory: PathBuf,
+        collision_policy: CollisionPolicy,
     },
     Gif {
         images: Arc<Vec<RgbaImage>>,
+        input_version: InputSetVersion,
         params: GifParams,
     },
     Batch {
         images: Arc<Vec<RgbaImage>>,
         names: Arc<Vec<String>>,
-        operation: BatchOperation,
+        input_version: InputSetVersion,
+        operations: Vec<BatchStepOperation>,
+        output: EncodeSettings,
         directory: PathBuf,
+        collision_policy: CollisionPolicy,
+        cancel: Arc<AtomicBool>,
+        preview_index: usize,
     },
     CopyImage {
         image: ImageSource,
@@ -779,8 +1342,38 @@ pub(crate) enum TransformOperation {
     Beautify(BeautifyParams),
 }
 
-pub(crate) enum BatchOperation {
-    Ready(BatchOp),
+impl TransformOperation {
+    pub(crate) fn edit_kind(&self) -> EditKind {
+        match self {
+            Self::Rotate(_) => EditKind::Rotate,
+            Self::Crop(_) => EditKind::Crop,
+            Self::Resize { .. } => EditKind::Resize,
+            Self::Beautify(_) => EditKind::Beautify,
+        }
+    }
+}
+
+impl WorkspaceOperation {
+    pub(crate) fn edit_kind(&self) -> Option<EditKind> {
+        match self {
+            Self::Transform(operation) | Self::PreviewTransform(operation) => {
+                Some(operation.edit_kind())
+            }
+            _ => None,
+        }
+    }
+}
+
+pub(crate) struct DocumentUpdate {
+    base_version: DocumentVersion,
+    kind: EditKind,
+    preview: bool,
+    preview_generation: Option<u64>,
+}
+
+#[derive(Clone)]
+pub(crate) enum BatchStepOperation {
+    Ready(BatchStep),
     TextWatermark {
         text: String,
         opacity: f32,
@@ -800,7 +1393,11 @@ impl WorkspaceJob {
         mut report_progress: impl FnMut(usize, usize),
     ) -> WorkspaceOutcome {
         match self {
-            Self::LoadPaths { paths, single } => load_paths(paths, single),
+            Self::LoadPaths {
+                paths,
+                single,
+                append,
+            } => load_paths(paths, single, append),
             Self::LoadClipboard { bytes } => match decode_bytes(&bytes) {
                 Ok(image) => {
                     let thumbs = vec![to_thumb(&image)];
@@ -814,11 +1411,24 @@ impl WorkspaceJob {
                         source_bytes: Some(bytes),
                         thumbs,
                         status: UiMessage::ImagePasted,
+                        single: true,
+                        append: false,
                     }
                 }
                 Err((kind, detail)) => WorkspaceOutcome::Failed { kind, detail },
             },
-            Self::Save { source, path } => {
+            Self::Save {
+                source,
+                path,
+                collision_policy,
+            } => {
+                let exported_version = match &source {
+                    SaveSource::Image {
+                        image: ImageSource::Document(snapshot),
+                        ..
+                    } => Some(snapshot.version),
+                    _ => None,
+                };
                 let bytes = match source {
                     SaveSource::Image { image, settings } => {
                         match format::encode(image.image(), settings) {
@@ -828,32 +1438,57 @@ impl WorkspaceJob {
                     }
                     SaveSource::Bytes { bytes } => bytes.bytes.clone(),
                 };
-                match std::fs::write(&path, bytes) {
-                    Ok(()) => WorkspaceOutcome::Written {
-                        status: UiMessage::Saved,
-                        directory: parent_or_path(&path),
+                match export_plan::publish_image(&path, &bytes, collision_policy) {
+                    Ok(PublishOutcome::Written(written_path)) => WorkspaceOutcome::Written {
+                        status: UiMessage::Exported,
+                        directory: parent_or_path(&written_path),
                         info: None,
+                        exported_version,
+                    },
+                    Ok(PublishOutcome::Skipped(skipped_path)) => WorkspaceOutcome::Written {
+                        status: UiMessage::ExportSkipped,
+                        directory: parent_or_path(&skipped_path),
+                        info: None,
+                        exported_version: None,
                     },
                     Err(error) => io_failure(&path, error),
                 }
             }
-            Self::Transform { image, operation } => {
+            Self::Transform {
+                document,
+                operation,
+                preview,
+                preview_generation,
+            } => {
+                let kind = operation.edit_kind();
                 let result = match operation {
                     TransformOperation::Rotate(rotation) => {
-                        Ok(transform::rotate(image.image(), rotation))
+                        Ok(transform::rotate(&document.image, rotation))
                     }
-                    TransformOperation::Crop(rect) => transform::crop(image.image(), rect),
+                    TransformOperation::Crop(rect) => transform::crop(&document.image, rect),
                     TransformOperation::Resize { width, height } => {
-                        transform::resize(image.image(), width, height, ResizeFilter::default())
+                        transform::resize(&document.image, width, height, ResizeFilter::default())
                     }
                     TransformOperation::Beautify(params) => {
-                        beautify::beautify(image.image(), &params)
+                        beautify::beautify(&document.image, &params)
                     }
                 };
                 match result {
                     Ok(image) => WorkspaceOutcome::Image {
                         image,
                         status: UiMessage::SavedReady,
+                        update: Some(DocumentUpdate {
+                            base_version: document.version,
+                            kind,
+                            preview,
+                            preview_generation,
+                        }),
+                    },
+                    Err(error) if preview => WorkspaceOutcome::PreviewFailed {
+                        generation: preview_generation,
+                        base_version: document.version,
+                        kind: ErrorKind::Operation,
+                        detail: error.to_string(),
                     },
                     Err(error) => failure(ErrorKind::Operation, error),
                 }
@@ -865,22 +1500,29 @@ impl WorkspaceJob {
                 },
                 Err(error) => failure(ErrorKind::Exif, error),
             },
-            Self::StripExif { bytes } => match exif::strip(&bytes) {
-                Ok(clean) => {
-                    let preview = format::decode(&clean).ok();
-                    WorkspaceOutcome::Bytes {
-                        extension: detect_ext(&clean),
+            Self::StripExif { document } => versioned_document(
+                document.version,
+                match format::encode(
+                    &document.image,
+                    EncodeSettings::Png {
+                        compression: PngCompression::Default,
+                    },
+                ) {
+                    Ok(clean) => WorkspaceOutcome::Bytes {
+                        extension: "png",
+                        kind: EncodedResultKind::Exif,
                         bytes: clean,
-                        preview,
+                        preview: Some((*document.image).clone()),
                         status: UiMessage::ExifStripped,
-                    }
-                }
-                Err(error) => failure(ErrorKind::Exif, error),
-            },
+                    },
+                    Err(error) => failure(ErrorKind::Exif, error),
+                },
+            ),
             Self::GenerateQr { text, options } => match qr::generate(&text, options) {
                 Ok(image) => WorkspaceOutcome::Image {
                     image,
                     status: UiMessage::QrGenerated,
+                    update: None,
                 },
                 Err(error) => failure(ErrorKind::Qr, error),
             },
@@ -893,107 +1535,224 @@ impl WorkspaceJob {
             },
             Self::Collage {
                 images,
+                input_version,
                 layout,
                 options,
-            } => match collage::compose(&images, layout, options) {
-                Ok(image) => WorkspaceOutcome::Image {
-                    image,
-                    status: UiMessage::CollageReady,
+            } => versioned_input(
+                input_version,
+                match collage::compose(&images, layout, options) {
+                    Ok(image) => WorkspaceOutcome::Image {
+                        image,
+                        status: UiMessage::CollageReady,
+                        update: None,
+                    },
+                    Err(error) => failure(ErrorKind::Operation, error),
                 },
-                Err(error) => failure(ErrorKind::Operation, error),
-            },
+            ),
             Self::Slice {
                 images,
+                document_version,
                 grid,
                 directory,
-            } => match slice::slice(&images[0], grid) {
-                Ok(tiles) => {
-                    let total = tiles.len();
-                    let mut successes = 0;
-                    for tile in tiles {
-                        let bytes = match format::encode(
-                            &tile.image,
-                            EncodeSettings::Png {
-                                compression: PngCompression::Default,
-                            },
-                        ) {
-                            Ok(bytes) => bytes,
-                            Err(error) => {
-                                log::error!("slice tile encode failed: {error}");
+                collision_policy,
+            } => versioned_document(
+                document_version,
+                match slice::slice(&images[0], grid) {
+                    Ok(tiles) => {
+                        let total = tiles.len();
+                        let requested_paths = tiles
+                            .iter()
+                            .map(|tile| directory.join(naming::tile_filename(tile)))
+                            .collect::<Vec<_>>();
+                        let resolved_paths =
+                            export_plan::resolve_destinations(&requested_paths, collision_policy);
+                        let mut successes = 0;
+                        for (tile, destination) in tiles.into_iter().zip(resolved_paths) {
+                            let Some(path) = destination else {
                                 continue;
+                            };
+                            let bytes = match format::encode(
+                                &tile.image,
+                                EncodeSettings::Png {
+                                    compression: PngCompression::Default,
+                                },
+                            ) {
+                                Ok(bytes) => bytes,
+                                Err(error) => {
+                                    log::error!("slice tile encode failed: {error}");
+                                    continue;
+                                }
+                            };
+                            match export_plan::publish_image(&path, &bytes, collision_policy) {
+                                Ok(PublishOutcome::Written(_)) => successes += 1,
+                                Ok(PublishOutcome::Skipped(_)) => {}
+                                Err(error) => log::error!(
+                                    "slice tile write failed for {}: {error}",
+                                    path.display()
+                                ),
                             }
-                        };
-                        let path = directory.join(naming::tile_filename(&tile));
-                        match std::fs::write(&path, bytes) {
-                            Ok(()) => successes += 1,
-                            Err(error) => log::error!(
-                                "slice tile write failed for {}: {error}",
-                                path.display()
-                            ),
+                        }
+                        WorkspaceOutcome::Written {
+                            status: UiMessage::SlicesSaved { successes, total },
+                            directory,
+                            info: None,
+                            exported_version: None,
                         }
                     }
-                    WorkspaceOutcome::Written {
-                        status: UiMessage::SlicesSaved { successes, total },
-                        directory,
-                        info: None,
-                    }
-                }
-                Err(error) => failure(ErrorKind::Operation, error),
-            },
-            Self::Gif { images, params } => match animation::compose(&images, &params) {
-                Ok(bytes) => WorkspaceOutcome::Bytes {
-                    bytes,
-                    extension: "gif",
-                    preview: images.first().cloned(),
-                    status: UiMessage::GifReady,
+                    Err(error) => failure(ErrorKind::Operation, error),
                 },
-                Err(error) => failure(ErrorKind::Operation, error),
-            },
+            ),
+            Self::Gif {
+                images,
+                input_version,
+                params,
+            } => versioned_input(
+                input_version,
+                match animation::compose(&images, &params) {
+                    Ok(bytes) => WorkspaceOutcome::Bytes {
+                        bytes,
+                        extension: "gif",
+                        kind: EncodedResultKind::Gif,
+                        preview: images.first().cloned(),
+                        status: UiMessage::GifReady,
+                    },
+                    Err(error) => failure(ErrorKind::Operation, error),
+                },
+            ),
             Self::Batch {
                 images,
                 names,
-                operation,
+                input_version,
+                operations,
+                output,
                 directory,
+                collision_policy,
+                cancel,
+                preview_index,
             } => {
-                let operation = match prepare_batch_operation(operation) {
-                    Ok(operation) => operation,
-                    Err((kind, detail)) => return WorkspaceOutcome::Failed { kind, detail },
+                let retry_operations = operations.clone();
+                let steps = match operations
+                    .into_iter()
+                    .map(prepare_batch_operation)
+                    .collect::<Result<Vec<_>, _>>()
+                {
+                    Ok(steps) => steps,
+                    Err((kind, detail)) => {
+                        return versioned_input(
+                            input_version,
+                            WorkspaceOutcome::Failed { kind, detail },
+                        );
+                    }
                 };
+                let pipeline = BatchPipeline { steps, output };
                 let total = images.len();
+                let requested_paths = names
+                    .iter()
+                    .enumerate()
+                    .map(|(index, source_stem)| {
+                        directory.join(naming::batch_filename(
+                            source_stem,
+                            index,
+                            pipeline.output.format(),
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                let resolved_paths =
+                    export_plan::resolve_destinations(&requested_paths, collision_policy);
                 report_progress(0, total);
                 let mut successes = 0;
                 let mut failures = 0;
-                let mut failed_items = Vec::new();
+                let mut cancelled = false;
+                let mut item_results = Vec::with_capacity(total);
+                let mut retry_images = Vec::new();
+                let mut retry_names = Vec::new();
+                let mut selected_preview = None;
                 for (index, image) in images.iter().enumerate() {
-                    let mut result = batch::process(std::slice::from_ref(image), &operation);
+                    if cancel.load(Ordering::Relaxed) {
+                        cancelled = true;
+                        item_results.extend((index..total).map(|remaining| BatchItemResult {
+                            name: batch_item_name(&names, remaining),
+                            width: None,
+                            height: None,
+                            bytes: None,
+                            outcome: BatchItemOutcome::Cancelled,
+                        }));
+                        break;
+                    }
+                    let mut result =
+                        batch::process_pipeline(std::slice::from_ref(image), &pipeline);
                     let Some((_, output)) = result.successes.pop() else {
                         failures += 1;
                         let name = batch_item_name(&names, index);
-                        if let Some(failure) = result.failures.pop() {
-                            failed_items
-                                .push(BatchItemFailure::new(name, core_error_kind(&failure.error)));
+                        let kind = if let Some(failure) = result.failures.pop() {
                             log::error!("batch item {} failed: {}", index + 1, failure.error);
+                            core_error_kind(&failure.error)
                         } else {
-                            failed_items.push(BatchItemFailure::new(name, ErrorKind::Operation));
-                        }
+                            ErrorKind::Operation
+                        };
+                        item_results.push(BatchItemResult {
+                            name: name.clone(),
+                            width: None,
+                            height: None,
+                            bytes: None,
+                            outcome: BatchItemOutcome::Failure(kind),
+                        });
+                        retry_images.push(image.clone());
+                        retry_names.push(name);
                         report_progress(index + 1, total);
                         continue;
                     };
-                    let source_stem = names
-                        .get(index)
-                        .map(String::as_str)
-                        .filter(|name| !name.is_empty())
-                        .unwrap_or("image");
-                    let path =
-                        directory.join(naming::batch_filename(source_stem, index, output.format));
-                    match std::fs::write(&path, output.bytes) {
-                        Ok(()) => successes += 1,
+                    let output_size = output.bytes.len();
+                    let output_width = output.width;
+                    let output_height = output.height;
+                    let name = batch_item_name(&names, index);
+                    if index == preview_index {
+                        selected_preview = format::decode(&output.bytes).ok();
+                    }
+                    let Some(path) = resolved_paths.get(index).cloned().flatten() else {
+                        failures += 1;
+                        item_results.push(BatchItemResult {
+                            name,
+                            width: Some(output_width),
+                            height: Some(output_height),
+                            bytes: Some(output_size),
+                            outcome: BatchItemOutcome::Failure(ErrorKind::Skipped),
+                        });
+                        report_progress(index + 1, total);
+                        continue;
+                    };
+                    match export_plan::publish_image(&path, &output.bytes, collision_policy) {
+                        Ok(PublishOutcome::Written(_)) => {
+                            successes += 1;
+                            item_results.push(BatchItemResult {
+                                name,
+                                width: Some(output_width),
+                                height: Some(output_height),
+                                bytes: Some(output_size),
+                                outcome: BatchItemOutcome::Success,
+                            });
+                        }
+                        Ok(PublishOutcome::Skipped(_)) => {
+                            failures += 1;
+                            item_results.push(BatchItemResult {
+                                name: name.clone(),
+                                width: Some(output_width),
+                                height: Some(output_height),
+                                bytes: Some(output_size),
+                                outcome: BatchItemOutcome::Failure(ErrorKind::Skipped),
+                            });
+                        }
                         Err(error) => {
                             failures += 1;
-                            failed_items.push(BatchItemFailure::new(
-                                batch_item_name(&names, index),
-                                classify_io(&error),
-                            ));
+                            item_results.push(BatchItemResult {
+                                name: name.clone(),
+                                width: Some(output_width),
+                                height: Some(output_height),
+                                bytes: Some(output_size),
+                                outcome: BatchItemOutcome::Failure(classify_io(&error)),
+                            });
+                            retry_images.push(image.clone());
+                            retry_names.push(name);
                             log::error!(
                                 "batch output write failed for {}: {error}",
                                 path.display()
@@ -1002,16 +1761,32 @@ impl WorkspaceJob {
                     }
                     report_progress(index + 1, total);
                 }
-                WorkspaceOutcome::Written {
-                    status: UiMessage::BatchComplete {
-                        successes,
-                        failures,
-                        total,
+                let retry = (!retry_images.is_empty()).then_some(RetryBatch {
+                    images: Arc::new(retry_images),
+                    names: Arc::new(retry_names),
+                    operations: retry_operations,
+                    output,
+                    directory: directory.clone(),
+                    collision_policy,
+                });
+                versioned_input(
+                    input_version,
+                    WorkspaceOutcome::BatchFinished {
+                        status: if cancelled {
+                            UiMessage::BatchCancelled { successes, total }
+                        } else {
+                            UiMessage::BatchComplete {
+                                successes,
+                                failures,
+                                total,
+                            }
+                        },
+                        directory,
+                        results: item_results,
+                        retry,
+                        preview: selected_preview,
                     },
-                    directory,
-                    info: (!failed_items.is_empty())
-                        .then_some(InfoMessage::BatchFailures(failed_items)),
-                }
+                )
             }
             Self::CopyImage { image } => match format::encode(
                 image.image(),
@@ -1037,6 +1812,14 @@ impl WorkspaceJob {
 
 /// 后台任务的完成结果。
 pub(crate) enum WorkspaceOutcome {
+    InputVersioned {
+        version: InputSetVersion,
+        outcome: Box<WorkspaceOutcome>,
+    },
+    DocumentVersioned {
+        version: DocumentVersion,
+        outcome: Box<WorkspaceOutcome>,
+    },
     Loaded {
         images: Vec<RgbaImage>,
         source_names: Vec<String>,
@@ -1044,14 +1827,18 @@ pub(crate) enum WorkspaceOutcome {
         thumbs: Vec<Arc<RenderImage>>,
         info: InfoMessage,
         status: UiMessage,
+        single: bool,
+        append: bool,
     },
     Image {
         image: RgbaImage,
         status: UiMessage,
+        update: Option<DocumentUpdate>,
     },
     Bytes {
         bytes: Vec<u8>,
         extension: &'static str,
+        kind: EncodedResultKind,
         preview: Option<RgbaImage>,
         status: UiMessage,
     },
@@ -1063,6 +1850,14 @@ pub(crate) enum WorkspaceOutcome {
         status: UiMessage,
         directory: PathBuf,
         info: Option<InfoMessage>,
+        exported_version: Option<DocumentVersion>,
+    },
+    BatchFinished {
+        status: UiMessage,
+        directory: PathBuf,
+        results: Vec<BatchItemResult>,
+        retry: Option<RetryBatch>,
+        preview: Option<RgbaImage>,
     },
     Clipboard {
         bytes: Vec<u8>,
@@ -1073,12 +1868,25 @@ pub(crate) enum WorkspaceOutcome {
         kind: ErrorKind,
         detail: String,
     },
+    PreviewFailed {
+        generation: Option<u64>,
+        base_version: DocumentVersion,
+        kind: ErrorKind,
+        detail: String,
+    },
 }
 
 #[derive(Default)]
 pub(crate) struct WorkspaceEffects {
     pub last_output_dir: Option<PathBuf>,
     pub clipboard: Option<ClipboardPayload>,
+    pub document_exported: bool,
+    pub replacement_document: Option<PendingDocumentReplacement>,
+}
+
+pub(crate) struct PendingDocumentReplacement {
+    pub image: RgbaImage,
+    pub status: UiMessage,
 }
 
 pub(crate) struct ClipboardPayload {
@@ -1107,21 +1915,23 @@ impl ClipboardFormat {
     }
 }
 
-fn prepare_batch_operation(operation: BatchOperation) -> Result<BatchOp, (ErrorKind, String)> {
+fn prepare_batch_operation(
+    operation: BatchStepOperation,
+) -> Result<BatchStep, (ErrorKind, String)> {
     match operation {
-        BatchOperation::Ready(operation) => Ok(operation),
-        BatchOperation::TextWatermark {
+        BatchStepOperation::Ready(operation) => Ok(operation),
+        BatchStepOperation::TextWatermark {
             text,
             opacity,
             position,
         } => text_watermark::rasterize(&text)
-            .map(|overlay| BatchOp::Watermark {
+            .map(|overlay| BatchStep::Watermark {
                 overlay,
                 opacity,
                 position,
             })
             .map_err(|detail| (ErrorKind::Operation, detail)),
-        BatchOperation::ImageWatermark {
+        BatchStepOperation::ImageWatermark {
             path,
             opacity,
             position,
@@ -1129,7 +1939,7 @@ fn prepare_batch_operation(operation: BatchOperation) -> Result<BatchOp, (ErrorK
             let bytes = std::fs::read(&path)
                 .map_err(|error| (classify_io(&error), format!("{}: {error}", path.display())))?;
             let overlay = decode_bytes(&bytes)?;
-            Ok(BatchOp::Watermark {
+            Ok(BatchStep::Watermark {
                 overlay,
                 opacity,
                 position,
@@ -1146,7 +1956,7 @@ fn batch_item_name(names: &[String], index: usize) -> String {
         .unwrap_or_else(|| format!("#{}", index + 1))
 }
 
-fn load_paths(paths: Vec<PathBuf>, single: bool) -> WorkspaceOutcome {
+fn load_paths(paths: Vec<PathBuf>, single: bool, append: bool) -> WorkspaceOutcome {
     let mut images = Vec::new();
     let mut source_names = Vec::new();
     let mut first_bytes = None;
@@ -1162,11 +1972,15 @@ fn load_paths(paths: Vec<PathBuf>, single: bool) -> WorkspaceOutcome {
                         first_path = Some(path.clone());
                         first_bytes = Some(bytes);
                     }
-                    source_names.push(
+                    source_names.push(if single {
+                        path.file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_else(|| "image".to_string())
+                    } else {
                         path.file_stem()
                             .map(|name| name.to_string_lossy().into_owned())
-                            .unwrap_or_else(|| "image".to_string()),
-                    );
+                            .unwrap_or_else(|| "image".to_string())
+                    });
                     images.push(image);
                     if single {
                         break;
@@ -1221,6 +2035,22 @@ fn load_paths(paths: Vec<PathBuf>, single: bool) -> WorkspaceOutcome {
                 failures,
             }
         },
+        single,
+        append,
+    }
+}
+
+fn versioned_input(version: InputSetVersion, outcome: WorkspaceOutcome) -> WorkspaceOutcome {
+    WorkspaceOutcome::InputVersioned {
+        version,
+        outcome: Box::new(outcome),
+    }
+}
+
+fn versioned_document(version: DocumentVersion, outcome: WorkspaceOutcome) -> WorkspaceOutcome {
+    WorkspaceOutcome::DocumentVersioned {
+        version,
+        outcome: Box::new(outcome),
     }
 }
 
@@ -1273,14 +2103,6 @@ fn parent_or_path(path: &Path) -> PathBuf {
     path.parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| path.to_path_buf())
-}
-
-fn detect_ext(bytes: &[u8]) -> &'static str {
-    match image::guess_format(bytes) {
-        Ok(image::ImageFormat::Png) => "png",
-        Ok(image::ImageFormat::WebP) => "webp",
-        _ => "jpg",
-    }
 }
 
 /// 把 `impressy-core` 的 RGBA 图转成 GPUI 的 [`RenderImage`]（BGRA 序）。
@@ -1342,7 +2164,7 @@ mod tests {
             .expect("supported paths should create a load job");
 
         match job {
-            WorkspaceJob::LoadPaths { paths, single } => {
+            WorkspaceJob::LoadPaths { paths, single, .. } => {
                 assert!(!single);
                 assert_eq!(
                     paths,
@@ -1397,11 +2219,271 @@ mod tests {
                 EncodeSettings::Png {
                     compression: PngCompression::Default,
                 },
+                None,
             )
             .expect("a selected path should prepare the save job");
 
         assert!(matches!(job, WorkspaceJob::Save { path: job_path, .. } if job_path == path));
         assert!(workspace.is_busy());
+    }
+
+    #[test]
+    fn dirty_document_export_ignores_an_unrelated_encoded_feature_result() {
+        let mut workspace = workspace_with_images(1);
+        workspace.result_bytes = Some(Arc::new(EncodedResult {
+            bytes: vec![1, 2, 3],
+            extension: "gif",
+            kind: EncodedResultKind::Gif,
+        }));
+
+        let job = workspace
+            .prepare_document_export_path(
+                PathBuf::from("document.png"),
+                EncodeSettings::Png {
+                    compression: PngCompression::Default,
+                },
+                CollisionPolicy::PreserveBoth,
+            )
+            .expect("the guarded export should target the dirty document");
+
+        assert!(matches!(
+            job,
+            WorkspaceJob::Save {
+                source: SaveSource::Image {
+                    image: ImageSource::Document(_),
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn encoded_feature_result_is_exportable_without_a_current_document() {
+        let mut workspace = Workspace {
+            result_bytes: Some(Arc::new(EncodedResult {
+                bytes: vec![1, 2, 3],
+                extension: "gif",
+                kind: EncodedResultKind::Gif,
+            })),
+            ..Workspace::default()
+        };
+
+        assert!(workspace.has_encoded_result(EncodedResultKind::Gif));
+        let job = workspace
+            .prepare_save_path(
+                PathBuf::from("animation.gif"),
+                EncodeSettings::Png {
+                    compression: PngCompression::Default,
+                },
+                Some(EncodedResultKind::Gif),
+            )
+            .expect("an encoded feature result should remain exportable");
+        assert!(matches!(
+            job,
+            WorkspaceJob::Save {
+                source: SaveSource::Bytes { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn encoded_results_are_scoped_to_the_feature_that_created_them() {
+        let mut workspace = workspace_with_images(1);
+        workspace.result_bytes = Some(Arc::new(EncodedResult {
+            bytes: vec![1, 2, 3],
+            extension: "gif",
+            kind: EncodedResultKind::Gif,
+        }));
+
+        let job = workspace
+            .prepare_save_path(
+                PathBuf::from("document.png"),
+                EncodeSettings::Png {
+                    compression: PngCompression::Default,
+                },
+                Some(EncodedResultKind::Exif),
+            )
+            .expect("a result from another feature must fall back to the document");
+
+        assert!(matches!(
+            job,
+            WorkspaceJob::Save {
+                source: SaveSource::Image { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn export_extension_matches_the_actual_selected_encoder() {
+        let mut workspace = workspace_with_images(1);
+        workspace.result_bytes = Some(Arc::new(EncodedResult {
+            bytes: vec![1, 2, 3],
+            extension: "gif",
+            kind: EncodedResultKind::Gif,
+        }));
+
+        assert_eq!(
+            workspace.export_extension(
+                EncodeSettings::Jpeg {
+                    quality: impressy_core::format::Quality::new(85).unwrap(),
+                },
+                None,
+            ),
+            "jpg"
+        );
+        assert_eq!(
+            workspace.export_extension(
+                EncodeSettings::Png {
+                    compression: PngCompression::Default,
+                },
+                Some(EncodedResultKind::Gif),
+            ),
+            "gif"
+        );
+    }
+
+    #[test]
+    fn generated_output_defers_replacement_of_a_dirty_document() {
+        let mut workspace = workspace_with_images(1);
+        let version = workspace.document_version().unwrap();
+        workspace.document.as_mut().unwrap().commit(
+            version,
+            RgbaImage::from_pixel(2, 2, Rgba([2, 0, 0, 255])),
+            EditKind::Rotate,
+        );
+
+        let effects = workspace.apply(WorkspaceOutcome::Image {
+            image: RgbaImage::from_pixel(2, 2, Rgba([3, 0, 0, 255])),
+            status: UiMessage::QrGenerated,
+            update: None,
+        });
+
+        assert_eq!(
+            workspace
+                .document
+                .as_ref()
+                .unwrap()
+                .snapshot()
+                .image
+                .get_pixel(0, 0)
+                .0[0],
+            2
+        );
+        let replacement = effects
+            .replacement_document
+            .expect("dirty document replacement must be deferred to the shell guard");
+        assert_eq!(replacement.image.get_pixel(0, 0).0[0], 3);
+        assert_eq!(replacement.status, UiMessage::QrGenerated);
+    }
+
+    #[test]
+    fn late_preview_cannot_replace_a_newer_task_status() {
+        let mut workspace = workspace_with_images(1);
+        let preview = workspace
+            .prepare(WorkspaceOperation::PreviewTransform(
+                TransformOperation::Resize {
+                    width: 1,
+                    height: 1,
+                },
+            ))
+            .expect("preview job");
+        workspace.busy = true;
+        workspace.status = UiMessage::BatchProgress {
+            completed: 1,
+            total: 2,
+        };
+
+        workspace.apply(preview.run_with_progress(|_, _| {}));
+
+        assert_eq!(
+            workspace.status,
+            UiMessage::BatchProgress {
+                completed: 1,
+                total: 2,
+            }
+        );
+        assert!(!workspace.has_transient_preview());
+    }
+
+    #[test]
+    fn requesting_a_new_preview_removes_the_previous_transient() {
+        let mut workspace = workspace_with_images(1);
+        let version = workspace.document_version().unwrap();
+        workspace.document.as_mut().unwrap().set_transient(
+            version,
+            RgbaImage::from_pixel(1, 1, Rgba([4, 0, 0, 255])),
+            EditKind::Resize,
+        );
+        assert!(workspace.has_transient_preview());
+
+        let job = workspace.prepare(WorkspaceOperation::PreviewTransform(
+            TransformOperation::Resize {
+                width: 2,
+                height: 2,
+            },
+        ));
+
+        assert!(job.is_some());
+        assert!(!workspace.has_transient_preview());
+    }
+
+    #[test]
+    fn ai_reference_uses_applied_pixels_instead_of_transient_preview_pixels() {
+        let mut workspace = workspace_with_images(1);
+        let version = workspace.document_version().unwrap();
+        workspace.document.as_mut().unwrap().set_transient(
+            version,
+            RgbaImage::from_pixel(2, 2, Rgba([9, 0, 0, 255])),
+            EditKind::Beautify,
+        );
+
+        let reference = workspace
+            .ai_reference_snapshot()
+            .expect("document reference");
+
+        assert_eq!(reference.version, version);
+        assert_eq!(reference.image.get_pixel(0, 0).0[0], 255);
+    }
+
+    #[test]
+    fn busy_workspace_rejects_generated_document_replacement() {
+        let mut workspace = workspace_with_images(1);
+        let version = workspace.document_version();
+        workspace.busy = true;
+
+        assert!(!workspace.use_ai_result(RgbaImage::from_pixel(2, 2, Rgba([9, 0, 0, 255]),)));
+        assert_eq!(workspace.document_version(), version);
+        assert_eq!(workspace.status, UiMessage::Busy);
+    }
+
+    #[test]
+    fn strip_exif_uses_the_latest_applied_document_pixels() {
+        let mut workspace = workspace_with_images(1);
+        let version = workspace.document_version().unwrap();
+        workspace.document.as_mut().unwrap().commit(
+            version,
+            RgbaImage::from_pixel(2, 2, Rgba([7, 8, 9, 255])),
+            EditKind::Rotate,
+        );
+        let job = workspace
+            .prepare(WorkspaceOperation::StripExif)
+            .expect("strip EXIF job");
+
+        let WorkspaceOutcome::DocumentVersioned { outcome, .. } = job.run_with_progress(|_, _| {})
+        else {
+            panic!("strip EXIF outcome must be document-versioned");
+        };
+        let WorkspaceOutcome::Bytes { bytes, kind, .. } = *outcome else {
+            panic!("strip EXIF must produce encoded bytes");
+        };
+        assert_eq!(kind, EncodedResultKind::Exif);
+        assert_eq!(
+            format::decode(&bytes).unwrap().get_pixel(0, 0).0,
+            [7, 8, 9, 255]
+        );
     }
 
     #[test]
@@ -1411,7 +2493,7 @@ mod tests {
         let grid = SliceGrid::new(2, 3).expect("valid slice grid");
 
         let job = workspace
-            .prepare_slice_directory(grid, directory.clone())
+            .prepare_slice_directory(grid, directory.clone(), CollisionPolicy::PreserveBoth)
             .expect("a selected directory should prepare the slice job");
 
         assert!(matches!(
@@ -1429,11 +2511,17 @@ mod tests {
         let mut workspace = workspace_with_images(2);
         let directory = PathBuf::from("batch-output");
         let watermark = PathBuf::from("watermark.png");
-        let request = BatchRequest::Watermark {
-            source: WatermarkSource::Image,
-            text: String::new(),
-            opacity: 0.5,
-            placement: WatermarkPlacement::BottomRight,
+        let request = BatchRequest::Pipeline {
+            steps: vec![BatchRequestStep::Watermark {
+                source: WatermarkSource::Image,
+                text: String::new(),
+                opacity: 0.5,
+                placement: WatermarkPlacement::BottomRight,
+            }],
+            output: EncodeSettings::Png {
+                compression: PngCompression::Fast,
+            },
+            collision_policy: CollisionPolicy::PreserveBoth,
         };
 
         let job = workspace
@@ -1443,10 +2531,11 @@ mod tests {
         assert!(matches!(
             job,
             WorkspaceJob::Batch {
-                operation: BatchOperation::ImageWatermark { path, .. },
+                operations,
                 directory: job_directory,
                 ..
-            } if path == watermark && job_directory == directory
+            } if matches!(operations.as_slice(), [BatchStepOperation::ImageWatermark { path, .. }] if path == &watermark)
+                && job_directory == directory
         ));
     }
 
@@ -1462,6 +2551,7 @@ mod tests {
                     EncodeSettings::Png {
                         compression: PngCompression::Default,
                     },
+                    None,
                 )
                 .is_none()
         );
@@ -1469,15 +2559,18 @@ mod tests {
     }
 
     fn workspace_with_images(count: usize) -> Workspace {
-        Workspace {
-            images: Arc::new(
-                (0..count)
-                    .map(|_| RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])))
-                    .collect(),
-            ),
-            source_names: Arc::new((0..count).map(|index| format!("image-{index}")).collect()),
-            ..Workspace::default()
+        let images = (0..count)
+            .map(|_| RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])))
+            .collect::<Vec<_>>();
+        let names = (0..count)
+            .map(|index| format!("image-{index}"))
+            .collect::<Vec<_>>();
+        let mut workspace = Workspace::default();
+        workspace.input_set.replace(images.clone(), names);
+        if let Some(image) = images.into_iter().next() {
+            workspace.document = Some(CurrentDocument::new(image));
         }
+        workspace
     }
 
     #[test]
@@ -1506,13 +2599,15 @@ mod tests {
         let job = WorkspaceJob::Batch {
             images,
             names,
-            operation: BatchOperation::Ready(BatchOp::Convert {
-                format: OutputFormat::Png,
-                settings: EncodeSettings::Png {
-                    compression: PngCompression::Fast,
-                },
-            }),
+            input_version: InputSetVersion::INITIAL,
+            operations: vec![],
+            output: EncodeSettings::Png {
+                compression: PngCompression::Fast,
+            },
             directory: directory.path().to_path_buf(),
+            collision_policy: CollisionPolicy::PreserveBoth,
+            cancel: Arc::new(AtomicBool::new(false)),
+            preview_index: 0,
         };
         let mut progress = Vec::new();
         let outcome = job.run_with_progress(|completed, total| {
@@ -1520,14 +2615,17 @@ mod tests {
         });
 
         match outcome {
-            WorkspaceOutcome::Written { status, .. } => assert_eq!(
-                status,
-                UiMessage::BatchComplete {
-                    successes: 2,
-                    failures: 0,
-                    total: 2,
-                }
-            ),
+            WorkspaceOutcome::InputVersioned { outcome, .. } => match *outcome {
+                WorkspaceOutcome::BatchFinished { status, .. } => assert_eq!(
+                    status,
+                    UiMessage::BatchComplete {
+                        successes: 2,
+                        failures: 0,
+                        total: 2,
+                    }
+                ),
+                _ => panic!("batch job should report batch results"),
+            },
             _ => panic!("batch job should write its outputs"),
         }
         assert!(directory.path().join("hero_cover-impressy-1.png").is_file());
@@ -1562,25 +2660,136 @@ mod tests {
         let job = WorkspaceJob::Batch {
             images: Arc::new(vec![RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255]))]),
             names: Arc::new(vec!["broken-item".to_string()]),
-            operation: BatchOperation::Ready(BatchOp::Resize {
-                width: 0,
-                height: 0,
+            input_version: InputSetVersion::INITIAL,
+            operations: vec![BatchStepOperation::Ready(BatchStep::Resize {
+                mode: BatchResizeMode::Pixels {
+                    width: 0,
+                    height: 0,
+                    preserve_aspect: false,
+                },
                 filter: ResizeFilter::Nearest,
-            }),
+                prevent_enlarge: false,
+            })],
+            output: EncodeSettings::Png {
+                compression: PngCompression::Fast,
+            },
             directory: directory.path().to_path_buf(),
+            collision_policy: CollisionPolicy::PreserveBoth,
+            cancel: Arc::new(AtomicBool::new(false)),
+            preview_index: 0,
         };
 
         let outcome = job.run_with_progress(|_, _| {});
         match outcome {
-            WorkspaceOutcome::Written {
-                info: Some(InfoMessage::BatchFailures(items)),
-                ..
-            } => {
-                assert_eq!(items.len(), 1);
-                assert_eq!(items[0].name, "broken-item");
-                assert_eq!(items[0].kind, ErrorKind::Operation);
-            }
+            WorkspaceOutcome::InputVersioned { outcome, .. } => match *outcome {
+                WorkspaceOutcome::BatchFinished { results, retry, .. } => {
+                    assert_eq!(results.len(), 1);
+                    assert_eq!(results[0].name, "broken-item");
+                    assert_eq!(
+                        results[0].outcome,
+                        BatchItemOutcome::Failure(ErrorKind::Operation)
+                    );
+                    assert!(retry.is_some());
+                }
+                _ => panic!("batch failure should report item results"),
+            },
             _ => panic!("batch failure should preserve the item reason"),
         }
+    }
+
+    #[test]
+    fn cancelled_batch_reports_unstarted_items_without_writing_them() {
+        let directory = tempfile::tempdir().expect("temporary output directory");
+        let cancel = Arc::new(AtomicBool::new(true));
+        let job = WorkspaceJob::Batch {
+            images: Arc::new(vec![
+                RgbaImage::from_pixel(2, 2, Rgba([255, 0, 0, 255])),
+                RgbaImage::from_pixel(2, 2, Rgba([0, 255, 0, 255])),
+            ]),
+            names: Arc::new(vec!["first".to_string(), "second".to_string()]),
+            input_version: InputSetVersion::INITIAL,
+            operations: vec![],
+            output: EncodeSettings::Png {
+                compression: PngCompression::Fast,
+            },
+            directory: directory.path().to_path_buf(),
+            collision_policy: CollisionPolicy::PreserveBoth,
+            cancel,
+            preview_index: 0,
+        };
+
+        match job.run_with_progress(|_, _| {}) {
+            WorkspaceOutcome::InputVersioned { outcome, .. } => match *outcome {
+                WorkspaceOutcome::BatchFinished {
+                    status, results, ..
+                } => {
+                    assert_eq!(
+                        status,
+                        UiMessage::BatchCancelled {
+                            successes: 0,
+                            total: 2
+                        }
+                    );
+                    assert!(
+                        results
+                            .iter()
+                            .all(|item| item.outcome == BatchItemOutcome::Cancelled)
+                    );
+                }
+                _ => panic!("cancelled batch should produce a batch summary"),
+            },
+            _ => panic!("cancelled batch should retain its input version"),
+        }
+        assert!(
+            directory
+                .path()
+                .read_dir()
+                .expect("read directory")
+                .next()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn stale_input_outcome_does_not_replace_current_status() {
+        let mut workspace = workspace_with_images(2);
+        let stale_version = workspace.input_set.version();
+        workspace.input_set.move_item(0, 1);
+        workspace.status = UiMessage::LoadedImage;
+
+        workspace.apply(versioned_input(
+            stale_version,
+            WorkspaceOutcome::Info {
+                info: InfoMessage::None,
+                status: UiMessage::CollageReady,
+            },
+        ));
+
+        assert_eq!(workspace.status, UiMessage::LoadedImage);
+    }
+
+    #[test]
+    fn stale_document_outcome_does_not_replace_current_status() {
+        let mut workspace = workspace_with_images(1);
+        let stale_version = workspace.document_version().unwrap();
+        workspace.document.as_mut().unwrap().commit(
+            stale_version,
+            RgbaImage::from_pixel(2, 2, Rgba([4, 0, 0, 255])),
+            EditKind::Rotate,
+        );
+        workspace.status = UiMessage::LoadedImage;
+
+        workspace.apply(versioned_document(
+            stale_version,
+            WorkspaceOutcome::Info {
+                info: InfoMessage::None,
+                status: UiMessage::SlicesSaved {
+                    successes: 1,
+                    total: 1,
+                },
+            },
+        ));
+
+        assert_eq!(workspace.status, UiMessage::LoadedImage);
     }
 }

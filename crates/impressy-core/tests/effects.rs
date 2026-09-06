@@ -4,10 +4,10 @@ mod common;
 
 use common::arb_image;
 use image::{Rgba, RgbaImage};
-use proptest::prelude::*;
 use impressy_core::animation::{self, GifParams, Playback};
 use impressy_core::beautify::{self, Background, BeautifyParams, Border};
 use impressy_core::watermark::{self, Position};
+use proptest::prelude::*;
 use std::io::Cursor;
 
 proptest! {
@@ -46,6 +46,26 @@ fn prop_beautify_transparent_bg_has_transparency() {
         // 画布左上角是背景，透明背景下必须为真透明。
         prop_assert_eq!(out.get_pixel(0, 0).0[3], 0);
     });
+}
+
+#[test]
+fn ping_pong_frame_count_matches_the_looping_preview_sequence() {
+    let frames = (0..4)
+        .map(|value| RgbaImage::from_pixel(4, 4, Rgba([value, 0, 0, 255])))
+        .collect::<Vec<_>>();
+    let bytes = animation::compose(
+        &frames,
+        &GifParams {
+            frame_delay_ms: 100,
+            dimensions: None,
+            playback: Playback::PingPong,
+        },
+    )
+    .expect("compose ping-pong GIF");
+    let decoder =
+        image::codecs::gif::GifDecoder::new(Cursor::new(bytes.as_slice())).expect("decode GIF");
+
+    assert_eq!(image::AnimationDecoder::into_frames(decoder).count(), 7);
 }
 
 // Feature: impressy, Property 28: Beautification padding increases dimensions predictably
@@ -92,7 +112,10 @@ fn border_wider_than_half_the_content_is_clamped() {
         corner_radius: 0,
         inner_padding: 0,
         background: Background::Solid(Rgba([255, 255, 255, 255])),
-        border: Some(Border { width: 32, color: border }),
+        border: Some(Border {
+            width: 32,
+            color: border,
+        }),
         shadow: None,
     };
     let out = beautify::beautify(&img, &params).expect("beautify");
@@ -110,7 +133,10 @@ fn border_on_single_pixel_content_is_skipped() {
         corner_radius: 0,
         inner_padding: 0,
         background: Background::Solid(Rgba([255, 255, 255, 255])),
-        border: Some(Border { width: 8, color: Rgba([200, 0, 0, 255]) }),
+        border: Some(Border {
+            width: 8,
+            color: Rgba([200, 0, 0, 255]),
+        }),
         shadow: None,
     };
     let out = beautify::beautify(&img, &params).expect("beautify");

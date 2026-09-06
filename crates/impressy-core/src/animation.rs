@@ -78,7 +78,8 @@ pub fn compose(frames: &[RgbaImage], params: &GifParams) -> Result<Vec<u8>> {
         Playback::Reverse => resized.into_iter().rev().collect(),
         Playback::PingPong => {
             let mut v = resized.clone();
-            // 倒序部分跳过最后一帧，避免首末重复。
+            // 倒序部分跳过最后一帧；首帧作为回程终点保留，与 Property 17 的
+            // `2N−1` 帧定义一致。
             for i in (0..resized.len().saturating_sub(1)).rev() {
                 v.push(resized[i].clone());
             }

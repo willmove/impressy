@@ -3,37 +3,39 @@
 //! GPUI 主线程只更新状态和渲染；文件读取、编解码及图像变换通过 background
 //! executor 执行。渲染和交互仍须按 ADR-0002 在桌面真机验收。
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use gpui::{
-    AnyElement, AppContext, ClipboardEntry, ClipboardItem, Context, Entity, ExternalPaths, Hsla,
-    Image as ClipboardImage, ImageFormat as ClipboardImageFormat, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, PathPromptOptions,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Timer, Window, black,
-    div, img, prelude::FluentBuilder, px, white,
+    AnyElement, AppContext, ClipboardEntry, ClipboardItem, Context, Entity, ExternalPaths,
+    FocusHandle, Focusable, Hsla, Image as ClipboardImage, ImageFormat as ClipboardImageFormat,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, PathPromptOptions, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Timer, Window, black, div, img,
+    prelude::FluentBuilder, px, white,
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
-use gpui_component::input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction};
+use gpui_component::input::{
+    Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction,
+};
 use gpui_component::select::{Select, SelectEvent, SelectState};
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 use gpui_component::spinner::Spinner;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{
-    ActiveTheme, Colorize, Disableable, Icon, IconName, IndexPath, Root, Sizable, WindowExt,
-    h_flex, v_flex,
+    ActiveTheme, Colorize, Disableable, Icon, IconName, IndexPath, Root, Selectable, Sizable,
+    WindowExt, h_flex, v_flex,
 };
 use impressy_ai::{
     AiError, ApiKey, AspectRatio as AiAspectRatio, CredentialStore, GeneratedImage,
     GenerationQuality, GenerationRequest, ImageInput, ProviderId, ProviderRegistry,
     SystemCredentialStore,
 };
-use impressy_core::config::{AppConfig, Language};
 use impressy_core::animation::Playback;
+use impressy_core::config::{AppConfig, Language};
 use impressy_core::format::{self, EncodeSettings, OutputFormat, PngCompression, Quality};
 use impressy_core::qr::ErrorCorrection;
 use impressy_core::transform::{AspectRatio, Rotation};
@@ -41,14 +43,16 @@ use impressy_presets::{AiEditPreset, IndustryTool};
 use rust_i18n::t;
 
 use crate::ai_state::{
-    AiErrorKind, AiStatus, AiUiState, ARTICLE_STYLES, ARTICLE_USAGES, COVER_PLATFORMS, COVER_STYLES,
-    ID_ATTIRES, ID_BACKGROUNDS, ID_SIZES, RenderedAiImage, TRY_ON_MODELS, TRY_ON_SCENES,
+    ARTICLE_STYLES, ARTICLE_USAGES, AiErrorKind, AiSelections, AiStatus, AiUiState,
+    COVER_PLATFORMS, COVER_STYLES, ID_ATTIRES, ID_BACKGROUNDS, ID_SIZES, RenderedAiImage,
+    TRY_ON_MODELS, TRY_ON_SCENES,
 };
 use crate::config_store::ConfigStore;
 use crate::crop_frame::{NormRect, Selection, selection_overlay};
+use crate::export_plan::CollisionPolicy;
 use crate::feature_params::{
-    BatchMode, BeautifyBackground, CollageMode, FREE_RATIO_INDEX, FeatureParams, ParamAction,
-    ParamEffect, WatermarkPlacement, WatermarkSource,
+    BatchParams, BeautifyBackground, CollageMode, FREE_RATIO_INDEX, FeatureParams, ParamAction,
+    ParamEffect, ResizeMode, WatermarkPlacement, WatermarkSource,
 };
 #[cfg(not(target_os = "macos"))]
 use crate::menus::MenuBar;
@@ -58,9 +62,9 @@ use crate::poster_canvas::{
 use crate::section::{Feature, Section};
 use crate::ui_message::{ErrorKind, UiMessage};
 use crate::workspace::{
-    BatchRequest, ClipboardFormat, ClipboardPayload, OutputDirectoryCommand, TransformOperation,
-    Workspace, WorkspaceCommand, WorkspaceCommandRoute, WorkspaceJob, WorkspaceOutcome,
-    is_supported_image_path,
+    BatchRequest, BatchRequestStep, ClipboardFormat, ClipboardPayload, EncodedResultKind,
+    OutputDirectoryCommand, TransformOperation, Workspace, WorkspaceCommand, WorkspaceCommandRoute,
+    WorkspaceJob, WorkspaceOperation, WorkspaceOutcome, is_supported_image_path,
 };
 
 fn tr(key: &str) -> SharedString {
@@ -122,14 +126,42 @@ enum PathPromptResult<T> {
     Failed(PathPromptFailure),
 }
 
+enum DirtyContinuation {
+    OpenImages {
+        multiple: bool,
+        append: bool,
+    },
+    Paste(Vec<u8>),
+    AiResult(impressy_core::RgbaImage),
+    GeneratedResult {
+        image: impressy_core::RgbaImage,
+        status: UiMessage,
+    },
+    Quit,
+}
+
+enum PreviewContinuation {
+    Feature(Feature),
+    Settings,
+    Home,
+    OpenImages { multiple: bool, append: bool },
+    Paste,
+    Export,
+    Edit(WorkspaceOperation),
+}
+
 #[derive(Clone, Copy)]
 enum NumericField {
     EditWidth,
     EditHeight,
+    EditPercentage,
+    EditLongestSide,
     CollageColumns,
     CollageSpacing,
     BatchWidth,
     BatchHeight,
+    BatchPercentage,
+    BatchLongestSide,
     BatchOpacity,
     SliceRows,
     SliceColumns,
@@ -143,13 +175,17 @@ enum NumericField {
 }
 
 impl NumericField {
-    const ALL: [Self; 16] = [
+    const ALL: [Self; 20] = [
         Self::EditWidth,
         Self::EditHeight,
+        Self::EditPercentage,
+        Self::EditLongestSide,
         Self::CollageColumns,
         Self::CollageSpacing,
         Self::BatchWidth,
         Self::BatchHeight,
+        Self::BatchPercentage,
+        Self::BatchLongestSide,
         Self::BatchOpacity,
         Self::SliceRows,
         Self::SliceColumns,
@@ -166,19 +202,19 @@ impl NumericField {
         match self {
             Self::EditWidth
             | Self::EditHeight
+            | Self::EditLongestSide
             | Self::BatchWidth
             | Self::BatchHeight
+            | Self::BatchLongestSide
             | Self::GifWidth
             | Self::GifHeight => 10,
             Self::QrSize => 64,
+            Self::EditPercentage | Self::BatchPercentage => 5,
             Self::CollageSpacing | Self::BeautifyRadius => 4,
             Self::BeautifyPadding => 8,
             Self::GifDelay => 50,
             Self::BatchOpacity => 5,
-            Self::CollageColumns
-            | Self::SliceRows
-            | Self::SliceColumns
-            | Self::BeautifyBorder => 1,
+            Self::CollageColumns | Self::SliceRows | Self::SliceColumns | Self::BeautifyBorder => 1,
         }
     }
 
@@ -186,10 +222,14 @@ impl NumericField {
         match self {
             Self::EditWidth => params.edit.width,
             Self::EditHeight => params.edit.height,
+            Self::EditPercentage => params.edit.percentage,
+            Self::EditLongestSide => params.edit.longest_side,
             Self::CollageColumns => params.collage.columns,
             Self::CollageSpacing => params.collage.spacing,
             Self::BatchWidth => params.batch.width,
             Self::BatchHeight => params.batch.height,
+            Self::BatchPercentage => params.batch.percentage,
+            Self::BatchLongestSide => params.batch.longest_side,
             Self::BatchOpacity => u32::from(params.batch.watermark_opacity_percent),
             Self::SliceRows => params.slice.rows,
             Self::SliceColumns => params.slice.columns,
@@ -207,10 +247,14 @@ impl NumericField {
         match self {
             Self::EditWidth => ParamAction::SetEditWidth(value),
             Self::EditHeight => ParamAction::SetEditHeight(value),
+            Self::EditPercentage => ParamAction::SetEditPercentage(value),
+            Self::EditLongestSide => ParamAction::SetEditLongestSide(value),
             Self::CollageColumns => ParamAction::SetCollageColumns(value),
             Self::CollageSpacing => ParamAction::SetCollageSpacing(value),
             Self::BatchWidth => ParamAction::SetBatchWidth(value),
             Self::BatchHeight => ParamAction::SetBatchHeight(value),
+            Self::BatchPercentage => ParamAction::SetBatchPercentage(value),
+            Self::BatchLongestSide => ParamAction::SetBatchLongestSide(value),
             Self::BatchOpacity => ParamAction::SetBatchOpacity(value as u8),
             Self::SliceRows => ParamAction::SetSliceRows(value),
             Self::SliceColumns => ParamAction::SetSliceColumns(value),
@@ -228,10 +272,14 @@ impl NumericField {
 struct NumberFields {
     edit_width: Entity<InputState>,
     edit_height: Entity<InputState>,
+    edit_percentage: Entity<InputState>,
+    edit_longest_side: Entity<InputState>,
     collage_columns: Entity<InputState>,
     collage_spacing: Entity<InputState>,
     batch_width: Entity<InputState>,
     batch_height: Entity<InputState>,
+    batch_percentage: Entity<InputState>,
+    batch_longest_side: Entity<InputState>,
     batch_opacity: Entity<InputState>,
     slice_rows: Entity<InputState>,
     slice_columns: Entity<InputState>,
@@ -249,11 +297,19 @@ impl NumberFields {
         Self {
             edit_width: number_input(params.edit.width, window, cx),
             edit_height: number_input(params.edit.height, window, cx),
+            edit_percentage: number_input(params.edit.percentage, window, cx),
+            edit_longest_side: number_input(params.edit.longest_side, window, cx),
             collage_columns: number_input(params.collage.columns, window, cx),
             collage_spacing: number_input(params.collage.spacing, window, cx),
             batch_width: number_input(params.batch.width, window, cx),
             batch_height: number_input(params.batch.height, window, cx),
-            batch_opacity: number_input(u32::from(params.batch.watermark_opacity_percent), window, cx),
+            batch_percentage: number_input(params.batch.percentage, window, cx),
+            batch_longest_side: number_input(params.batch.longest_side, window, cx),
+            batch_opacity: number_input(
+                u32::from(params.batch.watermark_opacity_percent),
+                window,
+                cx,
+            ),
             slice_rows: number_input(params.slice.rows, window, cx),
             slice_columns: number_input(params.slice.columns, window, cx),
             qr_size: number_input(params.qr.size, window, cx),
@@ -270,10 +326,14 @@ impl NumberFields {
         match field {
             NumericField::EditWidth => &self.edit_width,
             NumericField::EditHeight => &self.edit_height,
+            NumericField::EditPercentage => &self.edit_percentage,
+            NumericField::EditLongestSide => &self.edit_longest_side,
             NumericField::CollageColumns => &self.collage_columns,
             NumericField::CollageSpacing => &self.collage_spacing,
             NumericField::BatchWidth => &self.batch_width,
             NumericField::BatchHeight => &self.batch_height,
+            NumericField::BatchPercentage => &self.batch_percentage,
+            NumericField::BatchLongestSide => &self.batch_longest_side,
             NumericField::BatchOpacity => &self.batch_opacity,
             NumericField::SliceRows => &self.slice_rows,
             NumericField::SliceColumns => &self.slice_columns,
@@ -324,19 +384,9 @@ fn chip_flow(
         }
     }
     if !row.is_empty() {
-        rows.push(
-            h_flex()
-                .w_full()
-                .gap_2()
-                .children(row)
-                .into_any_element(),
-        );
+        rows.push(h_flex().w_full().gap_2().children(row).into_any_element());
     }
-    v_flex()
-        .w_full()
-        .gap_2()
-        .children(rows)
-        .into_any_element()
+    v_flex().w_full().gap_2().children(rows).into_any_element()
 }
 
 fn classify_path_prompt_result<T, PlatformError, ChannelError>(
@@ -391,6 +441,12 @@ enum EstimateState {
     Failed,
 }
 
+#[derive(Clone)]
+struct BatchPreset {
+    params: BatchParams,
+    watermark_text: String,
+}
+
 pub struct AppShell {
     active: Section,
     open: Option<Feature>,
@@ -400,10 +456,13 @@ pub struct AppShell {
     workspace: Workspace,
     params: FeatureParams,
     crop_selection: Entity<Selection>,
+    ai_region_selection: Entity<Selection>,
+    crop_focus: FocusHandle,
     poster_layout: Entity<PosterLayout>,
     qr_input: Entity<InputState>,
     watermark_input: Entity<InputState>,
-    ai_prompt: Entity<InputState>,
+    /// 自由提示词按功能页持有独立输入实体，切换页面不会串写或清空未提交内容。
+    ai_prompts: Vec<(Feature, Entity<InputState>)>,
     poster_title: Entity<InputState>,
     poster_subtitle: Entity<InputState>,
     poster_corner_label: Entity<InputState>,
@@ -412,6 +471,9 @@ pub struct AppShell {
     nano_banana_key: Entity<InputState>,
     openai_key: Entity<InputState>,
     ai_state: AiUiState,
+    /// 各 AI 功能页最近一次使用的选项。返回页面时恢复，避免在页面之间切换后重填。
+    ai_selections: Vec<(Feature, AiSelections)>,
+    ai_advanced_open: bool,
     provider_registry: ProviderRegistry,
     credential_store: Arc<dyn CredentialStore>,
     /// Windows / Linux 的窗口内菜单栏；macOS 由系统原生菜单栏呈现同一份 `set_menus` 数据。
@@ -436,6 +498,21 @@ pub struct AppShell {
     collapsed_groups: std::collections::HashSet<&'static str>,
     /// 左侧导航侧栏是否显示；默认展开。隐藏时不渲染侧栏子树，内部状态保留以便恢复。
     sidebar_open: bool,
+    compare_original: bool,
+    canvas_zoom: f32,
+    fit_canvas: bool,
+    pending_preview: Option<PreviewContinuation>,
+    export_panel_open: bool,
+    export_encoded_result: Option<EncodedResultKind>,
+    export_format: OutputFormat,
+    export_quality: Quality,
+    export_png_compression: PngCompression,
+    collision_policy: CollisionPolicy,
+    pending_dirty: Option<DirtyContinuation>,
+    batch_preset: Option<BatchPreset>,
+    gif_playing: bool,
+    gif_preview_step: usize,
+    gif_preview_generation: Arc<AtomicU64>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -454,6 +531,12 @@ impl AppShell {
         }
         let params = FeatureParams::default();
         let crop_selection = cx.new(|_| Selection::new(params.edit.ratio()));
+        let ai_region_selection = cx.new(|_| {
+            let mut selection = Selection::new(None);
+            selection.set_free_region_without_notify(NormRect::centered_fraction(0.32));
+            selection
+        });
+        let crop_focus = cx.focus_handle().tab_index(1).tab_stop(true);
         #[cfg(not(target_os = "macos"))]
         let menu_bar = cx.new(MenuBar::new);
         let poster_layout = cx.new(|_| PosterLayout::default());
@@ -461,8 +544,18 @@ impl AppShell {
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("placeholder.qr_text")));
         let watermark_input =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("placeholder.watermark_text")));
-        let ai_prompt =
-            cx.new(|cx| InputState::new(window, cx).placeholder(tr("ai.placeholder.prompt")));
+        let ai_prompts = FREE_PROMPT_FEATURES
+            .iter()
+            .copied()
+            .map(|feature| {
+                (
+                    feature,
+                    cx.new(|cx| {
+                        InputState::new(window, cx).placeholder(tr("ai.placeholder.prompt"))
+                    }),
+                )
+            })
+            .collect();
         let poster_title =
             cx.new(|cx| InputState::new(window, cx).placeholder(tr("ai.placeholder.poster_title")));
         let poster_subtitle = cx.new(|cx| {
@@ -530,6 +623,7 @@ impl AppShell {
                 |this, _, event: &SelectEvent<Vec<SharedString>>, _, cx| {
                     if let SelectEvent::Confirm(Some(label)) = event {
                         this.config.default_export_format = export_format_from_label(label);
+                        this.export_format = this.config.default_export_format;
                         this.persist_config(true);
                         this.schedule_size_estimate(cx);
                         cx.notify();
@@ -541,6 +635,7 @@ impl AppShell {
                 let value = value.start().round().clamp(1.0, 100.0) as u8;
                 this.config.default_export_quality =
                     Quality::new(value).expect("quality slider is clamped to 1..=100");
+                this.export_quality = this.config.default_export_quality;
                 this.persist_config(false);
                 this.schedule_size_estimate(cx);
                 cx.notify();
@@ -580,6 +675,9 @@ impl AppShell {
                 }
             }));
         }
+        let export_format = config.default_export_format;
+        let export_quality = config.default_export_quality;
+        let export_png_compression = config.default_png_compression;
         Self {
             active: Section::BasicImage,
             open: None,
@@ -589,10 +687,12 @@ impl AppShell {
             workspace,
             params,
             crop_selection,
+            ai_region_selection,
+            crop_focus,
             poster_layout,
             qr_input,
             watermark_input,
-            ai_prompt,
+            ai_prompts,
             poster_title,
             poster_subtitle,
             poster_corner_label,
@@ -601,6 +701,8 @@ impl AppShell {
             nano_banana_key,
             openai_key,
             ai_state: AiUiState::new(configured_provider),
+            ai_selections: Vec::new(),
+            ai_advanced_open: false,
             provider_registry: ProviderRegistry::default(),
             credential_store: Arc::new(SystemCredentialStore),
             #[cfg(not(target_os = "macos"))]
@@ -620,6 +722,21 @@ impl AppShell {
             viewport_height: 800.0,
             collapsed_groups: std::collections::HashSet::new(),
             sidebar_open: true,
+            compare_original: false,
+            canvas_zoom: 1.0,
+            fit_canvas: true,
+            pending_preview: None,
+            export_panel_open: false,
+            export_encoded_result: None,
+            export_format,
+            export_quality,
+            export_png_compression,
+            collision_policy: CollisionPolicy::default(),
+            pending_dirty: None,
+            batch_preset: None,
+            gif_playing: false,
+            gif_preview_step: 0,
+            gif_preview_generation: Arc::new(AtomicU64::new(0)),
             _subscriptions,
         }
     }
@@ -679,9 +796,11 @@ impl AppShell {
         self.watermark_input.update(cx, |input, input_cx| {
             input.set_placeholder(tr("placeholder.watermark_text"), window, input_cx);
         });
-        self.ai_prompt.update(cx, |input, input_cx| {
-            input.set_placeholder(tr("ai.placeholder.prompt"), window, input_cx);
-        });
+        for (_, prompt) in &self.ai_prompts {
+            prompt.update(cx, |input, input_cx| {
+                input.set_placeholder(tr("ai.placeholder.prompt"), window, input_cx);
+            });
+        }
         self.poster_title.update(cx, |input, input_cx| {
             input.set_placeholder(tr("ai.placeholder.poster_title"), window, input_cx);
         });
@@ -703,22 +822,30 @@ impl AppShell {
     fn cycle_png_compression(&mut self, cx: &mut Context<Self>) {
         self.config.default_png_compression =
             next_png_compression(self.config.default_png_compression);
+        self.export_png_compression = self.config.default_png_compression;
         self.persist_config(true);
         self.schedule_size_estimate(cx);
         cx.notify();
     }
 
     fn schedule_size_estimate(&mut self, cx: &mut Context<Self>) {
-        let Some(image) = self.workspace.image_for_estimate() else {
-            self.estimate_state = EstimateState::Unavailable;
-            return;
-        };
         let generation = self
             .estimate_generation
             .fetch_add(1, Ordering::Relaxed)
             .wrapping_add(1);
+        if let Some(kind) = self.export_encoded_result {
+            self.estimate_state = self
+                .workspace
+                .encoded_result_byte_len(kind)
+                .map_or(EstimateState::Unavailable, EstimateState::Ready);
+            return;
+        }
+        let Some(image) = self.workspace.image_for_estimate() else {
+            self.estimate_state = EstimateState::Unavailable;
+            return;
+        };
         let generation_token = Arc::clone(&self.estimate_generation);
-        let settings = default_export_settings(&self.config);
+        let settings = self.export_settings();
         self.estimate_state = EstimateState::Pending;
 
         let task = cx.background_executor().spawn(async move {
@@ -854,32 +981,127 @@ impl AppShell {
     }
 
     fn open_feature(&mut self, feature: Feature, cx: &mut Context<Self>) {
+        if self.pending_preview.is_some() {
+            cx.notify();
+            return;
+        }
         let changed = self.open != Some(feature);
+        if changed && self.workspace.has_transient_preview() {
+            self.pending_preview = Some(PreviewContinuation::Feature(feature));
+            cx.notify();
+            return;
+        }
+        self.finish_open_feature(feature, changed, cx);
+    }
+
+    fn finish_open_feature(&mut self, feature: Feature, changed: bool, cx: &mut Context<Self>) {
+        if changed {
+            self.workspace.invalidate_preview_requests();
+            if self.open == Some(Feature::Gif) {
+                self.gif_playing = false;
+                self.gif_preview_generation.fetch_add(1, Ordering::Relaxed);
+            }
+            self.remember_current_ai_selections();
+
+            if feature.is_ai() {
+                if let Some((_, saved)) = self
+                    .ai_selections
+                    .iter()
+                    .find(|(saved_feature, _)| *saved_feature == feature)
+                {
+                    self.ai_state.restore_selections(saved.clone());
+                } else if let Some(spec) = feature.ai_spec() {
+                    self.ai_state.aspect_ratio = spec.default_ratio;
+                    self.ai_state.selected_tiers.clear();
+                    self.ai_state.selected_tiers.insert(0);
+                }
+                if let Some(capabilities) =
+                    self.provider_registry.capabilities(self.ai_state.provider)
+                {
+                    self.ai_state.apply_capabilities(capabilities);
+                }
+            }
+        }
         self.open = Some(feature);
+        if changed {
+            self.export_panel_open = false;
+            self.export_encoded_result = None;
+            self.workspace.set_status(UiMessage::None);
+        }
         self.settings_open = false;
         self.active = section_for_feature(feature);
-        if let Some(spec) = feature.ai_spec() {
-            self.ai_state.aspect_ratio = spec.default_ratio;
-            self.ai_state.selected_tiers.clear();
-            self.ai_state.selected_tiers.insert(0);
-        }
-        if feature == Feature::ImageEdit {
-            self.crop_selection.update(cx, |selection, selection_cx| {
-                selection.set_free_region(NormRect::centered_fraction(0.32), selection_cx);
-            });
+        if uses_input_set(feature) {
+            self.workspace.show_input_set_preview();
+        } else {
+            self.workspace.show_document_preview();
         }
         if changed {
             // 切换功能页时清理上一页的选中态与状态文案：结果按 `results_feature`
             // 只在所属页面展示；进行中的生成保留 Generating（按钮保持禁用），
             // 由完成回调决定结果的归宿。
             self.ai_state.selected_results.clear();
-            if self.ai_state.results_feature == Some(feature) && !self.ai_state.results.is_empty()
-            {
+            if self.ai_state.results_feature == Some(feature) && !self.ai_state.results.is_empty() {
                 self.ai_state.status = AiStatus::Ready(self.ai_state.results.len());
             } else if !matches!(self.ai_state.status, AiStatus::Generating) {
                 self.ai_state.status = AiStatus::Idle;
             }
         }
+        cx.notify();
+    }
+
+    fn remember_current_ai_selections(&mut self) {
+        let Some(previous) = self.open.filter(|previous| previous.is_ai()) else {
+            return;
+        };
+        let selections = self.ai_state.selections();
+        if let Some((_, saved)) = self
+            .ai_selections
+            .iter_mut()
+            .find(|(saved_feature, _)| *saved_feature == previous)
+        {
+            *saved = selections;
+        } else {
+            self.ai_selections.push((previous, selections));
+        }
+    }
+
+    fn resolve_pending_feature(&mut self, apply: bool, cx: &mut Context<Self>) {
+        let Some(continuation) = self.pending_preview.take() else {
+            return;
+        };
+        if apply {
+            self.workspace.apply_transient_preview();
+        } else {
+            self.workspace.discard_transient_preview();
+        }
+        match continuation {
+            PreviewContinuation::Edit(operation) => {
+                if let Some(job) = self.workspace.prepare(operation) {
+                    self.spawn_workspace_job(job, cx);
+                } else {
+                    cx.notify();
+                }
+            }
+            PreviewContinuation::Feature(feature) => {
+                let changed = self.open != Some(feature);
+                self.finish_open_feature(feature, changed, cx);
+            }
+            PreviewContinuation::Settings => self.finish_open_settings(cx),
+            PreviewContinuation::Home => self.finish_go_home(cx),
+            PreviewContinuation::OpenImages { multiple, append } => {
+                self.prompt_for_images_mode(multiple, append, cx);
+            }
+            PreviewContinuation::Paste => self.paste_image(cx),
+            PreviewContinuation::Export => {
+                self.export_panel_open = true;
+                self.schedule_size_estimate(cx);
+                cx.notify();
+            }
+        }
+    }
+
+    fn cancel_pending_feature(&mut self, cx: &mut Context<Self>) {
+        self.pending_preview = None;
         cx.notify();
     }
 
@@ -1059,7 +1281,192 @@ impl AppShell {
                             })),
                     ),
             )
+            .when(self.workspace.has_image(), |this| {
+                this.child(self.document_toolbar(cx))
+            })
             .child(div().flex_1().overflow_hidden().p_6().child(body))
+    }
+
+    fn document_toolbar(&self, cx: &mut Context<Self>) -> AnyElement {
+        let border = cx.theme().border;
+        let background = cx.theme().background;
+        let muted = cx.theme().muted_foreground;
+        let name = self.workspace.document_name().unwrap_or("—").to_string();
+        let source_format = Path::new(&name)
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .map(str::to_ascii_uppercase)
+            .unwrap_or_else(|| "—".to_string());
+        let identity = if self.workspace.is_dirty() {
+            format!("{name} •")
+        } else {
+            name.clone()
+        };
+        let original = self.workspace.original_dimensions();
+        let current = self.workspace.current_dimensions();
+        let properties = match (original, current) {
+            (Some((ow, oh)), Some((cw, ch)))
+                if (ow, oh) != (cw, ch) || source_format != self.export_format.to_string() =>
+            {
+                Some(format!(
+                    "{}: {source_format} · {ow}×{oh}{} · {}: {} · {cw}×{ch} · {}",
+                    t!("document.original"),
+                    self.workspace
+                        .source_byte_len()
+                        .map(|bytes| format!(" · {}", format_file_size(bytes)))
+                        .unwrap_or_default(),
+                    t!("document.current"),
+                    self.export_format,
+                    estimate_text(self.estimate_state),
+                ))
+            }
+            _ => None,
+        };
+        h_flex()
+            .id("current-document-toolbar")
+            .h(px(48.0))
+            .flex_shrink_0()
+            .px_6()
+            .gap_2()
+            .border_b_1()
+            .border_color(border)
+            .bg(background)
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(px(80.0))
+                    .overflow_hidden()
+                    .child(div().text_sm().text_color(muted).child(identity))
+                    .when_some(properties, |this, properties| {
+                        this.child(div().text_xs().text_color(muted).child(properties))
+                    }),
+            )
+            .child(
+                Button::new("document-undo")
+                    .small()
+                    .outline()
+                    .label(tr("action.undo"))
+                    .disabled(self.workspace.is_busy() || !self.workspace.can_undo())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.workspace.undo();
+                        this.compare_original = false;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("document-redo")
+                    .small()
+                    .outline()
+                    .label(tr("action.redo"))
+                    .disabled(self.workspace.is_busy() || !self.workspace.can_redo())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.workspace.redo();
+                        this.compare_original = false;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("document-original")
+                    .small()
+                    .outline()
+                    .label(tr("action.compare_original"))
+                    .selected(self.compare_original)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.compare_original = !this.compare_original;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("document-restore")
+                    .small()
+                    .outline()
+                    .label(tr("action.restore_original"))
+                    .disabled(self.workspace.is_busy())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.workspace.restore_original();
+                        this.compare_original = false;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("canvas-fit")
+                    .small()
+                    .outline()
+                    .label(tr("action.fit"))
+                    .selected(self.fit_canvas)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.fit_canvas = true;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("canvas-actual-size")
+                    .small()
+                    .outline()
+                    .label(tr("action.actual_size"))
+                    .selected(!self.fit_canvas && (self.canvas_zoom - 1.0).abs() < f32::EPSILON)
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.fit_canvas = false;
+                        this.canvas_zoom = 1.0;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("canvas-zoom-out")
+                    .small()
+                    .outline()
+                    .label(tr("action.zoom_out"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.fit_canvas = false;
+                        this.canvas_zoom = (this.canvas_zoom - 0.1).max(0.1);
+                        cx.notify();
+                    })),
+            )
+            .child(
+                Button::new("canvas-zoom-in")
+                    .small()
+                    .outline()
+                    .label(tr("action.zoom_in"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.fit_canvas = false;
+                        this.canvas_zoom = (this.canvas_zoom + 0.1).min(4.0);
+                        cx.notify();
+                    })),
+            )
+            .when(self.workspace.has_transient_preview(), |this| {
+                this.child(
+                    Button::new("document-apply-preview")
+                        .small()
+                        .primary()
+                        .disabled(self.workspace.is_busy())
+                        .label(tr("action.apply_preview"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.workspace.apply_transient_preview();
+                            cx.notify();
+                        })),
+                )
+                .child(
+                    Button::new("document-discard-preview")
+                        .small()
+                        .outline()
+                        .disabled(self.workspace.is_busy())
+                        .label(tr("action.discard_preview"))
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.workspace.discard_transient_preview();
+                            cx.notify();
+                        })),
+                )
+            })
+            .child(
+                Button::new("document-export")
+                    .small()
+                    .primary()
+                    .label(tr("action.save"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.begin_export(cx);
+                    })),
+            )
+            .into_any_element()
     }
 
     fn workspace_button(
@@ -1104,17 +1511,29 @@ impl AppShell {
     }
 
     fn start_workspace_command(&mut self, command: WorkspaceCommand, cx: &mut Context<Self>) {
+        if self.pending_preview.is_some() {
+            cx.notify();
+            return;
+        }
         match command.route() {
-            WorkspaceCommandRoute::OpenImages { multiple } => {
-                self.prompt_for_images(multiple, cx);
+            WorkspaceCommandRoute::OpenImages { multiple, append } => {
+                self.prompt_for_images_mode(multiple, append, cx);
             }
             WorkspaceCommandRoute::SaveResult => {
-                self.prompt_for_save(default_export_settings(&self.config), cx);
+                self.begin_export(cx);
             }
             WorkspaceCommandRoute::OutputDirectory(command) => {
                 self.prompt_for_output_directory(command, cx);
             }
             WorkspaceCommandRoute::Direct(operation) => {
+                if edit_operation_needs_preview_decision(
+                    self.workspace.transient_edit_kind(),
+                    &operation,
+                ) {
+                    self.pending_preview = Some(PreviewContinuation::Edit(operation));
+                    cx.notify();
+                    return;
+                }
                 if let Some(job) = self.workspace.prepare(operation) {
                     self.spawn_workspace_job(job, cx);
                 } else {
@@ -1131,6 +1550,33 @@ impl AppShell {
     /// borrowed`。GPUI 的路径 prompt 会先返回 receiver，等当前事件回调释放借用后才
     /// 展示系统对话框。
     fn prompt_for_images(&mut self, multiple: bool, cx: &mut Context<Self>) {
+        self.prompt_for_images_mode(multiple, false, cx);
+    }
+
+    fn prompt_for_images_mode(&mut self, multiple: bool, append: bool, cx: &mut Context<Self>) {
+        if self.pending_preview.is_some() {
+            cx.notify();
+            return;
+        }
+        if self.workspace.has_transient_preview() {
+            self.pending_preview = Some(PreviewContinuation::OpenImages { multiple, append });
+            cx.notify();
+            return;
+        }
+        if !multiple && self.workspace.is_dirty() {
+            self.pending_dirty = Some(DirtyContinuation::OpenImages { multiple, append });
+            cx.notify();
+            return;
+        }
+        self.prompt_for_images_unchecked(multiple, append, cx);
+    }
+
+    fn prompt_for_images_unchecked(
+        &mut self,
+        multiple: bool,
+        append: bool,
+        cx: &mut Context<Self>,
+    ) {
         if self.workspace.is_busy() {
             self.workspace.set_status(UiMessage::Busy);
             cx.notify();
@@ -1160,7 +1606,12 @@ impl AppShell {
                     cx.notify();
                     return;
                 };
-                if let Some(job) = this.workspace.prepare_paths(paths, multiple) {
+                let job = if append {
+                    this.workspace.prepare_append_paths(paths)
+                } else {
+                    this.workspace.prepare_paths(paths, multiple)
+                };
+                if let Some(job) = job {
                     this.spawn_workspace_job(job, cx);
                 } else {
                     cx.notify();
@@ -1170,7 +1621,13 @@ impl AppShell {
         .detach();
     }
 
-    fn prompt_for_save(&mut self, export: EncodeSettings, cx: &mut Context<Self>) {
+    fn prompt_for_save(
+        &mut self,
+        export: EncodeSettings,
+        force_document: bool,
+        encoded_kind: Option<EncodedResultKind>,
+        cx: &mut Context<Self>,
+    ) {
         if self.workspace.is_busy() {
             self.workspace.set_status(UiMessage::Busy);
             cx.notify();
@@ -1178,7 +1635,7 @@ impl AppShell {
         }
 
         let directory = self.path_prompt_directory();
-        let suggested_name = self.workspace.suggested_save_name(export);
+        let suggested_name = self.workspace.suggested_save_name(export, encoded_kind);
         let path_receiver = cx.prompt_for_new_path(&directory, Some(&suggested_name));
 
         cx.spawn(async move |this, cx| {
@@ -1193,7 +1650,18 @@ impl AppShell {
                     cx.notify();
                     return;
                 };
-                if let Some(job) = this.workspace.prepare_save_path(path, export) {
+                let path =
+                    path.with_extension(this.workspace.export_extension(export, encoded_kind));
+                let job = if force_document {
+                    this.workspace.prepare_document_export_path(
+                        path,
+                        export,
+                        CollisionPolicy::PreserveBoth,
+                    )
+                } else {
+                    this.workspace.prepare_save_path(path, export, encoded_kind)
+                };
+                if let Some(job) = job {
                     this.spawn_workspace_job(job, cx);
                 } else {
                     cx.notify();
@@ -1201,6 +1669,142 @@ impl AppShell {
             });
         })
         .detach();
+    }
+
+    fn export_settings(&self) -> EncodeSettings {
+        match self.export_format {
+            OutputFormat::Png => EncodeSettings::Png {
+                compression: self.export_png_compression,
+            },
+            OutputFormat::Jpeg => EncodeSettings::Jpeg {
+                quality: self.export_quality,
+            },
+            OutputFormat::Webp => EncodeSettings::WebpLossy {
+                quality: self.export_quality,
+            },
+        }
+    }
+
+    fn begin_export(&mut self, cx: &mut Context<Self>) {
+        if self.pending_preview.is_some() {
+            cx.notify();
+            return;
+        }
+        let encoded_result = self
+            .active_encoded_result_kind()
+            .filter(|kind| self.workspace.has_encoded_result(*kind));
+        let encoded_result = if self.pending_dirty.is_none() {
+            encoded_result
+        } else {
+            None
+        };
+        if encoded_result.is_none() && !self.workspace.has_image() {
+            self.workspace.set_status(UiMessage::NeedResult);
+            cx.notify();
+            return;
+        }
+        if self.workspace.has_transient_preview() {
+            self.pending_preview = Some(PreviewContinuation::Export);
+            cx.notify();
+            return;
+        }
+        self.export_encoded_result = encoded_result;
+        self.export_panel_open = true;
+        self.schedule_size_estimate(cx);
+        cx.notify();
+    }
+
+    fn confirm_export(&mut self, cx: &mut Context<Self>) {
+        self.export_panel_open = false;
+        let force_document = self.pending_dirty.is_some();
+        let encoded_kind = (!force_document)
+            .then_some(self.export_encoded_result)
+            .flatten();
+        self.export_encoded_result = None;
+        self.prompt_for_save(self.export_settings(), force_document, encoded_kind, cx);
+    }
+
+    fn begin_use_ai_result(&mut self, image: impressy_core::RgbaImage, cx: &mut Context<Self>) {
+        if self.workspace.is_busy() {
+            self.workspace.set_status(UiMessage::Busy);
+            cx.notify();
+            return;
+        }
+        if self.workspace.is_dirty() {
+            self.pending_dirty = Some(DirtyContinuation::AiResult(image));
+            cx.notify();
+            return;
+        }
+        if self.workspace.use_ai_result(image) {
+            self.open_feature(Feature::Edit, cx);
+        }
+    }
+
+    fn begin_use_generated_result(
+        &mut self,
+        image: impressy_core::RgbaImage,
+        status: UiMessage,
+        cx: &mut Context<Self>,
+    ) {
+        if self.workspace.is_busy() {
+            self.workspace.set_status(UiMessage::Busy);
+            cx.notify();
+            return;
+        }
+        if self.workspace.is_dirty() {
+            self.pending_dirty = Some(DirtyContinuation::GeneratedResult { image, status });
+            cx.notify();
+            return;
+        }
+        self.workspace.use_generated_result(image, status);
+    }
+
+    fn request_quit(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.workspace.is_dirty() {
+            self.pending_dirty = Some(DirtyContinuation::Quit);
+            cx.notify();
+            false
+        } else {
+            true
+        }
+    }
+
+    pub(crate) fn should_close(&mut self, cx: &mut Context<Self>) -> bool {
+        self.request_quit(cx)
+    }
+
+    fn resume_dirty_continuation(&mut self, cx: &mut Context<Self>) {
+        let Some(continuation) = self.pending_dirty.take() else {
+            return;
+        };
+        match continuation {
+            DirtyContinuation::OpenImages { multiple, append } => {
+                self.prompt_for_images_unchecked(multiple, append, cx)
+            }
+            DirtyContinuation::Paste(bytes) => self.paste_bytes(bytes, cx),
+            DirtyContinuation::AiResult(image) => {
+                if self.workspace.use_ai_result(image) {
+                    self.open_feature(Feature::Edit, cx);
+                }
+            }
+            DirtyContinuation::GeneratedResult { image, status } => {
+                self.workspace.use_generated_result(image, status);
+            }
+            DirtyContinuation::Quit => cx.quit(),
+        }
+    }
+
+    fn export_before_dirty_continuation(&mut self, cx: &mut Context<Self>) {
+        self.begin_export(cx);
+    }
+
+    fn discard_before_dirty_continuation(&mut self, cx: &mut Context<Self>) {
+        self.resume_dirty_continuation(cx);
+    }
+
+    fn cancel_dirty_continuation(&mut self, cx: &mut Context<Self>) {
+        self.pending_dirty = None;
+        cx.notify();
     }
 
     fn prompt_for_output_directory(
@@ -1235,21 +1839,22 @@ impl AppShell {
                     return;
                 };
                 match command {
-                    OutputDirectoryCommand::Slice(grid) => {
-                        if let Some(job) = this.workspace.prepare_slice_directory(grid, directory) {
+                    OutputDirectoryCommand::Slice {
+                        grid,
+                        collision_policy,
+                    } => {
+                        if let Some(job) = this.workspace.prepare_slice_directory(
+                            grid,
+                            directory,
+                            collision_policy,
+                        ) {
                             this.spawn_workspace_job(job, cx);
                         } else {
                             cx.notify();
                         }
                     }
                     OutputDirectoryCommand::Batch(request)
-                        if matches!(
-                            request,
-                            BatchRequest::Watermark {
-                                source: WatermarkSource::Image,
-                                ..
-                            }
-                        ) =>
+                        if batch_needs_watermark_path(&request) =>
                     {
                         this.prompt_for_watermark_image(request, directory, cx);
                     }
@@ -1316,6 +1921,15 @@ impl AppShell {
     }
 
     fn paste_image(&mut self, cx: &mut Context<Self>) {
+        if self.pending_preview.is_some() {
+            cx.notify();
+            return;
+        }
+        if self.workspace.has_transient_preview() {
+            self.pending_preview = Some(PreviewContinuation::Paste);
+            cx.notify();
+            return;
+        }
         let bytes = cx.read_from_clipboard().and_then(|item| {
             item.entries().iter().find_map(|entry| match entry {
                 ClipboardEntry::Image(image) => Some(image.bytes.clone()),
@@ -1327,16 +1941,36 @@ impl AppShell {
             cx.notify();
             return;
         };
+        if self.workspace.is_dirty() {
+            self.pending_dirty = Some(DirtyContinuation::Paste(bytes));
+            cx.notify();
+            return;
+        }
+        self.paste_bytes(bytes, cx);
+    }
+
+    fn paste_bytes(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
         if let Some(job) = self.workspace.prepare_paste(bytes) {
             self.spawn_workspace_job(job, cx);
         }
     }
 
     fn copy_result(&mut self, cx: &mut Context<Self>) {
-        if let Some(job) = self.workspace.prepare_copy() {
+        if let Some(job) = self
+            .workspace
+            .prepare_copy(self.active_encoded_result_kind())
+        {
             self.spawn_workspace_job(job, cx);
         } else {
             cx.notify();
+        }
+    }
+
+    fn active_encoded_result_kind(&self) -> Option<EncodedResultKind> {
+        match self.open {
+            Some(Feature::Gif) => Some(EncodedResultKind::Gif),
+            Some(Feature::Exif) => Some(EncodedResultKind::Exif),
+            _ => None,
         }
     }
 
@@ -1379,12 +2013,19 @@ impl AppShell {
 
     fn finish_workspace_job(&mut self, outcome: WorkspaceOutcome, cx: &mut Context<Self>) {
         let effects = self.workspace.apply(outcome);
+        let document_exported = effects.document_exported;
         if let Some(directory) = effects.last_output_dir {
             self.config.last_output_dir = Some(directory);
             self.persist_config(false);
         }
         if let Some(payload) = effects.clipboard {
             self.write_clipboard(payload, cx);
+        }
+        if let Some(replacement) = effects.replacement_document {
+            self.begin_use_generated_result(replacement.image, replacement.status, cx);
+        }
+        if document_exported && self.pending_dirty.is_some() {
+            self.resume_dirty_continuation(cx);
         }
         self.schedule_size_estimate(cx);
         cx.notify();
@@ -1432,40 +2073,63 @@ impl AppShell {
         self.open_images_via_menu(false, cx);
     }
 
-    pub(crate) fn menu_open_multiple_images(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn menu_open_multiple_images(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_images_via_menu(true, cx);
     }
 
     /// 各功能页共享同一工作区：已在功能页时原地加载；在首页 / 设置页则先落到对应工作区。
     fn open_images_via_menu(&mut self, multiple: bool, cx: &mut Context<Self>) {
         if self.settings_open || self.open.is_none() {
-            let landing = if multiple { Feature::Batch } else { Feature::Edit };
+            let landing = if multiple {
+                Feature::Batch
+            } else {
+                Feature::Edit
+            };
             self.open_feature(landing, cx);
         }
         self.prompt_for_images(multiple, cx);
     }
 
     pub(crate) fn menu_save_result(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if !self.workspace.has_image() {
-            self.workspace.set_status(UiMessage::NeedResult);
-            cx.notify();
-            return;
-        }
-        self.prompt_for_save(default_export_settings(&self.config), cx);
+        self.begin_export(cx);
     }
 
-    pub(crate) fn menu_reveal_output_directory(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn menu_reveal_output_directory(
+        &mut self,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_output_directory(cx);
     }
 
     pub(crate) fn menu_open_settings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_preview.is_some() {
+            cx.notify();
+            return;
+        }
+        if self.workspace.has_transient_preview() {
+            self.pending_preview = Some(PreviewContinuation::Settings);
+            cx.notify();
+            return;
+        }
+        self.finish_open_settings(cx);
+    }
+
+    fn finish_open_settings(&mut self, cx: &mut Context<Self>) {
+        self.remember_current_ai_selections();
         self.settings_open = true;
         self.open = None;
         cx.notify();
     }
 
     pub(crate) fn menu_quit(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        cx.quit();
+        if self.request_quit(cx) {
+            cx.quit();
+        }
     }
 
     pub(crate) fn menu_paste_image(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
@@ -1475,11 +2139,66 @@ impl AppShell {
         self.paste_image(cx);
     }
 
+    pub(crate) fn menu_undo_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.text_field_focused(window, cx) {
+            return;
+        }
+        self.workspace.undo();
+        self.compare_original = false;
+        cx.notify();
+    }
+
+    pub(crate) fn menu_redo_document(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.text_field_focused(window, cx) {
+            return;
+        }
+        self.workspace.redo();
+        self.compare_original = false;
+        cx.notify();
+    }
+
+    fn text_field_focused(&self, window: &Window, cx: &Context<Self>) -> bool {
+        let text_inputs = [
+            &self.qr_input,
+            &self.watermark_input,
+            &self.poster_title,
+            &self.poster_subtitle,
+            &self.poster_corner_label,
+            &self.nav_search,
+            &self.seedream_key,
+            &self.nano_banana_key,
+            &self.openai_key,
+        ];
+        text_inputs
+            .into_iter()
+            .chain(self.ai_prompts.iter().map(|(_, prompt)| prompt))
+            .chain(
+                NumericField::ALL
+                    .into_iter()
+                    .map(|field| self.numbers.get(field)),
+            )
+            .any(|input| input.read(cx).focus_handle(cx).is_focused(window))
+    }
+
     pub(crate) fn menu_copy_result(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         self.copy_result(cx);
     }
 
     pub(crate) fn menu_go_home(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending_preview.is_some() {
+            cx.notify();
+            return;
+        }
+        if self.workspace.has_transient_preview() {
+            self.pending_preview = Some(PreviewContinuation::Home);
+            cx.notify();
+            return;
+        }
+        self.finish_go_home(cx);
+    }
+
+    fn finish_go_home(&mut self, cx: &mut Context<Self>) {
+        self.remember_current_ai_selections();
         self.open = None;
         self.settings_open = false;
         cx.notify();
@@ -1506,22 +2225,22 @@ impl AppShell {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(tr("app.title")),
                     )
-                    .child(
-                        div().text_sm().child(format!(
-                            "{} {}",
-                            tr("menu.about_version"),
-                            env!("CARGO_PKG_VERSION")
-                        )),
-                    )
+                    .child(div().text_sm().child(format!(
+                        "{} {}",
+                        tr("menu.about_version"),
+                        env!("CARGO_PKG_VERSION")
+                    )))
                     .child(div().text_sm().child(tr("app.subtitle")))
-                    .child(div().text_sm().child(format!(
-                        "{}: Apache-2.0",
-                        tr("menu.about_license")
-                    )))
-                    .child(div().text_sm().child(format!(
-                        "{}: {IMPRESSY_README_URL}",
-                        tr("menu.about_repo")
-                    )))
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(format!("{}: Apache-2.0", tr("menu.about_license"))),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .child(format!("{}: {IMPRESSY_README_URL}", tr("menu.about_repo"))),
+                    )
                     .child(div().text_sm().child(format!(
                         "{}: GPUI · gpui-component · image · rust-i18n",
                         tr("menu.about_built_with")
@@ -1533,10 +2252,12 @@ impl AppShell {
     pub(crate) fn menu_show_shortcuts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let modifier = shortcut_modifier();
         // （操作名, 键位）对照：键位用平台修饰符前缀。文案复用 menu.* 键。
-        let rows: [(SharedString, String); 11] = [
+        let rows: [(SharedString, String); 13] = [
             (tr("menu.open"), format!("{modifier}+O")),
             (tr("menu.open_multi"), format!("{modifier}+Shift+O")),
             (tr("menu.save"), format!("{modifier}+S")),
+            (tr("menu.undo"), format!("{modifier}+Z")),
+            (tr("menu.redo"), format!("{modifier}+Shift+Z")),
             (tr("menu.reveal_output"), format!("{modifier}+Shift+R")),
             (tr("menu.paste"), format!("{modifier}+V")),
             (tr("menu.copy"), format!("{modifier}+Shift+C")),
@@ -1611,24 +2332,47 @@ impl AppShell {
     }
 
     fn adjust_param(&mut self, action: ParamAction, cx: &mut Context<Self>) {
+        if matches!(
+            action,
+            ParamAction::SetGifDelay(_)
+                | ParamAction::SetGifWidth(_)
+                | ParamAction::SetGifHeight(_)
+                | ParamAction::SetGifCustomSize(_)
+                | ParamAction::SetGifPlayback(_)
+        ) {
+            self.workspace.clear_encoded_result();
+        }
         match self.params.apply(action) {
             ParamEffect::CropRatioChanged => {
                 let ratio = self.params.edit.ratio();
                 self.crop_selection.update(cx, |selection, selection_cx| {
                     selection.set_ratio(ratio, selection_cx);
                 });
+                self.preview_crop(cx);
             }
             ParamEffect::BeautifyPreview
                 if self.workspace.has_image() && !self.workspace.is_busy() =>
             {
                 self.start_workspace_command(
-                    WorkspaceCommand::Transform(TransformOperation::Beautify(
+                    WorkspaceCommand::PreviewTransform(TransformOperation::Beautify(
                         self.params.beautify.core(),
                     )),
                     cx,
                 );
             }
-            ParamEffect::None | ParamEffect::BeautifyPreview => {}
+            ParamEffect::ResizePreview
+                if self.workspace.has_image() && !self.workspace.is_busy() =>
+            {
+                let (width, height) = self.params.edit.output_dimensions();
+                self.start_workspace_command(
+                    WorkspaceCommand::PreviewTransform(TransformOperation::Resize {
+                        width,
+                        height,
+                    }),
+                    cx,
+                );
+            }
+            ParamEffect::None | ParamEffect::ResizePreview | ParamEffect::BeautifyPreview => {}
         }
         cx.notify();
     }
@@ -1654,6 +2398,22 @@ impl AppShell {
         }
     }
 
+    fn preview_crop(&mut self, cx: &mut Context<Self>) {
+        if self.workspace.is_busy() {
+            return;
+        }
+        let Some((width, height)) = self.workspace.current_dimensions() else {
+            return;
+        };
+        let Ok(rect) = self.crop_selection.read(cx).to_crop_rect(width, height) else {
+            return;
+        };
+        self.start_workspace_command(
+            WorkspaceCommand::PreviewTransform(TransformOperation::Crop(rect)),
+            cx,
+        );
+    }
+
     fn generate_qr(&mut self, cx: &mut Context<Self>) {
         let text = self.qr_input.read(cx).value().trim().to_string();
         if text.is_empty() {
@@ -1672,31 +2432,113 @@ impl AppShell {
 
     fn run_batch(&mut self, cx: &mut Context<Self>) {
         let params = self.params.batch;
-        let request = match params.mode {
-            BatchMode::Convert | BatchMode::Compress => BatchRequest::Convert {
-                format: params.format,
-                settings: params.encode_settings(),
-            },
-            BatchMode::Resize => BatchRequest::Resize {
-                width: params.width,
-                height: params.height,
-            },
-            BatchMode::Watermark => {
-                let text = self.watermark_input.read(cx).value().trim().to_string();
-                if params.watermark_source == WatermarkSource::Text && text.is_empty() {
-                    self.workspace.set_status(UiMessage::NeedText);
-                    cx.notify();
-                    return;
-                }
-                BatchRequest::Watermark {
-                    source: params.watermark_source,
-                    text,
-                    opacity: f32::from(params.watermark_opacity_percent) / 100.0,
-                    placement: params.watermark_placement,
-                }
-            }
+        let resize = params.resize_enabled.then_some(BatchRequestStep::Resize {
+            mode: params.resize_mode,
+            width: params.width,
+            height: params.height,
+            aspect_locked: params.aspect_locked,
+            percentage: params.percentage,
+            longest_side: params.longest_side,
+            prevent_enlarge: params.prevent_enlarge,
+        });
+        let text = self.watermark_input.read(cx).value().trim().to_string();
+        if params.watermark_enabled
+            && params.watermark_source == WatermarkSource::Text
+            && text.is_empty()
+        {
+            self.workspace.set_status(UiMessage::NeedText);
+            cx.notify();
+            return;
+        }
+        let watermark = params
+            .watermark_enabled
+            .then_some(BatchRequestStep::Watermark {
+                source: params.watermark_source,
+                text,
+                opacity: f32::from(params.watermark_opacity_percent) / 100.0,
+                placement: params.watermark_placement,
+            });
+        let mut steps = Vec::with_capacity(2);
+        if params.resize_first {
+            steps.extend(resize);
+            steps.extend(watermark);
+        } else {
+            steps.extend(watermark);
+            steps.extend(resize);
+        };
+        let request = BatchRequest::Pipeline {
+            steps,
+            output: params.encode_settings(),
+            collision_policy: self.collision_policy,
         };
         self.start_workspace_command(WorkspaceCommand::Batch(request), cx);
+    }
+
+    fn on_crop_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let (dx, dy) = match event.keystroke.key.as_str() {
+            "left" => (-1.0, 0.0),
+            "right" => (1.0, 0.0),
+            "up" => (0.0, -1.0),
+            "down" => (0.0, 1.0),
+            _ => return,
+        };
+        let resize = event.keystroke.modifiers.shift;
+        self.crop_selection.update(cx, |selection, selection_cx| {
+            selection.keyboard_adjust(dx, dy, resize);
+            selection_cx.notify();
+        });
+        self.preview_crop(cx);
+        window.prevent_default();
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    fn cancel_batch(&mut self, cx: &mut Context<Self>) {
+        self.workspace.cancel_batch();
+        cx.notify();
+    }
+
+    fn retry_failed_batch(&mut self, cx: &mut Context<Self>) {
+        if let Some(job) = self.workspace.prepare_retry_batch() {
+            self.spawn_workspace_job(job, cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    fn save_batch_preset(&mut self, cx: &mut Context<Self>) {
+        self.batch_preset = Some(BatchPreset {
+            params: self.params.batch,
+            watermark_text: self.watermark_input.read(cx).value().to_string(),
+        });
+        self.workspace.set_status(UiMessage::BatchPresetSaved);
+        cx.notify();
+    }
+
+    fn apply_batch_preset(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(preset) = self.batch_preset.clone() else {
+            return;
+        };
+        self.params.batch = preset.params;
+        self.watermark_input.update(cx, |input, input_cx| {
+            input.set_value(preset.watermark_text, window, input_cx);
+        });
+        for (entity, value) in [
+            (&self.numbers.batch_width, preset.params.width),
+            (&self.numbers.batch_height, preset.params.height),
+            (&self.numbers.batch_percentage, preset.params.percentage),
+            (&self.numbers.batch_longest_side, preset.params.longest_side),
+            (
+                &self.numbers.batch_opacity,
+                u32::from(preset.params.watermark_opacity_percent),
+            ),
+        ] {
+            entity.update(cx, |input, input_cx| {
+                input.set_value(value.to_string(), window, input_cx);
+            });
+        }
+        self.workspace.set_status(UiMessage::BatchPresetApplied);
+        cx.notify();
     }
 
     fn on_numeric_input(
@@ -1711,6 +2553,9 @@ impl AppShell {
             InputEvent::Change => {
                 if let Ok(value) = state.read(cx).value().parse::<u32>() {
                     self.adjust_param(field.action(value), cx);
+                    if matches!(field, NumericField::EditWidth | NumericField::EditHeight) {
+                        self.sync_edit_dimension_fields(window, cx);
+                    }
                 }
             }
             InputEvent::Blur | InputEvent::PressEnter { .. } => {
@@ -1743,6 +2588,71 @@ impl AppShell {
         state.update(cx, |input, input_cx| {
             input.set_value(value.to_string(), window, input_cx);
         });
+        if matches!(field, NumericField::EditWidth | NumericField::EditHeight) {
+            self.sync_edit_dimension_fields(window, cx);
+        }
+    }
+
+    fn apply_resize(&mut self, cx: &mut Context<Self>) {
+        if self
+            .workspace
+            .apply_transient_preview_for(crate::document::EditKind::Resize)
+        {
+            cx.notify();
+            return;
+        }
+        let (width, height) = self.params.edit.output_dimensions();
+        self.start_workspace_command(
+            WorkspaceCommand::Transform(TransformOperation::Resize { width, height }),
+            cx,
+        );
+    }
+
+    fn apply_beautify(&mut self, cx: &mut Context<Self>) {
+        if self
+            .workspace
+            .apply_transient_preview_for(crate::document::EditKind::Beautify)
+        {
+            cx.notify();
+            return;
+        }
+        self.start_workspace_command(
+            WorkspaceCommand::Transform(TransformOperation::Beautify(self.params.beautify.core())),
+            cx,
+        );
+    }
+
+    fn sync_edit_dimension_fields(&self, window: &mut Window, cx: &mut Context<Self>) {
+        for (field, value) in [
+            (&self.numbers.edit_width, self.params.edit.width),
+            (&self.numbers.edit_height, self.params.edit.height),
+            (&self.numbers.edit_percentage, self.params.edit.percentage),
+            (
+                &self.numbers.edit_longest_side,
+                self.params.edit.longest_side,
+            ),
+        ] {
+            if field.read(cx).value().as_ref() != value.to_string() {
+                field.update(cx, |input, input_cx| {
+                    input.set_value(value.to_string(), window, input_cx);
+                });
+            }
+        }
+    }
+
+    fn sync_source_dimensions(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((width, height)) = self.workspace.current_dimensions() else {
+            return;
+        };
+        if (
+            self.params.edit.source_width,
+            self.params.edit.source_height,
+        ) == (width, height)
+        {
+            return;
+        }
+        self.params.edit.set_source_dimensions(width, height);
+        self.sync_edit_dimension_fields(window, cx);
     }
 
     fn handle_drop(&mut self, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
@@ -1750,7 +2660,12 @@ impl AppShell {
             self.open,
             Some(Feature::Collage | Feature::Batch | Feature::Gif)
         );
-        if let Some(job) = self.workspace.prepare_paths(paths, multiple) {
+        let job = if multiple && self.workspace.image_count() > 0 {
+            self.workspace.prepare_append_paths(paths)
+        } else {
+            self.workspace.prepare_paths(paths, multiple)
+        };
+        if let Some(job) = job {
             self.spawn_workspace_job(job, cx);
         } else {
             cx.notify();
@@ -1777,11 +2692,7 @@ impl AppShell {
             .into_any_element()
     }
 
-    fn chip_row(
-        &self,
-        label_key: &str,
-        chips: impl IntoIterator<Item = AnyElement>,
-    ) -> AnyElement {
+    fn chip_row(&self, label_key: &str, chips: impl IntoIterator<Item = AnyElement>) -> AnyElement {
         let help = tr(parameter_help_key(label_key));
         v_flex()
             .w_full()
@@ -1880,37 +2791,138 @@ impl AppShell {
                     cx,
                 ));
                 controls.push(self.chip_row("parameter.aspect_ratio", ratio_chips));
-                controls.push(self.number_control(
-                    "parameter.output_width",
-                    &self.numbers.edit_width,
-                    "px",
-                ));
-                controls.push(self.number_control(
-                    "parameter.output_height",
-                    &self.numbers.edit_height,
-                    "px",
-                ));
-            }
-            Feature::Collage => {
-                let mode = self.params.collage.mode;
+                if let Some((width, height)) = self.workspace.current_dimensions()
+                    && let Ok(crop) = self.crop_selection.read(cx).to_crop_rect(width, height)
+                {
+                    controls.push(
+                        div()
+                            .id("crop-selection-bounds")
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "{}: x={} y={} · {}×{} px · {}",
+                                t!("parameter.crop_bounds"),
+                                crop.x,
+                                crop.y,
+                                crop.width,
+                                crop.height,
+                                t!("parameter.crop_keyboard_hint")
+                            ))
+                            .into_any_element(),
+                    );
+                }
+                controls.push(
+                    self.chip_row(
+                        "parameter.resize_mode",
+                        [
+                            ResizeMode::Pixels,
+                            ResizeMode::Percentage,
+                            ResizeMode::LongestSide,
+                        ]
+                        .into_iter()
+                        .map(|mode| {
+                            self.param_chip(
+                                format!("chip-edit-resize-{mode:?}"),
+                                tr(mode.label_key()),
+                                self.params.edit.mode == mode,
+                                ParamAction::SetEditResizeMode(mode),
+                                cx,
+                            )
+                        }),
+                    ),
+                );
+                match self.params.edit.mode {
+                    ResizeMode::Pixels => {
+                        controls.push(self.number_control(
+                            "parameter.output_width",
+                            &self.numbers.edit_width,
+                            "px",
+                        ));
+                        controls.push(self.number_control(
+                            "parameter.output_height",
+                            &self.numbers.edit_height,
+                            "px",
+                        ));
+                        controls.push(self.chip_row(
+                            "parameter.aspect_lock",
+                            [true, false].into_iter().map(|locked| {
+                                self.param_chip(
+                                    format!("chip-edit-lock-{locked}"),
+                                    tr(if locked {
+                                        "option.locked"
+                                    } else {
+                                        "option.unlocked"
+                                    }),
+                                    self.params.edit.aspect_locked == locked,
+                                    ParamAction::SetEditAspectLock(locked),
+                                    cx,
+                                )
+                            }),
+                        ));
+                    }
+                    ResizeMode::Percentage => controls.push(self.number_control(
+                        "parameter.resize_percentage",
+                        &self.numbers.edit_percentage,
+                        "%",
+                    )),
+                    ResizeMode::LongestSide => controls.push(self.number_control(
+                        "parameter.longest_side",
+                        &self.numbers.edit_longest_side,
+                        "px",
+                    )),
+                }
                 controls.push(self.chip_row(
-                    "parameter.layout",
-                    [
-                        (CollageMode::Vertical, "chip-collage-vertical"),
-                        (CollageMode::Horizontal, "chip-collage-horizontal"),
-                        (CollageMode::Grid, "chip-collage-grid"),
-                    ]
-                    .into_iter()
-                    .map(|(candidate, id)| {
+                    "parameter.prevent_enlarge",
+                    [true, false].into_iter().map(|enabled| {
                         self.param_chip(
-                            id,
-                            tr(candidate.label_key()),
-                            mode == candidate,
-                            ParamAction::SetCollageMode(candidate),
+                            format!("chip-edit-prevent-enlarge-{enabled}"),
+                            tr(if enabled {
+                                "option.enabled"
+                            } else {
+                                "option.disabled"
+                            }),
+                            self.params.edit.prevent_enlarge == enabled,
+                            ParamAction::SetEditPreventEnlarge(enabled),
                             cx,
                         )
                     }),
                 ));
+                let (output_width, output_height) = self.params.edit.output_dimensions();
+                controls.push(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "{}: {}×{} px",
+                            tr("parameter.output_dimensions"),
+                            output_width,
+                            output_height
+                        ))
+                        .into_any_element(),
+                );
+            }
+            Feature::Collage => {
+                let mode = self.params.collage.mode;
+                controls.push(
+                    self.chip_row(
+                        "parameter.layout",
+                        [
+                            (CollageMode::Vertical, "chip-collage-vertical"),
+                            (CollageMode::Horizontal, "chip-collage-horizontal"),
+                            (CollageMode::Grid, "chip-collage-grid"),
+                        ]
+                        .into_iter()
+                        .map(|(candidate, id)| {
+                            self.param_chip(
+                                id,
+                                tr(candidate.label_key()),
+                                mode == candidate,
+                                ParamAction::SetCollageMode(candidate),
+                                cx,
+                            )
+                        }),
+                    ),
+                );
                 if mode == CollageMode::Grid {
                     controls.push(self.number_control(
                         "parameter.columns",
@@ -1951,6 +2963,7 @@ impl AppShell {
                     &self.numbers.slice_columns,
                     "",
                 ));
+                controls.push(self.collision_policy_control("slice", cx));
             }
             Feature::QrCode => {
                 controls.push(
@@ -1966,30 +2979,32 @@ impl AppShell {
                     "px",
                 ));
                 let correction = self.params.qr.correction;
-                controls.push(self.chip_row(
-                    "parameter.correction",
-                    [
-                        ErrorCorrection::Low,
-                        ErrorCorrection::Medium,
-                        ErrorCorrection::Quartile,
-                        ErrorCorrection::High,
-                    ]
-                    .into_iter()
-                    .map(|candidate| {
-                        self.param_chip(
-                            format!("chip-qr-correction-{candidate:?}"),
-                            tr(match candidate {
-                                ErrorCorrection::Low => "option.correction_low",
-                                ErrorCorrection::Medium => "option.correction_medium",
-                                ErrorCorrection::Quartile => "option.correction_quartile",
-                                ErrorCorrection::High => "option.correction_high",
-                            }),
-                            correction == candidate,
-                            ParamAction::SetQrCorrection(candidate),
-                            cx,
-                        )
-                    }),
-                ));
+                controls.push(
+                    self.chip_row(
+                        "parameter.correction",
+                        [
+                            ErrorCorrection::Low,
+                            ErrorCorrection::Medium,
+                            ErrorCorrection::Quartile,
+                            ErrorCorrection::High,
+                        ]
+                        .into_iter()
+                        .map(|candidate| {
+                            self.param_chip(
+                                format!("chip-qr-correction-{candidate:?}"),
+                                tr(match candidate {
+                                    ErrorCorrection::Low => "option.correction_low",
+                                    ErrorCorrection::Medium => "option.correction_medium",
+                                    ErrorCorrection::Quartile => "option.correction_quartile",
+                                    ErrorCorrection::High => "option.correction_high",
+                                }),
+                                correction == candidate,
+                                ParamAction::SetQrCorrection(candidate),
+                                cx,
+                            )
+                        }),
+                    ),
+                );
                 let foreground_help = tr("help.qr_foreground");
                 let background_help = tr("help.qr_background");
                 controls.push(
@@ -2057,85 +3072,134 @@ impl AppShell {
     fn batch_controls(&self, controls: &mut Vec<AnyElement>, cx: &mut Context<Self>) {
         let params = self.params.batch;
         controls.push(self.chip_row(
-            "parameter.mode",
-            [
-                BatchMode::Convert,
-                BatchMode::Compress,
-                BatchMode::Resize,
-                BatchMode::Watermark,
-            ]
-            .into_iter()
-            .map(|candidate| {
+            "parameter.batch_order",
+            [true, false].into_iter().map(|resize_first| {
                 self.param_chip(
-                    format!("chip-batch-mode-{candidate:?}"),
-                    tr(candidate.label_key()),
-                    params.mode == candidate,
-                    ParamAction::SetBatchMode(candidate),
+                    format!("chip-batch-order-{resize_first}"),
+                    tr(if resize_first {
+                        "option.resize_then_watermark"
+                    } else {
+                        "option.watermark_then_resize"
+                    }),
+                    params.resize_first == resize_first,
+                    ParamAction::SetBatchResizeFirst(resize_first),
                     cx,
                 )
             }),
         ));
-        match params.mode {
-            BatchMode::Convert | BatchMode::Compress => {
-                let formats = if params.mode == BatchMode::Compress {
-                    vec![OutputFormat::Jpeg, OutputFormat::Webp]
-                } else {
-                    vec![OutputFormat::Png, OutputFormat::Jpeg, OutputFormat::Webp]
-                };
-                controls.push(self.chip_row(
-                    "parameter.format",
-                    formats.into_iter().map(|output_format| {
+        controls.push(self.chip_row(
+            "parameter.resize_step",
+            [true, false].into_iter().map(|enabled| {
+                self.param_chip(
+                    format!("chip-batch-resize-enabled-{enabled}"),
+                    tr(if enabled {
+                        "option.enabled"
+                    } else {
+                        "option.disabled"
+                    }),
+                    params.resize_enabled == enabled,
+                    ParamAction::SetBatchResizeEnabled(enabled),
+                    cx,
+                )
+            }),
+        ));
+        if params.resize_enabled {
+            controls.push(
+                self.chip_row(
+                    "parameter.resize_mode",
+                    [
+                        ResizeMode::Pixels,
+                        ResizeMode::Percentage,
+                        ResizeMode::LongestSide,
+                    ]
+                    .into_iter()
+                    .map(|mode| {
                         self.param_chip(
-                            format!("chip-batch-format-{output_format}"),
-                            output_format.to_string(),
-                            params.format == output_format,
-                            ParamAction::SetBatchFormat(output_format),
+                            format!("chip-batch-resize-mode-{mode:?}"),
+                            tr(mode.label_key()),
+                            params.resize_mode == mode,
+                            ParamAction::SetBatchResizeMode(mode),
                             cx,
                         )
                     }),
-                ));
-                if params.format == OutputFormat::Png {
+                ),
+            );
+            match params.resize_mode {
+                ResizeMode::Pixels => {
+                    controls.push(self.number_control(
+                        "parameter.output_width",
+                        &self.numbers.batch_width,
+                        "px",
+                    ));
+                    controls.push(self.number_control(
+                        "parameter.output_height",
+                        &self.numbers.batch_height,
+                        "px",
+                    ));
                     controls.push(self.chip_row(
-                        "parameter.png_compression",
-                        [
-                            PngCompression::Fast,
-                            PngCompression::Default,
-                            PngCompression::Best,
-                        ]
-                        .into_iter()
-                        .map(|candidate| {
+                        "parameter.aspect_lock",
+                        [true, false].into_iter().map(|locked| {
                             self.param_chip(
-                                format!("chip-batch-png-{candidate:?}"),
-                                tr(png_compression_label_key(candidate)),
-                                params.png_compression == candidate,
-                                ParamAction::SetBatchPngCompression(candidate),
+                                format!("chip-batch-aspect-lock-{locked}"),
+                                tr(if locked {
+                                    "option.enabled"
+                                } else {
+                                    "option.disabled"
+                                }),
+                                params.aspect_locked == locked,
+                                ParamAction::SetBatchAspectLock(locked),
                                 cx,
                             )
                         }),
                     ));
-                } else {
-                    controls.push(self.slider_control(
-                        "parameter.quality",
-                        format!("{}%", params.quality.get()).into(),
-                        &self.batch_quality_slider,
-                        "param-batch-quality-slider",
-                    ));
                 }
-            }
-            BatchMode::Resize => {
-                controls.push(self.number_control(
-                    "parameter.output_width",
-                    &self.numbers.batch_width,
+                ResizeMode::Percentage => controls.push(self.number_control(
+                    "parameter.resize_percentage",
+                    &self.numbers.batch_percentage,
+                    "%",
+                )),
+                ResizeMode::LongestSide => controls.push(self.number_control(
+                    "parameter.longest_side",
+                    &self.numbers.batch_longest_side,
                     "px",
-                ));
-                controls.push(self.number_control(
-                    "parameter.output_height",
-                    &self.numbers.batch_height,
-                    "px",
-                ));
+                )),
             }
-            BatchMode::Watermark => {
-                controls.push(self.chip_row(
+            controls.push(self.chip_row(
+                "parameter.prevent_enlarge",
+                [true, false].into_iter().map(|enabled| {
+                    self.param_chip(
+                        format!("chip-batch-prevent-enlarge-{enabled}"),
+                        tr(if enabled {
+                            "option.enabled"
+                        } else {
+                            "option.disabled"
+                        }),
+                        params.prevent_enlarge == enabled,
+                        ParamAction::SetBatchPreventEnlarge(enabled),
+                        cx,
+                    )
+                }),
+            ));
+        }
+        controls.push(self.chip_row(
+            "parameter.watermark_step",
+            [true, false].into_iter().map(|enabled| {
+                self.param_chip(
+                    format!("chip-batch-watermark-enabled-{enabled}"),
+                    tr(if enabled {
+                        "option.enabled"
+                    } else {
+                        "option.disabled"
+                    }),
+                    params.watermark_enabled == enabled,
+                    ParamAction::SetBatchWatermarkEnabled(enabled),
+                    cx,
+                )
+            }),
+        ));
+        if params.watermark_enabled {
+            controls.push(
+                self.chip_row(
                     "parameter.watermark_source",
                     [WatermarkSource::Text, WatermarkSource::Image]
                         .into_iter()
@@ -2148,22 +3212,24 @@ impl AppShell {
                                 cx,
                             )
                         }),
-                ));
-                if params.watermark_source == WatermarkSource::Text {
-                    controls.push(
-                        v_flex()
-                            .gap_1()
-                            .child(div().text_sm().child(tr("parameter.watermark_text")))
-                            .child(Input::new(&self.watermark_input).cleanable(true))
-                            .into_any_element(),
-                    );
-                }
-                controls.push(self.number_control(
-                    "parameter.opacity",
-                    &self.numbers.batch_opacity,
-                    "%",
-                ));
-                controls.push(self.chip_row(
+                ),
+            );
+            if params.watermark_source == WatermarkSource::Text {
+                controls.push(
+                    v_flex()
+                        .gap_1()
+                        .child(div().text_sm().child(tr("parameter.watermark_text")))
+                        .child(Input::new(&self.watermark_input).cleanable(true))
+                        .into_any_element(),
+                );
+            }
+            controls.push(self.number_control(
+                "parameter.opacity",
+                &self.numbers.batch_opacity,
+                "%",
+            ));
+            controls.push(
+                self.chip_row(
                     "parameter.position",
                     [WatermarkPlacement::BottomRight, WatermarkPlacement::Tiled]
                         .into_iter()
@@ -2176,9 +3242,91 @@ impl AppShell {
                                 cx,
                             )
                         }),
-                ));
-            }
+                ),
+            );
         }
+        controls.push(
+            self.chip_row(
+                "parameter.format",
+                [OutputFormat::Png, OutputFormat::Jpeg, OutputFormat::Webp]
+                    .into_iter()
+                    .map(|output_format| {
+                        self.param_chip(
+                            format!("chip-batch-format-{output_format}"),
+                            output_format.to_string(),
+                            params.format == output_format,
+                            ParamAction::SetBatchFormat(output_format),
+                            cx,
+                        )
+                    }),
+            ),
+        );
+        if params.format == OutputFormat::Png {
+            controls.push(
+                self.chip_row(
+                    "parameter.png_compression",
+                    [
+                        PngCompression::Fast,
+                        PngCompression::Default,
+                        PngCompression::Best,
+                    ]
+                    .into_iter()
+                    .map(|candidate| {
+                        self.param_chip(
+                            format!("chip-batch-png-{candidate:?}"),
+                            tr(png_compression_label_key(candidate)),
+                            params.png_compression == candidate,
+                            ParamAction::SetBatchPngCompression(candidate),
+                            cx,
+                        )
+                    }),
+                ),
+            );
+        } else {
+            controls.push(self.slider_control(
+                "parameter.quality",
+                format!("{}%", params.quality.get()).into(),
+                &self.batch_quality_slider,
+                "param-batch-quality-slider",
+            ));
+        }
+        controls.push(self.collision_policy_control("batch", cx));
+    }
+
+    fn collision_policy_control(
+        &self,
+        id_scope: &'static str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let collision_policy = self.collision_policy;
+        self.chip_row(
+            "parameter.collision_policy",
+            [
+                CollisionPolicy::PreserveBoth,
+                CollisionPolicy::Skip,
+                CollisionPolicy::Replace,
+            ]
+            .into_iter()
+            .map(|candidate| {
+                Button::new(SharedString::from(format!(
+                    "chip-{id_scope}-collision-{candidate:?}"
+                )))
+                .small()
+                .w_full()
+                .label(tr(match candidate {
+                    CollisionPolicy::PreserveBoth => "option.collision_preserve_both",
+                    CollisionPolicy::Skip => "option.collision_skip",
+                    CollisionPolicy::Replace => "option.collision_replace",
+                }))
+                .when(candidate == collision_policy, |button| button.primary())
+                .when(candidate != collision_policy, |button| button.outline())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.collision_policy = candidate;
+                    cx.notify();
+                }))
+                .into_any_element()
+            }),
+        )
     }
 
     fn beautify_controls(&self, controls: &mut Vec<AnyElement>, cx: &mut Context<Self>) {
@@ -2193,29 +3341,27 @@ impl AppShell {
             &self.numbers.beautify_padding,
             "px",
         ));
-        controls.push(self.chip_row(
-            "parameter.background",
-            [
-                BeautifyBackground::Gradient,
-                BeautifyBackground::Solid,
-                BeautifyBackground::Transparent,
-            ]
-            .into_iter()
-            .map(|candidate| {
-                self.param_chip(
-                    format!("chip-beautify-bg-{candidate:?}"),
-                    tr(candidate.label_key()),
-                    params.background == candidate,
-                    ParamAction::SetBeautifyBackground(candidate),
-                    cx,
-                )
-            }),
-        ));
-        controls.push(self.number_control(
-            "parameter.border",
-            &self.numbers.beautify_border,
-            "px",
-        ));
+        controls.push(
+            self.chip_row(
+                "parameter.background",
+                [
+                    BeautifyBackground::Gradient,
+                    BeautifyBackground::Solid,
+                    BeautifyBackground::Transparent,
+                ]
+                .into_iter()
+                .map(|candidate| {
+                    self.param_chip(
+                        format!("chip-beautify-bg-{candidate:?}"),
+                        tr(candidate.label_key()),
+                        params.background == candidate,
+                        ParamAction::SetBeautifyBackground(candidate),
+                        cx,
+                    )
+                }),
+            ),
+        );
+        controls.push(self.number_control("parameter.border", &self.numbers.beautify_border, "px"));
         controls.push(self.chip_row(
             "parameter.shadow",
             [true, false].into_iter().map(|enabled| {
@@ -2236,11 +3382,7 @@ impl AppShell {
 
     fn gif_controls(&self, controls: &mut Vec<AnyElement>, cx: &mut Context<Self>) {
         let params = self.params.gif;
-        controls.push(self.number_control(
-            "parameter.frame_delay",
-            &self.numbers.gif_delay,
-            "ms",
-        ));
+        controls.push(self.number_control("parameter.frame_delay", &self.numbers.gif_delay, "ms"));
         controls.push(self.chip_row(
             "parameter.size_mode",
             [false, true].into_iter().map(|custom| {
@@ -2269,24 +3411,138 @@ impl AppShell {
                 "px",
             ));
         }
-        controls.push(self.chip_row(
-            "parameter.playback",
-            [Playback::Forward, Playback::Reverse, Playback::PingPong]
-                .into_iter()
-                .map(|candidate| {
-                    self.param_chip(
-                        format!("chip-gif-playback-{candidate:?}"),
-                        tr(match candidate {
-                            Playback::Forward => "option.forward",
-                            Playback::Reverse => "option.reverse",
-                            Playback::PingPong => "option.ping_pong",
-                        }),
-                        params.playback == candidate,
-                        ParamAction::SetGifPlayback(candidate),
-                        cx,
-                    )
-                }),
-        ));
+        controls.push(
+            self.chip_row(
+                "parameter.playback",
+                [Playback::Forward, Playback::Reverse, Playback::PingPong]
+                    .into_iter()
+                    .map(|candidate| {
+                        self.param_chip(
+                            format!("chip-gif-playback-{candidate:?}"),
+                            tr(match candidate {
+                                Playback::Forward => "option.forward",
+                                Playback::Reverse => "option.reverse",
+                                Playback::PingPong => "option.ping_pong",
+                            }),
+                            params.playback == candidate,
+                            ParamAction::SetGifPlayback(candidate),
+                            cx,
+                        )
+                    }),
+            ),
+        );
+        let input_count = self.workspace.image_count();
+        let playback_frames = if params.playback == Playback::PingPong && input_count > 1 {
+            input_count * 2 - 1
+        } else {
+            input_count
+        };
+        let duration_ms = u64::from(params.delay_ms) * playback_frames as u64;
+        controls.push(
+            v_flex()
+                .gap_2()
+                .child(
+                    Button::new("gif-preview-play-pause")
+                        .outline()
+                        .label(tr(if self.gif_playing {
+                            "action.pause_preview"
+                        } else {
+                            "action.play_preview"
+                        }))
+                        .disabled(input_count == 0)
+                        .on_click(cx.listener(|this, _, _, cx| this.toggle_gif_preview(cx))),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(format!(
+                            "{} {}/{} · {} {:.1}s",
+                            t!("gif.frame"),
+                            self.gif_preview_step.saturating_add(1).min(playback_frames),
+                            playback_frames,
+                            t!("gif.duration"),
+                            duration_ms as f64 / 1000.0
+                        )),
+                )
+                .into_any_element(),
+        );
+    }
+
+    fn toggle_gif_preview(&mut self, cx: &mut Context<Self>) {
+        if self.gif_playing {
+            self.gif_playing = false;
+            self.gif_preview_generation.fetch_add(1, Ordering::Relaxed);
+            cx.notify();
+            return;
+        }
+        if self.workspace.image_count() == 0 {
+            self.workspace.set_status(UiMessage::NeedMultipleImages);
+            cx.notify();
+            return;
+        }
+        self.gif_playing = true;
+        self.gif_preview_step = 0;
+        let first = if self.params.gif.playback == Playback::Reverse {
+            self.workspace.image_count().saturating_sub(1)
+        } else {
+            0
+        };
+        self.workspace.set_focus(first);
+        let generation = self
+            .gif_preview_generation
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
+        let generation_token = Arc::clone(&self.gif_preview_generation);
+        let mut delay_ms = self.params.gif.delay_ms;
+        cx.spawn(async move |this, cx| {
+            loop {
+                Timer::after(Duration::from_millis(u64::from(delay_ms))).await;
+                if generation_token.load(Ordering::Relaxed) != generation {
+                    break;
+                }
+                let next_delay = this
+                    .update(cx, |this, cx| {
+                        if !this.gif_playing
+                            || this.open != Some(Feature::Gif)
+                            || generation_token.load(Ordering::Relaxed) != generation
+                        {
+                            return None;
+                        }
+                        this.advance_gif_preview();
+                        cx.notify();
+                        Some(this.params.gif.delay_ms)
+                    })
+                    .ok()
+                    .flatten();
+                let Some(next_delay) = next_delay else {
+                    break;
+                };
+                delay_ms = next_delay;
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn advance_gif_preview(&mut self) {
+        let count = self.workspace.image_count();
+        if count < 2 {
+            return;
+        }
+        let playback_frames = if self.params.gif.playback == Playback::PingPong {
+            count * 2 - 1
+        } else {
+            count
+        };
+        self.gif_preview_step = (self.gif_preview_step + 1) % playback_frames;
+        let next = match self.params.gif.playback {
+            Playback::Forward => self.gif_preview_step,
+            Playback::Reverse => count - 1 - self.gif_preview_step,
+            Playback::PingPong if self.gif_preview_step < count => self.gif_preview_step,
+            Playback::PingPong => count * 2 - 2 - self.gif_preview_step,
+        };
+        self.workspace.set_focus(next);
     }
 
     fn feature_action_buttons(&self, feature: Feature, cx: &mut Context<Self>) -> Vec<AnyElement> {
@@ -2333,14 +3589,13 @@ impl AppShell {
                         .on_click(cx.listener(|this, _, _, cx| this.apply_crop(cx)))
                         .into_any_element(),
                 );
-                command!(
-                    "act-resize",
-                    "action.apply_resize",
-                    WorkspaceCommand::Transform(TransformOperation::Resize {
-                        width: self.params.edit.width,
-                        height: self.params.edit.height,
-                    }),
-                    false,
+                buttons.push(
+                    Button::new("act-resize")
+                        .outline()
+                        .label(tr("action.apply_resize"))
+                        .disabled(self.workspace.is_busy())
+                        .on_click(cx.listener(|this, _, _, cx| this.apply_resize(cx)))
+                        .into_any_element(),
                 );
                 command!(
                     "act-save",
@@ -2355,6 +3610,12 @@ impl AppShell {
                     "action.open_multi",
                     WorkspaceCommand::OpenMultiple,
                     true,
+                );
+                command!(
+                    "act-add-collage",
+                    "action.add_images",
+                    WorkspaceCommand::AppendMultiple,
+                    false,
                 );
                 command!(
                     "act-collage",
@@ -2387,6 +3648,50 @@ impl AppShell {
                         .on_click(cx.listener(|this, _, _, cx| this.run_batch(cx)))
                         .into_any_element(),
                 );
+                command!(
+                    "act-add-batch",
+                    "action.add_images",
+                    WorkspaceCommand::AppendMultiple,
+                    false,
+                );
+                if self.workspace.is_busy() {
+                    buttons.push(
+                        Button::new("act-batch-cancel")
+                            .outline()
+                            .label(tr("action.cancel_batch"))
+                            .on_click(cx.listener(|this, _, _, cx| this.cancel_batch(cx)))
+                            .into_any_element(),
+                    );
+                }
+                if self.workspace.has_retry_batch() {
+                    buttons.push(
+                        Button::new("act-batch-retry")
+                            .outline()
+                            .label(tr("action.retry_failed"))
+                            .on_click(cx.listener(|this, _, _, cx| this.retry_failed_batch(cx)))
+                            .into_any_element(),
+                    );
+                }
+                buttons.push(
+                    Button::new("act-batch-save-preset")
+                        .outline()
+                        .label(tr("action.save_batch_preset"))
+                        .disabled(self.workspace.is_busy())
+                        .on_click(cx.listener(|this, _, _, cx| this.save_batch_preset(cx)))
+                        .into_any_element(),
+                );
+                if self.batch_preset.is_some() {
+                    buttons.push(
+                        Button::new("act-batch-apply-preset")
+                            .outline()
+                            .label(tr("action.apply_batch_preset"))
+                            .disabled(self.workspace.is_busy())
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.apply_batch_preset(window, cx)
+                            }))
+                            .into_any_element(),
+                    );
+                }
             }
             Feature::Slice => {
                 command!(
@@ -2398,7 +3703,10 @@ impl AppShell {
                 command!(
                     "act-slice",
                     "action.export_slices",
-                    WorkspaceCommand::Slice(self.params.slice.grid()),
+                    WorkspaceCommand::Slice {
+                        grid: self.params.slice.grid(),
+                        collision_policy: self.collision_policy,
+                    },
                     false,
                 );
             }
@@ -2463,13 +3771,13 @@ impl AppShell {
                     WorkspaceCommand::OpenSingle,
                     true,
                 );
-                command!(
-                    "act-beautify",
-                    "action.beautify",
-                    WorkspaceCommand::Transform(TransformOperation::Beautify(
-                        self.params.beautify.core(),
-                    )),
-                    false,
+                buttons.push(
+                    Button::new("act-beautify")
+                        .primary()
+                        .label(tr("action.beautify"))
+                        .disabled(self.workspace.is_busy())
+                        .on_click(cx.listener(|this, _, _, cx| this.apply_beautify(cx)))
+                        .into_any_element(),
                 );
                 command!(
                     "act-save",
@@ -2484,6 +3792,12 @@ impl AppShell {
                     "action.open_multi",
                     WorkspaceCommand::OpenMultiple,
                     true,
+                );
+                command!(
+                    "act-add-gif",
+                    "action.add_images",
+                    WorkspaceCommand::AppendMultiple,
+                    false,
                 );
                 command!(
                     "act-gif",
@@ -2536,16 +3850,42 @@ impl AppShell {
     }
 
     fn preview_panel(&self, feature: Feature, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let image = self.workspace.preview()?;
+        let (image, mut dimensions) = if self.compare_original {
+            (
+                self.workspace.original_preview()?,
+                self.workspace.original_dimensions()?,
+            )
+        } else {
+            (
+                self.workspace.preview()?,
+                self.workspace.preview_dimensions()?,
+            )
+        };
+        if feature == Feature::Gif {
+            dimensions = if self.params.gif.custom_size {
+                (self.params.gif.width, self.params.gif.height)
+            } else {
+                self.workspace.input_dimensions(0).unwrap_or(dimensions)
+            };
+        }
         let (max_width, max_height) = self.preview_budget();
-        let (width, height) = self.workspace.preview_size(max_width, max_height)?;
+        let (source_width, source_height) = (dimensions.0 as f32, dimensions.1 as f32);
+        let scale = if self.fit_canvas {
+            (max_width / source_width)
+                .min(max_height / source_height)
+                .min(1.0)
+        } else {
+            self.canvas_zoom
+        };
+        let (width, height) = (source_width * scale, source_height * scale);
         let preview = div()
             .relative()
             .w(px(width))
             .h(px(height))
             .child(img(image).size_full());
-        let preview = if feature == Feature::Edit {
+        let preview = if feature == Feature::Edit && !self.compare_original {
             let down = self.crop_selection.clone();
+            let crop_focus = self.crop_focus.clone();
             let moving = self.crop_selection.clone();
             let up = self.crop_selection.clone();
             let up_out = self.crop_selection.clone();
@@ -2556,9 +3896,15 @@ impl AppShell {
                     .top_0()
                     .left_0()
                     .size_full()
+                    .track_focus(&self.crop_focus)
+                    .focus(|this| this.border_2().border_color(cx.theme().ring))
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                        this.on_crop_key(event, window, cx);
+                    }))
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |_, event: &MouseDownEvent, _, cx| {
+                        cx.listener(move |_, event: &MouseDownEvent, window, cx| {
+                            crop_focus.focus(window);
                             down.update(cx, |selection, selection_cx| {
                                 selection.on_down(event.position, selection_cx);
                             });
@@ -2571,18 +3917,20 @@ impl AppShell {
                     }))
                     .on_mouse_up(
                         MouseButton::Left,
-                        cx.listener(move |_, _: &MouseUpEvent, _, cx| {
+                        cx.listener(move |this, _: &MouseUpEvent, _, cx| {
                             up.update(cx, |selection, selection_cx| {
                                 selection.on_up(selection_cx);
                             });
+                            this.preview_crop(cx);
                         }),
                     )
                     .on_mouse_up_out(
                         MouseButton::Left,
-                        cx.listener(move |_, _: &MouseUpEvent, _, cx| {
+                        cx.listener(move |this, _: &MouseUpEvent, _, cx| {
                             up_out.update(cx, |selection, selection_cx| {
                                 selection.on_up(selection_cx);
                             });
+                            this.preview_crop(cx);
                         }),
                     )
                     .child(selection_overlay(self.crop_selection.clone())),
@@ -2607,11 +3955,7 @@ impl AppShell {
         let primary = cx.theme().primary;
         let items = (0..count).map(|index| {
             let selected = index == focus;
-            let name = self
-                .workspace
-                .source_name(index)
-                .unwrap_or("—")
-                .to_string();
+            let name = self.workspace.source_name(index).unwrap_or("—").to_string();
             let short_name = if name.chars().count() > 14 {
                 format!("{}…", name.chars().take(12).collect::<String>())
             } else {
@@ -2627,11 +3971,7 @@ impl AppShell {
                 .border_1()
                 .border_color(if selected { primary } else { border })
                 .when_some(thumb, |this, thumb| {
-                    this.child(
-                        img(thumb)
-                            .w(px(88.0))
-                            .h(px(64.0)),
-                    )
+                    this.child(img(thumb).w(px(88.0)).h(px(64.0)))
                 })
                 .child(
                     div()
@@ -2736,12 +4076,13 @@ impl AppShell {
             )
             .child(
                 div()
+                    .id("preview-scroll-area")
                     .flex_1()
                     .min_h(px(420.0))
                     .flex()
                     .items_center()
                     .justify_center()
-                    .overflow_hidden()
+                    .overflow_scroll()
                     .rounded_lg()
                     .border_1()
                     .border_dashed()
@@ -2781,7 +4122,9 @@ impl AppShell {
                         )
                     }),
             )
-            .when_some(self.image_strip(feature, cx), |this, strip| this.child(strip))
+            .when_some(self.image_strip(feature, cx), |this, strip| {
+                this.child(strip)
+            })
             .child(
                 h_flex()
                     .min_h(px(24.0))
@@ -2798,6 +4141,182 @@ impl AppShell {
             .into_any_element()
     }
 
+    fn export_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        let border = cx.theme().border;
+        let muted = cx.theme().muted_foreground;
+        let current_format = self.export_format;
+        let current_quality = self.export_quality;
+        let current_compression = self.export_png_compression;
+        let settings = self.export_settings();
+        let filename = self
+            .workspace
+            .suggested_save_name(settings, self.export_encoded_result);
+        let destination = self.path_prompt_directory().display().to_string();
+        let dimensions = if self.export_encoded_result == Some(EncodedResultKind::Gif)
+            && self.params.gif.custom_size
+        {
+            Some((self.params.gif.width, self.params.gif.height))
+        } else {
+            self.workspace.preview_dimensions()
+        }
+        .map(|(width, height)| format!("{width} × {height} px"))
+        .unwrap_or_else(|| "—".to_string());
+
+        v_flex()
+            .id("export-panel")
+            .gap_3()
+            .p_4()
+            .rounded_lg()
+            .border_1()
+            .border_color(border)
+            .bg(cx.theme().background)
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .child(tr("export.title")),
+            )
+            .when(self.export_encoded_result.is_none(), |this| {
+                this.child(h_flex().gap_2().children(
+                    [OutputFormat::Png, OutputFormat::Jpeg, OutputFormat::Webp].map(|candidate| {
+                        Button::new(SharedString::from(format!("export-format-{candidate}")))
+                            .small()
+                            .label(candidate.to_string())
+                            .when(candidate == current_format, |button| button.primary())
+                            .when(candidate != current_format, |button| button.outline())
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.export_format = candidate;
+                                this.schedule_size_estimate(cx);
+                                cx.notify();
+                            }))
+                    }),
+                ))
+            })
+            .when(self.export_encoded_result.is_some(), |this| {
+                this.child(
+                    div()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(tr("export.encoded_result")),
+                )
+            })
+            .when(
+                current_format == OutputFormat::Png && self.export_encoded_result.is_none(),
+                |this| {
+                    this.child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_xs().child(tr("parameter.png_compression")))
+                            .child(
+                                h_flex().gap_2().children(
+                                    [
+                                        PngCompression::Fast,
+                                        PngCompression::Default,
+                                        PngCompression::Best,
+                                    ]
+                                    .map(|candidate| {
+                                        Button::new(SharedString::from(format!(
+                                            "export-png-{candidate:?}"
+                                        )))
+                                        .small()
+                                        .label(tr(png_compression_label_key(candidate)))
+                                        .when(candidate == current_compression, |button| {
+                                            button.primary()
+                                        })
+                                        .when(candidate != current_compression, |button| {
+                                            button.outline()
+                                        })
+                                        .on_click(
+                                            cx.listener(move |this, _, _, cx| {
+                                                this.export_png_compression = candidate;
+                                                this.schedule_size_estimate(cx);
+                                                cx.notify();
+                                            }),
+                                        )
+                                    }),
+                                ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(muted)
+                                    .child(tr("help.png_compression")),
+                            ),
+                    )
+                },
+            )
+            .when(
+                current_format != OutputFormat::Png && self.export_encoded_result.is_none(),
+                |this| {
+                    this.child(
+                        v_flex()
+                            .gap_1()
+                            .child(div().text_xs().child(tr("parameter.quality")))
+                            .child(h_flex().gap_2().children([70_u8, 85, 95].map(|value| {
+                                let quality = Quality::new(value).expect("fixed quality is valid");
+                                Button::new(SharedString::from(format!("export-quality-{value}")))
+                                    .small()
+                                    .label(format!("{value}%"))
+                                    .when(quality == current_quality, |button| button.primary())
+                                    .when(quality != current_quality, |button| button.outline())
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.export_quality = quality;
+                                        this.schedule_size_estimate(cx);
+                                        cx.notify();
+                                    }))
+                            }))),
+                    )
+                },
+            )
+            .when(
+                current_format == OutputFormat::Jpeg && self.export_encoded_result.is_none(),
+                |this| {
+                    this.child(
+                        div()
+                            .text_xs()
+                            .text_color(muted)
+                            .child(tr("export.jpeg_background")),
+                    )
+                },
+            )
+            .child(
+                v_flex()
+                    .gap_1()
+                    .text_xs()
+                    .text_color(muted)
+                    .child(format!("{}: {dimensions}", t!("export.dimensions")))
+                    .child(format!(
+                        "{}: {}",
+                        t!("export.estimated_size"),
+                        estimate_text(self.estimate_state)
+                    ))
+                    .child(format!("{}: {filename}", t!("export.filename")))
+                    .child(format!("{}: {destination}", t!("export.destination"))),
+            )
+            .child(
+                h_flex()
+                    .gap_2()
+                    .child(
+                        Button::new("export-confirm")
+                            .primary()
+                            .label(tr("export.choose_destination"))
+                            .disabled(self.workspace.is_busy())
+                            .on_click(cx.listener(|this, _, _, cx| this.confirm_export(cx))),
+                    )
+                    .child(
+                        Button::new("export-cancel")
+                            .outline()
+                            .label(tr("action.cancel"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.export_panel_open = false;
+                                this.export_encoded_result = None;
+                                cx.notify();
+                            })),
+                    ),
+            )
+            .into_any_element()
+    }
+
     fn v1_page(&self, feature: Feature, cx: &mut Context<Self>) -> impl IntoElement {
         let primary = cx.theme().primary;
         let muted = cx.theme().muted_foreground;
@@ -2810,7 +4329,8 @@ impl AppShell {
             .id("v1-workspace")
             .size_full()
             .flex_1()
-            .overflow_y_scroll()
+            .min_h(px(0.0))
+            .overflow_hidden()
             .pb_6()
             .gap_5()
             .items_start()
@@ -2820,30 +4340,73 @@ impl AppShell {
             .child(
                 div()
                     .flex_1()
+                    .h_full()
+                    .min_h(px(0.0))
                     .min_w(px(420.0))
                     .child(self.workspace_canvas(feature, cx)),
             )
             .child(
                 v_flex()
                     .w(px(280.0))
+                    .h_full()
+                    .min_h(px(0.0))
                     .flex_shrink_0()
                     .gap_4()
-                    .child(self.parameter_panel(feature, cx))
                     .child(
-                        v_flex()
-                            .gap_2()
-                            .p_4()
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(border)
-                            .bg(background)
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(tr("workspace.actions")),
+                        div()
+                            .id("parameter-panel-scroll")
+                            .flex_1()
+                            .min_h(px(0.0))
+                            .overflow_y_scroll()
+                            .child(self.parameter_panel(feature, cx)),
+                    )
+                    .when(!self.export_panel_open, |this| {
+                        this.child(
+                            v_flex()
+                                .gap_2()
+                                .p_4()
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(border)
+                                .bg(background)
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                                        .child(tr("workspace.actions")),
+                                )
+                                .children(buttons),
+                        )
+                    })
+                    .when(self.export_panel_open, |this| {
+                        this.child(self.export_panel(cx))
+                    })
+                    .when_some(
+                        (feature == Feature::Batch)
+                            .then(|| self.workspace.batch_results_text())
+                            .flatten(),
+                        |this, results| {
+                            this.child(
+                                v_flex()
+                                    .id("batch-results")
+                                    .max_h(px(180.0))
+                                    .overflow_y_scroll()
+                                    .p_3()
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(border)
+                                    .bg(background)
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                                            .child(tr("workspace.batch_results")),
+                                    )
+                                    .children(results.to_string().lines().map(|line| {
+                                        div().text_xs().text_color(muted).child(line.to_string())
+                                    })),
                             )
-                            .children(buttons),
+                        },
                     )
                     .child(
                         h_flex()
@@ -2877,13 +4440,21 @@ impl AppShell {
     fn select_edit_preset(&mut self, index: usize, cx: &mut Context<Self>) {
         self.ai_state.set_edit_preset(index);
         if AiEditPreset::ALL.get(self.ai_state.edit_preset_index) == Some(&AiEditPreset::Removal)
-            && self.crop_selection.read(cx).rect == NormRect::FULL
+            && self.ai_region_selection.read(cx).rect == NormRect::FULL
         {
-            self.crop_selection.update(cx, |selection, selection_cx| {
-                selection.set_free_region(NormRect::centered_fraction(0.32), selection_cx);
-            });
+            self.ai_region_selection
+                .update(cx, |selection, selection_cx| {
+                    selection.set_free_region(NormRect::centered_fraction(0.32), selection_cx);
+                });
         }
         cx.notify();
+    }
+
+    fn ai_prompt_input(&self, feature: Feature) -> &Entity<InputState> {
+        self.ai_prompts
+            .iter()
+            .find_map(|(candidate, input)| (*candidate == feature).then_some(input))
+            .expect("free-prompt feature must own an input")
     }
 
     fn labeled_ai_chips(
@@ -3104,7 +4675,15 @@ impl AppShell {
         feature: Feature,
         cx: &Context<Self>,
     ) -> Result<Vec<AiPromptTask>, AiErrorKind> {
-        let mut instruction = self.ai_prompt.read(cx).value().trim().to_string();
+        let mut instruction = if shows_free_prompt(feature) {
+            self.ai_prompt_input(feature)
+                .read(cx)
+                .value()
+                .trim()
+                .to_string()
+        } else {
+            String::new()
+        };
         if feature == Feature::TextToImage && instruction.is_empty() {
             return Err(AiErrorKind::InvalidRequest);
         }
@@ -3203,12 +4782,22 @@ impl AppShell {
                 return;
             }
         };
-        let images = self.workspace.ai_reference_images();
-        if spec.needs_image && images.is_empty() {
+        let reference = spec
+            .needs_image
+            .then(|| self.workspace.ai_reference_snapshot())
+            .flatten();
+        if spec.needs_image && reference.is_none() {
             self.ai_state.status = AiStatus::Error(AiErrorKind::InvalidRequest);
             cx.notify();
             return;
         }
+        let reference_version = reference.as_ref().map(|snapshot| snapshot.version);
+        let images = Arc::new(
+            reference
+                .into_iter()
+                .map(|snapshot| (*snapshot.image).clone())
+                .collect::<Vec<_>>(),
+        );
         let provider = self.ai_state.provider;
         let Some(capabilities) = self.provider_registry.capabilities(provider) else {
             self.ai_state.status = AiStatus::Error(AiErrorKind::Provider);
@@ -3240,7 +4829,7 @@ impl AppShell {
                 return;
             }
             let (rect, edited) = {
-                let selection = self.crop_selection.read(cx);
+                let selection = self.ai_region_selection.read(cx);
                 (selection.rect, selection.has_been_edited())
             };
             // 默认选区覆盖整张图：不框选直接生成会把整图当作「待移除区域」发给
@@ -3298,26 +4887,47 @@ impl AppShell {
                             },
                         );
                         this.persist_config(false);
-                        if this.open == Some(feature)
-                            && this.ai_generation.load(Ordering::Relaxed) == generation
-                        {
+                        if ai_outcome_matches_context(
+                            this.open,
+                            feature,
+                            this.ai_generation.load(Ordering::Relaxed),
+                            generation,
+                            reference_version,
+                            this.workspace.document_version(),
+                        ) {
                             this.ai_state.set_results(feature, results);
                         } else {
-                            // 用户已离开发起页：结果不跨页展示，状态归位。
-                            this.ai_state.status = AiStatus::Idle;
+                            log::info!(
+                                "ignored stale AI result for {} after context changed",
+                                feature.id()
+                            );
+                            settle_stale_ai_generation(
+                                &mut this.ai_state.status,
+                                this.ai_generation.load(Ordering::Relaxed),
+                                generation,
+                            );
                         }
                     }
                     AiTaskOutcome::Failed(error) => {
-                        if this.open == Some(feature)
-                            && this.ai_generation.load(Ordering::Relaxed) == generation
-                        {
+                        if ai_outcome_matches_context(
+                            this.open,
+                            feature,
+                            this.ai_generation.load(Ordering::Relaxed),
+                            generation,
+                            reference_version,
+                            this.workspace.document_version(),
+                        ) {
                             this.ai_state.status = AiStatus::Error(error);
                         } else {
                             log::error!(
                                 "AI generation for {} finished with {error:?} after navigating away",
                                 feature.id()
                             );
-                            this.ai_state.status = AiStatus::Idle;
+                            settle_stale_ai_generation(
+                                &mut this.ai_state.status,
+                                this.ai_generation.load(Ordering::Relaxed),
+                                generation,
+                            );
                         }
                     }
                 }
@@ -3358,6 +4968,7 @@ impl AppShell {
                 self.poster_layout.read(cx).layers(),
             )
         });
+        let collision_policy = self.collision_policy;
         let paths_receiver = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -3375,9 +4986,15 @@ impl AppShell {
                 };
                 let task = cx.background_executor().spawn(async move {
                     let paths = if let Some((texts, layout)) = poster {
-                        write_poster_results(&directory, &selected, &texts, layout)
+                        write_poster_results(
+                            &directory,
+                            &selected,
+                            &texts,
+                            layout,
+                            collision_policy,
+                        )
                     } else {
-                        write_ai_results(&directory, &selected)
+                        write_ai_results(&directory, &selected, collision_policy)
                     }?;
                     Ok::<_, std::io::Error>((directory, paths))
                 });
@@ -3517,9 +5134,11 @@ impl AppShell {
                     .border_1()
                     .border_color(theme.border)
                     .bg(black())
-                    .when(show_background, |this| match self.ai_state.results.first() {
-                        Some(result) => this.child(img(result.preview.clone()).size_full()),
-                        None => this,
+                    .when(show_background, |this| {
+                        match self.ai_state.results.first() {
+                            Some(result) => this.child(img(result.preview.clone()).size_full()),
+                            None => this,
+                        }
                     })
                     .child(
                         div()
@@ -3569,10 +5188,10 @@ impl AppShell {
             .h(px(height))
             .child(img(image).size_full());
         let preview = if selectable_region {
-            let down = self.crop_selection.clone();
-            let moving = self.crop_selection.clone();
-            let up = self.crop_selection.clone();
-            let up_out = self.crop_selection.clone();
+            let down = self.ai_region_selection.clone();
+            let moving = self.ai_region_selection.clone();
+            let up = self.ai_region_selection.clone();
+            let up_out = self.ai_region_selection.clone();
             preview.child(
                 div()
                     .id("ai-region-overlay")
@@ -3609,7 +5228,7 @@ impl AppShell {
                             });
                         }),
                     )
-                    .child(selection_overlay(self.crop_selection.clone())),
+                    .child(selection_overlay(self.ai_region_selection.clone())),
             )
         } else {
             preview
@@ -3655,12 +5274,20 @@ impl AppShell {
         let region_edit = feature == Feature::ImageEdit
             && AiEditPreset::ALL[self.ai_state.edit_preset_index] == AiEditPreset::Removal;
         let region_supported = !region_edit || capabilities.region_edit;
+        let advanced_summary = format!(
+            "{} · {} · ×{}",
+            t!(provider_label_key(self.ai_state.provider)),
+            t!(quality_label_key(self.ai_state.quality)),
+            self.ai_state.count
+        );
         let reference = self.ai_reference_panel(region_edit, cx);
         // 结果只属于其生成时的功能页：海报背景、结果网格与保存入口都以此为门，
         // 防止别的工具的结果串到当前页面。
         let results_belong_here = self.ai_state.results_feature == Some(feature);
-        let poster = (feature == Feature::Poster)
-            .then(|| self.poster_canvas(results_belong_here, cx).into_any_element());
+        let poster = (feature == Feature::Poster).then(|| {
+            self.poster_canvas(results_belong_here, cx)
+                .into_any_element()
+        });
         let tier_buttons = spec
             .tiers
             .iter()
@@ -3690,6 +5317,7 @@ impl AppShell {
             .enumerate()
             .map(|(index, result)| {
                 let selected = self.ai_state.selected_results.contains(&index);
+                let result_pixels = Arc::clone(&result.pixels);
                 let show_original = feature == Feature::OldPhotoRestoration
                     && self.ai_state.compare_original
                     && original_preview.is_some()
@@ -3725,6 +5353,15 @@ impl AppShell {
                             .text_xs()
                             .text_color(muted)
                             .child(tr(&format!("ai.tier.{}", result.tier_id))),
+                    )
+                    .child(
+                        Button::new(SharedString::from(format!("ai-use-result-{index}")))
+                            .small()
+                            .outline()
+                            .label(tr("ai.action.use_in_editor"))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.begin_use_ai_result((*result_pixels).clone(), cx);
+                            })),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.ai_state.toggle_result(index);
@@ -3855,9 +5492,7 @@ impl AppShell {
                             )
                         },
                     )
-                    .when(has_results, |this| {
-                        this.child(chip_flow(results, 2, false))
-                    }),
+                    .when(has_results, |this| this.child(chip_flow(results, 2, false))),
             )
             .child(
                 v_flex()
@@ -3875,8 +5510,30 @@ impl AppShell {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(tr("workspace.parameters")),
                     )
+                    .child(
+                        Button::new("ai-generate")
+                            .primary()
+                            .icon(IconName::Bot)
+                            .label(tr("ai.action.generate"))
+                            .disabled(busy || !region_supported)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.start_ai_generation(feature, cx);
+                            })),
+                    )
+                    .when(spec.needs_image && self.workspace.has_image(), |this| {
+                        this.child(
+                            div().p_3().rounded_md().bg(secondary).text_xs().child(
+                                t!(
+                                    "ai.disclosure.reference",
+                                    provider =
+                                        tr(provider_label_key(self.ai_state.provider)).to_string()
+                                )
+                                .to_string(),
+                            ),
+                        )
+                    })
                     .when(shows_free_prompt(feature), |this| {
-                        this.child(Input::new(&self.ai_prompt).cleanable(true))
+                        this.child(Input::new(self.ai_prompt_input(feature)).cleanable(true))
                     })
                     .when(feature == Feature::Poster, |this| {
                         this.child(Input::new(&self.poster_title).cleanable(true))
@@ -3901,77 +5558,101 @@ impl AppShell {
                             }),
                         ))
                     })
-                    .child(self.labeled_ai_chips(
-                        "ai.parameter.provider",
-                        ProviderId::ALL.into_iter().map(|provider| {
-                            self.selectable_ai_chip(
-                                format!("ai-provider-{}", provider.as_str()),
-                                tr(provider_label_key(provider)),
-                                self.ai_state.provider == provider,
-                                busy,
-                                cx,
-                                move |this, cx| this.set_ai_provider(provider, cx),
-                            )
-                        }),
-                    ))
-                    .when(!hides_ai_ratio(feature), |this| {
+                    .child(
+                        Button::new("ai-advanced-toggle")
+                            .outline()
+                            .label(format!(
+                                "{}: {advanced_summary}",
+                                t!("ai.parameter.advanced")
+                            ))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.ai_advanced_open = !this.ai_advanced_open;
+                                cx.notify();
+                            })),
+                    )
+                    .when(self.ai_advanced_open, |this| {
                         this.child(self.labeled_ai_chips(
-                            "ai.parameter.ratio",
-                            capabilities.supported_aspect_ratios.iter().copied().map(
-                                |ratio| {
+                            "ai.parameter.provider",
+                            ProviderId::ALL.into_iter().map(|provider| {
+                                self.selectable_ai_chip(
+                                    format!("ai-provider-{}", provider.as_str()),
+                                    tr(provider_label_key(provider)),
+                                    self.ai_state.provider == provider,
+                                    busy,
+                                    cx,
+                                    move |this, cx| this.set_ai_provider(provider, cx),
+                                )
+                            }),
+                        ))
+                    })
+                    .when(!hides_ai_ratio(feature), |this| {
+                        this.child(
+                            self.labeled_ai_chips(
+                                "ai.parameter.ratio",
+                                capabilities
+                                    .supported_aspect_ratios
+                                    .iter()
+                                    .copied()
+                                    .map(|ratio| {
+                                        self.selectable_ai_chip(
+                                            format!("ai-ratio-{ratio}"),
+                                            ratio.to_string(),
+                                            self.ai_state.aspect_ratio == ratio,
+                                            busy,
+                                            cx,
+                                            move |this, cx| {
+                                                this.ai_state.aspect_ratio = ratio;
+                                                cx.notify();
+                                            },
+                                        )
+                                    }),
+                            ),
+                        )
+                    })
+                    .when(self.ai_advanced_open, |this| {
+                        this.child(self.labeled_ai_chips(
+                            "ai.parameter.count",
+                            (1..=capabilities.max_generation_count).map(|count| {
+                                self.selectable_ai_chip(
+                                    format!("ai-count-{count}"),
+                                    count.to_string(),
+                                    self.ai_state.count == count,
+                                    busy || capabilities.max_generation_count == 1,
+                                    cx,
+                                    move |this, cx| {
+                                        this.ai_state.count = count;
+                                        cx.notify();
+                                    },
+                                )
+                            }),
+                        ))
+                    })
+                    .when(self.ai_advanced_open, |this| {
+                        this.child(
+                            self.labeled_ai_chips(
+                                "ai.parameter.quality",
+                                [
+                                    GenerationQuality::Low,
+                                    GenerationQuality::Medium,
+                                    GenerationQuality::High,
+                                ]
+                                .into_iter()
+                                .map(|quality| {
                                     self.selectable_ai_chip(
-                                        format!("ai-ratio-{ratio}"),
-                                        ratio.to_string(),
-                                        self.ai_state.aspect_ratio == ratio,
+                                        format!("ai-quality-{quality:?}"),
+                                        tr(quality_label_key(quality)),
+                                        self.ai_state.quality == quality,
                                         busy,
                                         cx,
                                         move |this, cx| {
-                                            this.ai_state.aspect_ratio = ratio;
+                                            this.ai_state.quality = quality;
                                             cx.notify();
                                         },
                                     )
-                                },
+                                }),
                             ),
-                        ))
+                        )
                     })
-                    .child(self.labeled_ai_chips(
-                        "ai.parameter.count",
-                        (1..=capabilities.max_generation_count).map(|count| {
-                            self.selectable_ai_chip(
-                                format!("ai-count-{count}"),
-                                count.to_string(),
-                                self.ai_state.count == count,
-                                busy || capabilities.max_generation_count == 1,
-                                cx,
-                                move |this, cx| {
-                                    this.ai_state.count = count;
-                                    cx.notify();
-                                },
-                            )
-                        }),
-                    ))
-                    .child(self.labeled_ai_chips(
-                        "ai.parameter.quality",
-                        [
-                            GenerationQuality::Low,
-                            GenerationQuality::Medium,
-                            GenerationQuality::High,
-                        ]
-                        .into_iter()
-                        .map(|quality| {
-                            self.selectable_ai_chip(
-                                format!("ai-quality-{quality:?}"),
-                                tr(quality_label_key(quality)),
-                                self.ai_state.quality == quality,
-                                busy,
-                                cx,
-                                move |this, cx| {
-                                    this.ai_state.quality = quality;
-                                    cx.notify();
-                                },
-                            )
-                        }),
-                    ))
                     .children(self.industry_axis_rows(feature, busy, cx))
                     .when(!tier_buttons.is_empty(), |this| {
                         this.child(chip_flow(tier_buttons, 2, true))
@@ -4010,16 +5691,9 @@ impl AppShell {
                             )
                         },
                     )
-                    .child(
-                        Button::new("ai-generate")
-                            .primary()
-                            .icon(IconName::Bot)
-                            .label(tr("ai.action.generate"))
-                            .disabled(busy || !region_supported)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.start_ai_generation(feature, cx);
-                            })),
-                    )
+                    .when(has_results, |this| {
+                        this.child(self.collision_policy_control("ai", cx))
+                    })
                     .when(has_results, |this| {
                         this.child(
                             Button::new("ai-save-selected")
@@ -4473,6 +6147,15 @@ fn shows_free_prompt(feature: Feature) -> bool {
     )
 }
 
+const FREE_PROMPT_FEATURES: &[Feature] = &[
+    Feature::TextToImage,
+    Feature::ImageEdit,
+    Feature::CoverFactory,
+    Feature::ArticleIllustration,
+    Feature::Poster,
+    Feature::PromotionalPoster,
+];
+
 fn hides_ai_ratio(feature: Feature) -> bool {
     matches!(
         feature,
@@ -4486,22 +6169,7 @@ fn hides_ai_ratio(feature: Feature) -> bool {
 }
 
 fn section_for_feature(feature: Feature) -> Section {
-    match feature {
-        Feature::Edit
-        | Feature::Collage
-        | Feature::Batch
-        | Feature::Slice
-        | Feature::QrCode
-        | Feature::Exif
-        | Feature::Beautify => Section::BasicImage,
-        Feature::TextToImage
-        | Feature::ImageEdit
-        | Feature::VideoWatermark
-        | Feature::VideoSubtitle
-        | Feature::VideoClarity => Section::AiGeneration,
-        Feature::Gif | Feature::Poster => Section::CreativeOutput,
-        _ => Section::IndustryTools,
-    }
+    feature.section()
 }
 
 struct NavigationGroup {
@@ -4518,23 +6186,31 @@ struct AxisRow {
     set_index: fn(&mut AiUiState, usize),
 }
 
-fn navigation_groups() -> [NavigationGroup; 5] {
+fn navigation_groups() -> [NavigationGroup; 4] {
     [
         NavigationGroup {
             label_key: Section::BasicImage.nav_key(),
             icon: IconName::GalleryVerticalEnd,
             features: &[
                 Feature::Edit,
+                Feature::Collage,
                 Feature::Batch,
                 Feature::QrCode,
                 Feature::Exif,
                 Feature::Slice,
+                Feature::Beautify,
             ],
         },
         NavigationGroup {
             label_key: Section::AiGeneration.nav_key(),
             icon: IconName::Bot,
-            features: &[Feature::TextToImage, Feature::ImageEdit],
+            features: &[
+                Feature::TextToImage,
+                Feature::ImageEdit,
+                Feature::VideoWatermark,
+                Feature::VideoSubtitle,
+                Feature::VideoClarity,
+            ],
         },
         NavigationGroup {
             label_key: Section::IndustryTools.nav_key(),
@@ -4558,21 +6234,7 @@ fn navigation_groups() -> [NavigationGroup; 5] {
         NavigationGroup {
             label_key: Section::CreativeOutput.nav_key(),
             icon: IconName::Palette,
-            features: &[
-                Feature::Collage,
-                Feature::Gif,
-                Feature::Beautify,
-                Feature::Poster,
-            ],
-        },
-        NavigationGroup {
-            label_key: "nav.video_tools",
-            icon: IconName::WindowMaximize,
-            features: &[
-                Feature::VideoWatermark,
-                Feature::VideoSubtitle,
-                Feature::VideoClarity,
-            ],
+            features: &[Feature::Gif, Feature::Poster],
         },
     ]
 }
@@ -4690,6 +6352,34 @@ fn unix_time_ms() -> u64 {
         .unwrap_or(u64::MAX)
 }
 
+fn ai_outcome_matches_context(
+    open: Option<Feature>,
+    feature: Feature,
+    active_generation: u64,
+    generation: u64,
+    reference_version: Option<crate::document::DocumentVersion>,
+    current_document_version: Option<crate::document::DocumentVersion>,
+) -> bool {
+    open == Some(feature)
+        && active_generation == generation
+        && reference_version.is_none_or(|version| current_document_version == Some(version))
+}
+
+fn edit_operation_needs_preview_decision(
+    transient_kind: Option<crate::document::EditKind>,
+    operation: &WorkspaceOperation,
+) -> bool {
+    operation
+        .edit_kind()
+        .is_some_and(|next_kind| transient_kind.is_some_and(|current| current != next_kind))
+}
+
+fn settle_stale_ai_generation(status: &mut AiStatus, active_generation: u64, generation: u64) {
+    if active_generation == generation && matches!(status, AiStatus::Generating) {
+        *status = AiStatus::Idle;
+    }
+}
+
 fn run_ai_task(task_request: AiTaskRequest) -> AiTaskOutcome {
     let AiTaskRequest {
         registry,
@@ -4757,6 +6447,7 @@ fn run_ai_task(task_request: AiTaskRequest) -> AiTaskOutcome {
                             mime_type: "image/png".into(),
                         },
                         preview: crate::workspace::to_render_image(&image),
+                        pixels: Arc::new(image),
                         width,
                         height,
                         tier_id: task.tier_id,
@@ -4806,6 +6497,7 @@ fn run_ai_task(task_request: AiTaskRequest) -> AiTaskOutcome {
             rendered.push(RenderedAiImage {
                 generated,
                 preview: crate::workspace::to_render_image(&image),
+                pixels: Arc::new(image),
                 width,
                 height,
                 tier_id: task.tier_id.clone(),
@@ -4918,10 +6610,13 @@ fn exact_cover(
     impressy_core::transform::resize(&cropped, width, height, ResizeFilter::Lanczos3)
 }
 
-fn write_ai_results(directory: &Path, images: &[GeneratedImage]) -> std::io::Result<Vec<PathBuf>> {
-    fs::create_dir_all(directory)?;
+fn write_ai_results(
+    directory: &Path,
+    images: &[GeneratedImage],
+    collision_policy: CollisionPolicy,
+) -> std::io::Result<Vec<PathBuf>> {
     let timestamp = unix_time_ms();
-    images
+    let requested = images
         .iter()
         .enumerate()
         .map(|(index, image)| {
@@ -4930,14 +6625,25 @@ fn write_ai_results(directory: &Path, images: &[GeneratedImage]) -> std::io::Res
                 "image/webp" => "webp",
                 _ => "png",
             };
-            let path = directory.join(impressy_core::naming::ai_filename(
+            directory.join(impressy_core::naming::ai_filename(
                 timestamp,
                 index + 1,
                 extension,
-            ));
-            fs::write(&path, &image.bytes)?;
-            Ok(path)
+            ))
         })
+        .collect::<Vec<_>>();
+    let destinations = crate::export_plan::resolve_destinations(&requested, collision_policy);
+    images
+        .iter()
+        .zip(destinations)
+        .filter_map(|(image, destination)| destination.map(|path| (image, path)))
+        .map(|(image, path)| {
+            match crate::export_plan::publish_image(&path, &image.bytes, collision_policy)? {
+                crate::export_plan::PublishOutcome::Written(path) => Ok(Some(path)),
+                crate::export_plan::PublishOutcome::Skipped(_) => Ok(None),
+            }
+        })
+        .filter_map(Result::transpose)
         .collect()
 }
 
@@ -4946,13 +6652,12 @@ fn write_poster_results(
     backgrounds: &[GeneratedImage],
     texts: &[String; 3],
     layout: [PosterTextLayer; 3],
+    collision_policy: CollisionPolicy,
 ) -> std::io::Result<Vec<PathBuf>> {
-    fs::create_dir_all(directory)?;
     let timestamp = unix_time_ms();
-    backgrounds
+    let encoded = backgrounds
         .iter()
-        .enumerate()
-        .map(|(index, background)| {
+        .map(|background| {
             let background = format::decode(&background.bytes)
                 .and_then(|image| exact_cover(&image, POSTER_WIDTH, POSTER_HEIGHT))
                 .map_err(std::io::Error::other)?;
@@ -4978,17 +6683,36 @@ fn write_poster_results(
                 },
             )
             .map_err(std::io::Error::other)?;
-            let path = directory.join(impressy_core::naming::ai_filename(
+            Ok(bytes)
+        })
+        .collect::<std::io::Result<Vec<_>>>()?;
+    let requested = encoded
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            directory.join(impressy_core::naming::ai_filename(
                 timestamp,
                 index + 1,
                 "png",
-            ));
-            fs::write(&path, bytes)?;
-            Ok(path)
+            ))
         })
+        .collect::<Vec<_>>();
+    let destinations = crate::export_plan::resolve_destinations(&requested, collision_policy);
+    encoded
+        .iter()
+        .zip(destinations)
+        .filter_map(|(bytes, destination)| destination.map(|path| (bytes, path)))
+        .map(|(bytes, path)| {
+            match crate::export_plan::publish_image(&path, bytes, collision_policy)? {
+                crate::export_plan::PublishOutcome::Written(path) => Ok(Some(path)),
+                crate::export_plan::PublishOutcome::Skipped(_) => Ok(None),
+            }
+        })
+        .filter_map(Result::transpose)
         .collect()
 }
 
+#[cfg(test)]
 fn default_export_settings(config: &AppConfig) -> EncodeSettings {
     match config.default_export_format {
         OutputFormat::Png => EncodeSettings::Png {
@@ -5092,11 +6816,19 @@ fn parameter_help_key(label_key: &str) -> &'static str {
         "parameter.aspect_ratio" => "help.aspect_ratio",
         "parameter.output_width" => "help.output_width",
         "parameter.output_height" => "help.output_height",
+        "parameter.resize_mode" => "help.resize_mode",
+        "parameter.resize_percentage" => "help.resize_percentage",
+        "parameter.longest_side" => "help.longest_side",
+        "parameter.aspect_lock" => "help.aspect_lock",
+        "parameter.prevent_enlarge" => "help.prevent_enlarge",
         "parameter.layout" => "help.layout",
         "parameter.columns" => "help.columns",
         "parameter.spacing" => "help.spacing",
         "parameter.background" => "help.background",
         "parameter.mode" => "help.batch_mode",
+        "parameter.batch_order" | "parameter.resize_step" | "parameter.watermark_step" => {
+            "help.batch_mode"
+        }
         "parameter.format" => "help.format",
         "parameter.quality" => "help.quality",
         "parameter.png_compression" => "help.png_compression",
@@ -5151,8 +6883,25 @@ fn feature_detail(feature: Feature) -> SharedString {
         Feature::Exif => tr("feature.exif.detail"),
         Feature::Beautify => tr("feature.beautify.detail"),
         Feature::Gif => tr("feature.gif.detail"),
-        _ => SharedString::from("impressy-core"),
+        _ => tr(feature.desc_key()),
     }
+}
+
+fn uses_input_set(feature: Feature) -> bool {
+    matches!(feature, Feature::Collage | Feature::Batch | Feature::Gif)
+}
+
+fn batch_needs_watermark_path(request: &BatchRequest) -> bool {
+    let BatchRequest::Pipeline { steps, .. } = request;
+    steps.iter().any(|step| {
+        matches!(
+            step,
+            BatchRequestStep::Watermark {
+                source: WatermarkSource::Image,
+                ..
+            }
+        )
+    })
 }
 
 impl Render for AppShell {
@@ -5161,13 +6910,14 @@ impl Render for AppShell {
         let viewport = window.viewport_size();
         self.viewport_width = f32::from(viewport.width);
         self.viewport_height = f32::from(viewport.height);
+        self.sync_source_dimensions(window, cx);
         let query = self.nav_search.read(cx).value().to_string().to_lowercase();
         let nav_groups = navigation_groups()
             .into_iter()
             .filter_map(|group| self.sidebar_group(group, &query, cx))
             .collect::<Vec<_>>();
 
-        let content = if self.settings_open {
+        let body_content = if self.settings_open {
             self.settings_page(cx).into_any_element()
         } else {
             match self.open {
@@ -5175,6 +6925,100 @@ impl Render for AppShell {
                 None => self.workspace_home(cx).into_any_element(),
             }
         };
+        let content = v_flex()
+            .size_full()
+            .when(self.pending_dirty.is_some(), |this| {
+                this.child(
+                    h_flex()
+                        .flex_shrink_0()
+                        .px_6()
+                        .py_3()
+                        .gap_3()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background)
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_sm()
+                                .child(tr("validation.unexported_changes")),
+                        )
+                        .child(
+                            Button::new("dirty-export")
+                                .small()
+                                .primary()
+                                .label(tr("action.save"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.export_before_dirty_continuation(cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("dirty-discard")
+                                .small()
+                                .outline()
+                                .label(tr("action.discard_changes"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.discard_before_dirty_continuation(cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("dirty-cancel")
+                                .small()
+                                .outline()
+                                .label(tr("action.cancel"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.cancel_dirty_continuation(cx);
+                                })),
+                        ),
+                )
+            })
+            .when(self.pending_preview.is_some(), |this| {
+                this.child(
+                    h_flex()
+                        .flex_shrink_0()
+                        .px_6()
+                        .py_3()
+                        .gap_3()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
+                        .bg(cx.theme().background)
+                        .child(
+                            div()
+                                .flex_1()
+                                .text_sm()
+                                .child(tr("validation.pending_preview")),
+                        )
+                        .child(
+                            Button::new("pending-preview-apply")
+                                .small()
+                                .primary()
+                                .label(tr("action.apply_preview"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.resolve_pending_feature(true, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("pending-preview-discard")
+                                .small()
+                                .outline()
+                                .label(tr("action.discard_preview"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.resolve_pending_feature(false, cx);
+                                })),
+                        )
+                        .child(
+                            Button::new("pending-preview-return")
+                                .small()
+                                .outline()
+                                .label(tr("action.return"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.cancel_pending_feature(cx);
+                                })),
+                        ),
+                )
+            })
+            .child(div().flex_1().min_h(px(0.0)).child(body_content))
+            .into_any_element();
 
         let secondary = cx.theme().secondary;
         let border = cx.theme().border;
@@ -5272,6 +7116,66 @@ mod tests {
     use super::*;
 
     #[test]
+    fn ai_outcomes_require_the_same_generation_and_reference_document() {
+        let version = crate::document::DocumentVersion::INITIAL;
+        assert!(ai_outcome_matches_context(
+            Some(Feature::ImageEdit),
+            Feature::ImageEdit,
+            7,
+            7,
+            Some(version),
+            Some(version),
+        ));
+        assert!(!ai_outcome_matches_context(
+            Some(Feature::ImageEdit),
+            Feature::ImageEdit,
+            7,
+            7,
+            Some(version),
+            None,
+        ));
+        assert!(!ai_outcome_matches_context(
+            Some(Feature::ImageEdit),
+            Feature::ImageEdit,
+            8,
+            7,
+            Some(version),
+            Some(version),
+        ));
+    }
+
+    #[test]
+    fn stale_ai_outcome_only_settles_its_own_active_generation() {
+        let mut status = AiStatus::Generating;
+        settle_stale_ai_generation(&mut status, 7, 7);
+        assert!(matches!(status, AiStatus::Idle));
+
+        let mut newer_status = AiStatus::Generating;
+        settle_stale_ai_generation(&mut newer_status, 8, 7);
+        assert!(matches!(newer_status, AiStatus::Generating));
+    }
+
+    #[test]
+    fn changing_edit_tools_requires_a_transient_preview_decision() {
+        use crate::document::EditKind;
+
+        assert!(edit_operation_needs_preview_decision(
+            Some(EditKind::Crop),
+            &WorkspaceOperation::PreviewTransform(TransformOperation::Resize {
+                width: 320,
+                height: 240,
+            }),
+        ));
+        assert!(!edit_operation_needs_preview_decision(
+            Some(EditKind::Resize),
+            &WorkspaceOperation::PreviewTransform(TransformOperation::Resize {
+                width: 640,
+                height: 480,
+            }),
+        ));
+    }
+
+    #[test]
     fn path_prompt_resolver_maps_cancel_and_leaves_workspace_reusable() {
         let mut workspace = Workspace::default();
         let result = classify_path_prompt_result::<PathBuf, (), ()>(Ok(Ok(None)));
@@ -5352,6 +7256,15 @@ mod tests {
     }
 
     #[test]
+    fn navigation_groups_follow_each_features_canonical_section() {
+        for group in navigation_groups() {
+            for feature in group.features {
+                assert_eq!(group.label_key, feature.section().nav_key());
+            }
+        }
+    }
+
+    #[test]
     fn ai_region_mask_is_transparent_only_inside_selection() {
         let input = selection_mask(
             10,
@@ -5388,7 +7301,8 @@ mod tests {
 
     #[test]
     fn local_platform_crop_has_exact_dimensions_without_stretching() {
-        let source = impressy_core::RgbaImage::from_pixel(1_000, 1_000, image::Rgba([1, 2, 3, 255]));
+        let source =
+            impressy_core::RgbaImage::from_pixel(1_000, 1_000, image::Rgba([1, 2, 3, 255]));
         let output = exact_cover(&source, 800, 800).expect("local crop");
         assert_eq!(output.dimensions(), (800, 800));
         assert!(aspect_ratio_is_close(1_000, 1_000, 800, 800));

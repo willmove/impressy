@@ -20,6 +20,7 @@ pub enum ErrorKind {
     Io,
     Config,
     Clipboard,
+    Skipped,
 }
 
 impl ErrorKind {
@@ -36,6 +37,7 @@ impl ErrorKind {
             Self::Io => "error.io",
             Self::Config => "error.config",
             Self::Clipboard => "error.clipboard",
+            Self::Skipped => "error.skipped",
         }
     }
 
@@ -61,7 +63,8 @@ pub enum UiMessage {
         failures: usize,
     },
     SavedReady,
-    Saved,
+    Exported,
+    ExportSkipped,
     ExifStripped,
     ExifRead,
     QrGenerated,
@@ -77,8 +80,22 @@ pub enum UiMessage {
         failures: usize,
         total: usize,
     },
+    BatchCancelled {
+        successes: usize,
+        total: usize,
+    },
+    BatchPresetSaved,
+    BatchPresetApplied,
     ImagePasted,
     ImageCopied,
+    UndoApplied {
+        remaining: usize,
+    },
+    RedoApplied {
+        remaining: usize,
+    },
+    OriginalRestored,
+    AiResultOpened,
     SettingsSaved,
     ConfigReset,
     NeedImage,
@@ -113,7 +130,8 @@ impl UiMessage {
             )
             .into(),
             Self::SavedReady => translated("status.ready_to_save"),
-            Self::Saved => translated("status.saved"),
+            Self::Exported => translated("status.exported"),
+            Self::ExportSkipped => translated("status.export_skipped"),
             Self::ExifStripped => translated("status.exif_stripped"),
             Self::ExifRead => translated("status.exif_read"),
             Self::QrGenerated => translated("status.qr_generated"),
@@ -136,6 +154,28 @@ impl UiMessage {
             .into(),
             Self::ImagePasted => translated("status.image_pasted"),
             Self::ImageCopied => translated("status.image_copied"),
+            Self::UndoApplied { remaining } => format!(
+                "{} · {}: {remaining}",
+                t!("status.undo_applied"),
+                t!("status.remaining")
+            )
+            .into(),
+            Self::BatchCancelled { successes, total } => format!(
+                "{} · {}: {successes}/{total}",
+                t!("status.batch_cancelled"),
+                t!("status.successes")
+            )
+            .into(),
+            Self::BatchPresetSaved => translated("status.batch_preset_saved"),
+            Self::BatchPresetApplied => translated("status.batch_preset_applied"),
+            Self::RedoApplied { remaining } => format!(
+                "{} · {}: {remaining}",
+                t!("status.redo_applied"),
+                t!("status.remaining")
+            )
+            .into(),
+            Self::OriginalRestored => translated("status.original_restored"),
+            Self::AiResultOpened => translated("status.ai_result_opened"),
             Self::SettingsSaved => translated("status.settings_saved"),
             Self::ConfigReset => translated("status.config_reset"),
             Self::NeedImage => translated("validation.need_image"),
@@ -152,15 +192,19 @@ impl UiMessage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BatchItemFailure {
-    pub name: String,
-    pub kind: ErrorKind,
+pub enum BatchItemOutcome {
+    Success,
+    Failure(ErrorKind),
+    Cancelled,
 }
 
-impl BatchItemFailure {
-    pub fn new(name: String, kind: ErrorKind) -> Self {
-        Self { name, kind }
-    }
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BatchItemResult {
+    pub name: String,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub bytes: Option<usize>,
+    pub outcome: BatchItemOutcome,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -178,7 +222,7 @@ pub enum InfoMessage {
     },
     QrContent(String),
     Exif(Option<ExifData>),
-    BatchFailures(Vec<BatchItemFailure>),
+    BatchResults(Vec<BatchItemResult>),
 }
 
 impl InfoMessage {
@@ -196,7 +240,8 @@ impl InfoMessage {
             Self::QrContent(value) => format!("{}: {value}", t!("status.qr_content")).into(),
             Self::Exif(None) => translated("status.no_exif"),
             Self::Exif(Some(data)) => {
-                let mut lines = vec![
+                let mut lines = vec![t!("status.exif_source_original").to_string()];
+                lines.extend([
                     field("exif.camera_make", data.camera_make.as_deref()),
                     field("exif.camera_model", data.camera_model.as_deref()),
                     field("exif.lens_model", data.lens_model.as_deref()),
@@ -205,7 +250,7 @@ impl InfoMessage {
                     field("exif.shutter_speed", data.shutter_speed.as_deref()),
                     field("exif.iso", data.iso.as_deref()),
                     field("exif.taken_at", data.taken_at.as_deref()),
-                ];
+                ]);
                 lines.push(match data.gps {
                     Some(gps) => format!(
                         "{}: {:.6}, {:.6}",
@@ -220,15 +265,36 @@ impl InfoMessage {
                 }
                 lines.join("\n").into()
             }
-            Self::BatchFailures(items) => {
-                let details = items
-                    .iter()
-                    .map(|item| format!("{}: {}", item.name, item.kind.text()))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                format!("{}:\n{details}", t!("status.failed_items")).into()
-            }
+            Self::BatchResults(items) => items
+                .iter()
+                .map(|item| {
+                    let properties = match (item.width, item.height, item.bytes) {
+                        (Some(width), Some(height), Some(bytes)) => {
+                            format!(" · {width}×{height} · {}", human_bytes(bytes))
+                        }
+                        _ => String::new(),
+                    };
+                    let outcome = match item.outcome {
+                        BatchItemOutcome::Success => t!("status.item_success").to_string(),
+                        BatchItemOutcome::Failure(kind) => kind.text(),
+                        BatchItemOutcome::Cancelled => t!("status.item_cancelled").to_string(),
+                    };
+                    format!("{}{} · {outcome}", item.name, properties)
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                .into(),
         }
+    }
+}
+
+fn human_bytes(bytes: usize) -> String {
+    if bytes >= 1024 * 1024 {
+        format!("{:.1} MiB", bytes as f64 / (1024.0 * 1024.0))
+    } else if bytes >= 1024 {
+        format!("{:.1} KiB", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes} B")
     }
 }
 

@@ -19,6 +19,8 @@ rust_i18n::i18n!("locales");
 mod ai_state;
 mod config_store;
 mod crop_frame;
+mod document;
+mod export_plan;
 mod feature_params;
 mod logging;
 mod menus;
@@ -130,6 +132,10 @@ fn main() {
             move |window, cx| {
                 let view = cx.new(|cx| {
                     AppShell::new(loaded.config, config_store, loaded.warning, window, cx)
+                });
+                let close_guard = view.clone();
+                window.on_window_should_close(cx, move |_, cx| {
+                    close_guard.update(cx, |shell, cx| shell.should_close(cx))
                 });
                 if !initial_paths.is_empty() {
                     view.update(cx, |shell, cx| shell.open_initial_paths(initial_paths, cx));

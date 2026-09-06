@@ -81,6 +81,7 @@ pub(crate) enum AiStatus {
 
 pub(crate) struct RenderedAiImage {
     pub(crate) generated: GeneratedImage,
+    pub(crate) pixels: Arc<impressy_core::RgbaImage>,
     pub(crate) preview: Arc<RenderImage>,
     pub(crate) width: u32,
     pub(crate) height: u32,
@@ -110,6 +111,25 @@ pub(crate) struct AiUiState {
     /// 保存与海报背景预览也以此为门。
     pub(crate) results_feature: Option<Feature>,
     pub(crate) status: AiStatus,
+}
+
+#[derive(Clone)]
+pub(crate) struct AiSelections {
+    provider: ProviderId,
+    aspect_ratio: AspectRatio,
+    count: u8,
+    quality: GenerationQuality,
+    selected_tiers: BTreeSet<usize>,
+    edit_preset_index: usize,
+    id_size: usize,
+    id_background: usize,
+    id_attire: usize,
+    try_on_model: usize,
+    try_on_scene: usize,
+    cover_platform: usize,
+    cover_style: usize,
+    article_usage: usize,
+    article_style: usize,
 }
 
 impl Default for AiUiState {
@@ -142,6 +162,44 @@ impl AiUiState {
             results_feature: None,
             status: AiStatus::Idle,
         }
+    }
+
+    pub(crate) fn selections(&self) -> AiSelections {
+        AiSelections {
+            provider: self.provider,
+            aspect_ratio: self.aspect_ratio,
+            count: self.count,
+            quality: self.quality,
+            selected_tiers: self.selected_tiers.clone(),
+            edit_preset_index: self.edit_preset_index,
+            id_size: self.id_size,
+            id_background: self.id_background,
+            id_attire: self.id_attire,
+            try_on_model: self.try_on_model,
+            try_on_scene: self.try_on_scene,
+            cover_platform: self.cover_platform,
+            cover_style: self.cover_style,
+            article_usage: self.article_usage,
+            article_style: self.article_style,
+        }
+    }
+
+    pub(crate) fn restore_selections(&mut self, selections: AiSelections) {
+        self.provider = selections.provider;
+        self.aspect_ratio = selections.aspect_ratio;
+        self.count = selections.count;
+        self.quality = selections.quality;
+        self.selected_tiers = selections.selected_tiers;
+        self.edit_preset_index = selections.edit_preset_index;
+        self.id_size = selections.id_size;
+        self.id_background = selections.id_background;
+        self.id_attire = selections.id_attire;
+        self.try_on_model = selections.try_on_model;
+        self.try_on_scene = selections.try_on_scene;
+        self.cover_platform = selections.cover_platform;
+        self.cover_style = selections.cover_style;
+        self.article_usage = selections.article_usage;
+        self.article_style = selections.article_style;
     }
 
     pub(crate) fn apply_capabilities(&mut self, capabilities: ProviderCapabilities) {
@@ -295,7 +353,11 @@ pub(crate) fn compose_id_photo_tier(size: usize, background: usize, attire: usiz
 }
 
 pub(crate) fn compose_try_on_tier(model: usize, scene: usize) -> String {
-    format!("{}-{}", pick(TRY_ON_MODELS, model), pick(TRY_ON_SCENES, scene))
+    format!(
+        "{}-{}",
+        pick(TRY_ON_MODELS, model),
+        pick(TRY_ON_SCENES, scene)
+    )
 }
 
 pub(crate) fn compose_cover_tier(platform: usize, style: usize) -> String {
@@ -344,14 +406,8 @@ mod tests {
 
     #[test]
     fn composed_industry_tiers_join_independent_axes() {
-        assert_eq!(
-            compose_id_photo_tier(0, 0, 0),
-            "one-inch-blue-suit"
-        );
-        assert_eq!(
-            compose_id_photo_tier(2, 2, 1),
-            "visa-white-female-suit"
-        );
+        assert_eq!(compose_id_photo_tier(0, 0, 0), "one-inch-blue-suit");
+        assert_eq!(compose_id_photo_tier(2, 2, 1), "visa-white-female-suit");
         assert_eq!(compose_try_on_tier(0, 1), "asian-female-studio");
         assert_eq!(compose_cover_tier(0, 1), "wechat-editorial");
         assert_eq!(compose_article_tier(0, 1), "ppt-flat");
@@ -365,5 +421,27 @@ mod tests {
         }
         assert_eq!(state.selected_tiers.len(), 6);
         assert!(state.selected_tiers.contains(&0));
+    }
+
+    #[test]
+    fn feature_selections_round_trip_without_results_or_status() {
+        let mut state = AiUiState::new(ProviderId::OpenAi);
+        state.aspect_ratio = AspectRatio::LandscapeSixteenNine;
+        state.count = 3;
+        state.quality = GenerationQuality::High;
+        state.edit_preset_index = 2;
+        let selections = state.selections();
+
+        state.provider = ProviderId::Seedream;
+        state.aspect_ratio = AspectRatio::Square;
+        state.count = 1;
+        state.quality = GenerationQuality::Low;
+        state.restore_selections(selections);
+
+        assert_eq!(state.provider, ProviderId::OpenAi);
+        assert_eq!(state.aspect_ratio, AspectRatio::LandscapeSixteenNine);
+        assert_eq!(state.count, 3);
+        assert_eq!(state.quality, GenerationQuality::High);
+        assert_eq!(state.edit_preset_index, 2);
     }
 }

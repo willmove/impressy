@@ -55,8 +55,14 @@ menu:
     en: Open Multiple…
     zh-CN: 打开多张…
   save:
-    en: Save Result…
-    zh-CN: 保存结果…
+    en: Export…
+    zh-CN: 导出…
+  undo:
+    en: Undo Edit
+    zh-CN: 撤销编辑
+  redo:
+    en: Redo Edit
+    zh-CN: 重做编辑
   reveal_output:
     en: Reveal Output Folder
     zh-CN: 打开输出目录
@@ -150,6 +156,9 @@ workspace:
   actions:
     en: Actions
     zh-CN: 操作
+  batch_results:
+    en: Batch results
+    zh-CN: 批处理结果
   empty_title:
     en: Open or drop an image
     zh-CN: 打开或拖入图片
@@ -159,6 +168,9 @@ workspace:
   ready:
     en: Ready for an image
     zh-CN: 等待导入图片
+  ai_result_name:
+    en: AI result
+    zh-CN: AI 结果
   strip:
     title:
       en: Loaded images
@@ -245,9 +257,52 @@ action:
   open_multi:
     en: Open images
     zh-CN: 打开多张
+  add_images:
+    en: Add images
+    zh-CN: 追加图片
   save:
-    en: Save result
-    zh-CN: 保存结果
+    en: Export
+    zh-CN: 导出
+  undo:
+    en: Undo
+    zh-CN: 撤销
+  redo:
+    en: Redo
+    zh-CN: 重做
+  compare_original:
+    en: Original
+    zh-CN: 原图
+  restore_original:
+    en: Restore original
+    zh-CN: 恢复原图
+  fit:
+    en: Fit
+    zh-CN: 适应窗口
+  actual_size:
+    en: 100%
+    zh-CN: 100%
+  apply_preview:
+    en: Apply preview
+    zh-CN: 应用预览
+  discard_preview:
+    en: Discard preview
+    zh-CN: 放弃预览
+  discard_changes:
+    en: Discard changes
+    zh-CN: 放弃更改
+  return:
+    en: Return
+    zh-CN: 返回
+  cancel:
+    en: Cancel
+    zh-CN: 取消
+  zoom_out:
+    en: Zoom out
+    zh-CN: 缩小
+  zoom_in:
+    en: Zoom in
+    zh-CN: 放大
+
   paste:
     en: Paste image
     zh-CN: 粘贴图片
@@ -299,6 +354,18 @@ action:
   run_batch:
     en: Run batch → folder
     zh-CN: 开始批处理 → 目录
+  cancel_batch:
+    en: Cancel after current item
+    zh-CN: 当前项目完成后取消
+  retry_failed:
+    en: Retry failed items
+    zh-CN: 仅重试失败项目
+  save_batch_preset:
+    en: Save step preset
+    zh-CN: 保存步骤预设
+  apply_batch_preset:
+    en: Apply saved preset
+    zh-CN: 应用已存预设
   export_slices:
     en: Export tiles → folder
     zh-CN: 导出切图 → 目录
@@ -311,6 +378,12 @@ action:
   make_gif:
     en: Make GIF
     zh-CN: 合成 GIF
+  play_preview:
+    en: Play preview
+    zh-CN: 播放预览
+  pause_preview:
+    en: Pause preview
+    zh-CN: 暂停预览
   open_output_directory:
     en: Open output folder
     zh-CN: 打开输出目录
@@ -323,7 +396,45 @@ action:
   change:
     en: Change
     zh-CN: 切换
+document:
+  original:
+    en: Source
+    zh-CN: 源图
+  current:
+    en: Current
+    zh-CN: 当前结果
+export:
+  title:
+    en: Export image
+    zh-CN: 导出图片
+  dimensions:
+    en: Dimensions
+    zh-CN: 尺寸
+  estimated_size:
+    en: Estimated size
+    zh-CN: 预计大小
+  filename:
+    en: Filename
+    zh-CN: 文件名
+  destination:
+    en: Starting folder
+    zh-CN: 起始目录
+  choose_destination:
+    en: Choose destination
+    zh-CN: 选择位置并导出
+  jpeg_background:
+    en: Transparent pixels are exported on an opaque white background.
+    zh-CN: 透明像素将以不透明白色背景导出。
+  encoded_result:
+    en: This feature result is already encoded; its format and size will be preserved.
+    zh-CN: 此功能结果已完成编码；导出将保留其格式与文件大小。
 parameter:
+  crop_bounds:
+    en: Crop selection
+    zh-CN: 裁剪选区
+  crop_keyboard_hint:
+    en: Arrow keys move; Shift+Arrow resizes
+    zh-CN: 方向键移动；Shift+方向键缩放
   aspect_ratio:
     en: Crop aspect ratio
     zh-CN: 裁剪比例
@@ -333,6 +444,24 @@ parameter:
   output_height:
     en: Output height
     zh-CN: 输出高度
+  resize_mode:
+    en: Resize mode
+    zh-CN: 尺寸模式
+  resize_percentage:
+    en: Scale
+    zh-CN: 缩放比例
+  longest_side:
+    en: Longest side
+    zh-CN: 最长边
+  aspect_lock:
+    en: Aspect ratio
+    zh-CN: 宽高比例
+  prevent_enlarge:
+    en: Prevent enlargement
+    zh-CN: 禁止放大
+  output_dimensions:
+    en: Preview dimensions
+    zh-CN: 预览尺寸
   layout:
     en: Layout
     zh-CN: 布局
@@ -348,6 +477,18 @@ parameter:
   mode:
     en: Processing mode
     zh-CN: 处理模式
+  batch_order:
+    en: Step order
+    zh-CN: 步骤顺序
+  resize_step:
+    en: Resize step
+    zh-CN: 调整尺寸步骤
+  watermark_step:
+    en: Watermark step
+    zh-CN: 水印步骤
+  collision_policy:
+    en: Existing files
+    zh-CN: 同名文件
   format:
     en: Output format
     zh-CN: 输出格式
@@ -412,6 +553,36 @@ parameter:
     en: Playback
     zh-CN: 播放模式
 option:
+  resize_pixels:
+    en: Pixels
+    zh-CN: 像素
+  resize_percentage:
+    en: Percentage
+    zh-CN: 百分比
+  resize_longest_side:
+    en: Longest side
+    zh-CN: 最长边
+  locked:
+    en: Locked
+    zh-CN: 锁定
+  unlocked:
+    en: Unlocked
+    zh-CN: 解锁
+  resize_then_watermark:
+    en: Resize → Watermark
+    zh-CN: 调整尺寸 → 水印
+  watermark_then_resize:
+    en: Watermark → Resize
+    zh-CN: 水印 → 调整尺寸
+  collision_preserve_both:
+    en: Keep both
+    zh-CN: 两者都保留
+  collision_skip:
+    en: Skip
+    zh-CN: 跳过
+  collision_replace:
+    en: Replace
+    zh-CN: 替换
   vertical:
     en: Vertical
     zh-CN: 纵向
@@ -521,6 +692,21 @@ help:
   output_height:
     en: Sets the output height in pixels without changing the source file.
     zh-CN: 设置输出高度（像素），不会修改源文件。
+  resize_mode:
+    en: Resize by exact pixels, percentage, or the longest side.
+    zh-CN: 按精确像素、百分比或最长边调整尺寸。
+  resize_percentage:
+    en: Scales both dimensions proportionally from the current document.
+    zh-CN: 以当前文档为基准按比例缩放宽高。
+  longest_side:
+    en: Sets the longest edge while preserving the current aspect ratio.
+    zh-CN: 设置最长边并保持当前宽高比例。
+  aspect_lock:
+    en: Keeps width and height proportional; unlock explicitly to allow stretching.
+    zh-CN: 保持宽高同比例；需要拉伸时请明确解锁。
+  prevent_enlarge:
+    en: Leaves the image unchanged when it already fits within the requested size.
+    zh-CN: 图片已小于目标尺寸时保持原尺寸，避免放大。
   layout:
     en: Chooses vertical, horizontal, or grid collage composition.
     zh-CN: 选择纵向、横向或网格拼图布局。
@@ -534,8 +720,8 @@ help:
     en: Chooses the color behind collage cells or beautified content.
     zh-CN: 选择拼图单元格或美化内容背后的背景。
   batch_mode:
-    en: Chooses format conversion, compression, resize, or watermark processing.
-    zh-CN: 选择格式转换、压缩、缩放或水印处理。
+    en: Enables resize and watermark steps and controls their execution order before export.
+    zh-CN: 启用调整尺寸与水印步骤，并设置导出前的执行顺序。
   format:
     en: Selects PNG, JPEG, or WebP for exported images.
     zh-CN: 选择导出图片使用 PNG、JPEG 或 WebP。
@@ -597,18 +783,33 @@ status:
   batch_progress:
     en: Batch progress
     zh-CN: 批处理进度
+  batch_cancelled:
+    en: Batch cancelled
+    zh-CN: 批处理已取消
+  batch_preset_saved:
+    en: Batch preset saved for this session.
+    zh-CN: 已保存本次会话的批处理预设。
+  batch_preset_applied:
+    en: Batch preset applied.
+    zh-CN: 已应用批处理预设。
+  item_success:
+    en: Exported
+    zh-CN: 已导出
+  item_cancelled:
+    en: Not started (cancelled)
+    zh-CN: 未开始（已取消）
   cancelled_open:
     en: Open cancelled.
     zh-CN: 已取消打开。
   cancelled_save:
-    en: Save cancelled.
-    zh-CN: 已取消保存。
+    en: Export cancelled.
+    zh-CN: 已取消导出。
   loaded_image:
     en: Image loaded.
     zh-CN: 已载入图片。
   ready_to_save:
-    en: Processing complete. The result is ready to save.
-    zh-CN: 处理完成，可保存结果。
+    en: Processing complete. The result is ready to export.
+    zh-CN: 处理完成，可以导出。
   clipboard_image:
     en: Clipboard image
     zh-CN: 剪贴板图片
@@ -624,21 +825,27 @@ status:
   total:
     en: Total
     zh-CN: 总计
-  saved:
-    en: Saved.
-    zh-CN: 已保存。
+  exported:
+    en: Exported.
+    zh-CN: 已导出。
+  export_skipped:
+    en: Export skipped because the destination already exists.
+    zh-CN: 目标文件已存在，本次导出已跳过。
   exif_stripped:
     en: EXIF metadata removed.
     zh-CN: 已清除 EXIF。
   exif_read:
     en: EXIF information loaded.
     zh-CN: 已读取 EXIF 信息。
+  exif_source_original:
+    en: Metadata below comes from the originally opened source file.
+    zh-CN: 以下元数据来自最初打开的源文件。
   no_exif:
     en: This image contains no readable EXIF metadata.
     zh-CN: 该图片没有可读取的 EXIF 元数据。
   qr_generated:
-    en: QR code generated and ready to save.
-    zh-CN: 二维码已生成，可保存。
+    en: QR code generated and ready to export.
+    zh-CN: 二维码已生成，可导出。
   qr_decoded:
     en: QR code recognized.
     zh-CN: 二维码识别成功。
@@ -646,27 +853,55 @@ status:
     en: QR content
     zh-CN: 二维码内容
   collage_ready:
-    en: Collage ready to save.
-    zh-CN: 拼图已生成，可保存。
+    en: Collage ready to export.
+    zh-CN: 拼图已生成，可导出。
   slices_saved:
-    en: Tiles saved
-    zh-CN: 切图已保存
+    en: Tiles exported
+    zh-CN: 切图已导出
   gif_ready:
-    en: GIF ready to save.
-    zh-CN: GIF 已合成，可保存。
+    en: GIF ready to export.
+    zh-CN: GIF 已合成，可导出。
   image_pasted:
     en: Image pasted from the clipboard.
     zh-CN: 已从剪贴板粘贴图片。
   image_copied:
     en: Result copied to the clipboard.
     zh-CN: 已复制结果到剪贴板。
+  undo_applied:
+    en: Undid the last edit.
+    zh-CN: 已撤销上一步编辑。
+  redo_applied:
+    en: Redid the edit.
+    zh-CN: 已重做编辑。
+  remaining:
+    en: Available steps
+    zh-CN: 可用步数
+  original_restored:
+    en: Restored the original image.
+    zh-CN: 已恢复原图。
+  ai_result_opened:
+    en: AI result opened as the current document.
+    zh-CN: 已将 AI 结果作为当前文档打开。
   settings_saved:
     en: Settings saved.
     zh-CN: 设置已保存。
   config_reset:
     en: The configuration was invalid and has been reset to defaults.
     zh-CN: 配置文件无效，已恢复默认设置。
+gif:
+  frame:
+    en: Frame
+    zh-CN: 帧
+  duration:
+    en: Duration
+    zh-CN: 时长
 validation:
+  unexported_changes:
+    en: This document has unexported changes. Export them, discard them, or cancel.
+    zh-CN: 当前文档有尚未导出的更改。请选择导出、放弃更改，或取消。
+  pending_preview:
+    en: This tool has an unapplied preview. Apply it, discard it, or return to continue editing.
+    zh-CN: 当前工具有尚未应用的预览。请选择应用、放弃，或返回继续调整。
   need_image:
     en: Open or paste an image first.
     zh-CN: 请先打开或粘贴一张图片。
@@ -674,8 +909,8 @@ validation:
     en: Open at least one image first.
     zh-CN: 请先打开图片。
   need_result:
-    en: Run an operation before saving or copying.
-    zh-CN: 请先执行处理，再保存或复制结果。
+    en: Run an operation before exporting or copying.
+    zh-CN: 请先执行处理，再导出或复制结果。
   need_exif_image:
     en: Open an image with container metadata first.
     zh-CN: 请先打开带容器元数据的图片。
@@ -711,8 +946,8 @@ error:
     en: No readable QR code was found.
     zh-CN: 未识别到可读二维码。
   disk_full:
-    en: There is not enough disk space to save the output.
-    zh-CN: 磁盘空间不足，无法保存输出。
+    en: There is not enough disk space to export the output.
+    zh-CN: 磁盘空间不足，无法导出结果。
   permission:
     en: Permission denied. Check the destination permissions.
     zh-CN: 权限不足，请检查目标位置权限。
@@ -725,6 +960,9 @@ error:
   clipboard:
     en: Clipboard operation failed.
     zh-CN: 剪贴板操作失败。
+  skipped:
+    en: Skipped because the destination already exists.
+    zh-CN: 目标文件已存在，已跳过。
 exif:
   camera_make:
     en: Camera make
@@ -773,8 +1011,8 @@ placeholder:
     en: Local · Offline
     zh-CN: 本地 · 离线
   open_image:
-    en: Choose an image to begin (wired to impressy-core on the desktop build).
-    zh-CN: 选择一张图片开始（桌面构建中接入 impressy-core）。
+    en: Choose an image to begin editing locally.
+    zh-CN: 选择一张图片，开始本地编辑。
   qr_text:
     en: Enter text or https://example.com
     zh-CN: 输入文本或 https://example.com
@@ -793,8 +1031,8 @@ feature:
       en: Aspect-ratio presets, lossless rotation, high-quality resampling.
       zh-CN: 比例预设、无损旋转、高质量重采样。
     detail:
-      en: Powered by impressy-core transform operations and exact aspect-ratio math.
-      zh-CN: 由 impressy-core 变换能力与精确比例计算驱动。
+      en: Precise aspect-ratio presets, resizing, and rotation with local processing.
+      zh-CN: 提供精确比例预设、缩放与旋转，并在本地完成处理。
   collage:
     name:
       en: Collage
@@ -1006,6 +1244,10 @@ feature:
       en: Preview multiple decor styles while preserving room structure.
       zh-CN: 保持房间结构，预览多种装修风格。
 ai:
+  disclosure:
+    reference:
+      en: The displayed current-document image will be sent to %{provider} when you click Generate.
+      zh-CN: 点击生成后，当前显示的文档图片将发送给 %{provider}。
   badge:
     en: AI · BYOK
     zh-CN: AI · 自备密钥
@@ -1046,6 +1288,9 @@ ai:
       en: High quality
       zh-CN: 高质量
   parameter:
+    advanced:
+      en: Advanced
+      zh-CN: 高级设置
     count:
       en: Count
       zh-CN: 数量
@@ -1114,8 +1359,11 @@ ai:
       en: Generate
       zh-CN: 生成
     save_selected:
-      en: Save selected results
-      zh-CN: 保存选中结果
+      en: Export selected results
+      zh-CN: 导出选中结果
+    use_in_editor:
+      en: Use in editor
+      zh-CN: 在编辑器中继续
   status:
     generating:
       en: Generating in the background…
@@ -1124,8 +1372,8 @@ ai:
       en: Results ready
       zh-CN: 结果已就绪
     saved:
-      en: Results saved
-      zh-CN: 结果已保存
+      en: Results exported
+      zh-CN: 结果已导出
   error:
     key_required:
       en: Add an API key for the selected provider in Settings.
@@ -1164,8 +1412,8 @@ ai:
       en: The system credential manager is unavailable.
       zh-CN: 系统凭据管理器不可用。
     io:
-      en: The generated image could not be saved.
-      zh-CN: 无法保存生成的图片。
+      en: The generated image could not be exported.
+      zh-CN: 无法导出生成的图片。
   settings:
     title:
       en: AI providers

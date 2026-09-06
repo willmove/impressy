@@ -3246,9 +3246,11 @@ dependencies = [
  "impressy-core",
  "impressy-presets",
  "log",
+ "proptest",
  "rust-i18n",
  "tempfile",
  "winresource",
+ "winsafe",
 ]
 
 [[package]]

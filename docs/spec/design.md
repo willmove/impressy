@@ -8,6 +8,8 @@
 > **截图能力已剥离**：`impressy-capture`、屏幕截图、全局热键、屏幕取色、覆盖层与截图标注不属于当前范围。截图美化仍是导入现有图片后的纯处理能力。见 [ADR-0003](../adr/0003-remove-screen-capture.md)。
 >
 > **建设顺序已经按 ADR-0002 执行。** 已冻结的 spec §8 曾主张 M1 骨架 → M2 core（UI 优先）；实际项目先完成 `impressy-core` 的可自动验证闭环，再接入 GPUI UI。当前不再按旧里程碑推进，而按「自动验证 → 桌面真机验收 → 发布」收敛。
+>
+> **UX 稳定化是当前 v2 发布门禁。** ADR-0006 统一了当前文档、临时预览、编辑历史、输入集合与导出语义；预览与实际处理输入不一致、静默覆盖旧文件、无法撤销和不完整导出流程必须在发布前修复。
 
 ## Overview
 
@@ -38,6 +40,9 @@ The 2026-07-19 v2 implementation supersedes this source baseline: the workspace 
 - **Local-First Architecture**: All v1 本地功能 work offline; AI 功能 use BYOK (Bring Your Own Key)
 - **Privacy by Design**: No telemetry or embedded API keys; credentials are stored in OS-native secure storage
 - **Async-First Processing**: Heavy operations run in background executors to maintain UI responsiveness
+- **Preview-Execution Identity**: The image shown as an operation's input is the exact version consumed by that operation
+- **Recoverable Editing**: Parameter changes remain transient until applied; applied single-image edits participate in bounded session undo/redo
+- **Safe Export**: Single-image export creates a copy by default, and multi-file output never overwrites silently
 - **Provider Abstraction**: Unified AI provider interface supporting Seedream, Google Nano Banana, and OpenAI GPT-Image. Agnes is deferred — the trait reserves extensibility only.
 - **Multi-Crate Workspace**: Four crates separate UI, pure local processing, provider networking, and locked prompts
 
@@ -143,7 +148,7 @@ sequenceDiagram
     U->>M: User action
     M->>M: Validate and build WorkspaceJob
     M->>B: Spawn Send task
-    B->>C: Decode / transform / encode / save
+    B->>C: Decode / transform / encode / export
     C-->>B: Result or CoreError
     B-->>M: Progress and WorkspaceOutcome channel
     M->>M: Apply state on main thread
@@ -167,6 +172,36 @@ GPUI listener → request asynchronous platform prompt → listener returns and 
 ```
 
 On Windows, a synchronous native dialog can start a nested message loop and re-enter GPUI while the entity is already mutably borrowed. Therefore all file and directory pickers MUST either use GPUI's asynchronous prompt API or be scheduled only after the listener borrow has been released. This is an architectural constraint, not an optional implementation detail.
+
+#### Pattern 3: Current Document Editing
+
+```
+CurrentDocument.applied(version N) → tool parameters → TransientPreview(base N)
+                                      ↓ Apply
+EditHistory append ← CurrentDocument.applied(version N+1) ← background result(base N)
+```
+
+Every background preview or apply job carries its base document version. A result is accepted only when that version still matches the state that requested it; stale async results are discarded. Crop, resize, and beautification previews never become inputs to another tool until the user applies them. Rotation is a discrete action and commits immediately.
+
+#### Pattern 4: Multi-Image Batch Export
+
+```
+InputSet → ordered [Resize?, Watermark?] → OutputSettings → CollisionPolicy → files
+                                                                  ↓
+                                         per-item result + retryable failures
+```
+
+Format and compression/quality are output settings, not batch steps. Processing steps run in displayed order for every input. The selected item preview uses the same full pipeline. Cancellation is observed between items so already completed files remain valid.
+
+#### Pattern 5: AI Reference Request
+
+```
+CurrentDocument.applied(version N) → preview + optional region → inline Provider disclosure
+                                                                  ↓ Generate
+                                         immutable snapshot(version N) → Provider
+```
+
+The request snapshot, displayed reference, and optional selection coordinates share the same version and geometry. Clicking Generate while the inline disclosure is visible is the explicit user initiation required by the privacy contract. Text-to-image requests contain no reference image.
 
 ## Components and Interfaces
 
@@ -195,9 +230,13 @@ The core contract is a typed module API over `image::RgbaImage`. There is no `Im
 
 | Component | Responsibility | Threading rule |
 | --- | --- | --- |
-| `AppShell` | Own active section/page, settings, controls, preview orchestration, path prompts, clipboard, and locale changes | GPUI main thread only |
-| `Workspace` | Hold source images/bytes, result, preview, status, info, and busy state; validate commands and apply outcomes | Mutated on main thread only |
-| `WorkspaceCommand` | Express user intent such as transform, collage, slice, QR, EXIF, GIF, batch, save, or open | Constructed on main thread |
+| `AppShell` | Own active section/page, settings, controls, tool selection, path prompts, clipboard, and locale changes | GPUI main thread only |
+| `Workspace` | Orchestrate an optional `CurrentDocument`, independent multi-image `InputSet`, task status, and background jobs | Mutated on main thread only |
+| `CurrentDocument` | Own immutable original, latest applied result, transient preview, version, dirty/export state, and bounded edit history | Mutated on main thread; image snapshots may be shared immutably with jobs |
+| `InputSet` | Own ordered multi-image inputs, focus, pipeline preview identity, and per-item results for batch/collage/GIF workflows | Mutated on main thread; immutable snapshots sent to jobs |
+| `EditHistory` | Record applied single-image operations and bounded checkpoints for session undo/redo | Main thread metadata; checkpoint pixels are immutable shared values |
+| `ExportPlan` | Bind output format, dimensions, format-specific settings, destination, and collision policy before file I/O | Constructed on main thread, executed in background |
+| `WorkspaceCommand` | Express user intent such as transform, collage, slice, QR, EXIF, GIF, batch, export, or open | Constructed on main thread |
 | `WorkspaceJob` | Own all data needed for file I/O, decode, transform, encode, and export | Must be safe to move to the background executor |
 | `WorkspaceOutcome` | Return result data, errors, clipboard payload, and output-directory effects | Applied to `Workspace` on main thread |
 | `Selection` / crop Element | Store normalized crop rectangle; implement GPUI `request_layout`, `prepaint`, and `paint`; support move and eight resize grips | Events and rendering on main thread |
@@ -210,7 +249,7 @@ The job lifecycle is:
 1. A listener converts UI input into a `WorkspaceCommand`.
 2. `Workspace::prepare` validates state and produces a self-contained `WorkspaceJob`.
 3. `AppShell` runs the job on `cx.background_executor()` and receives progress / completion through an async channel.
-4. `Workspace::apply` updates state after the job finishes; only then does GPUI re-render.
+4. `Workspace::apply` validates the document/input-set version carried by the outcome. It applies a matching result or discards a stale result, then asks GPUI to re-render.
 
 Native path prompts are outside `WorkspaceJob`: selection happens asynchronously, after the listener's mutable entity borrow is released. File reads and image decoding begin only after concrete paths have been returned.
 
@@ -244,9 +283,31 @@ Provider request schemas and models are frozen by ADR-0004 and contract-tested t
 
 ### Workspace State Model
 
-`Workspace` keeps decoded inputs and names in shared immutable collections, preserves original container bytes for EXIF, and stores at most one current image result or encoded result. `busy` prevents overlapping jobs. Failures map to `UiMessage` while leaving the workspace reusable.
+`Workspace` separates single-image state from multi-image state. It may own one `CurrentDocument` and one independent `InputSet`; switching pages never makes one silently impersonate the other.
 
-Batch outputs retain the input index, success/failure partition, and original source stem. Naming sanitization guarantees that generated files remain inside the selected directory.
+`CurrentDocument` contains:
+
+- immutable original decoded pixels and original container bytes where available;
+- the latest applied image result and a monotonically increasing document version;
+- an exported-state marker on the current state and every retained history checkpoint, independent of the monotonic job-generation `version`, so Undo/Redo restores the exact dirty/export state without reusing old versions;
+- at most one `TransientPreview` tagged with the base document version and active tool;
+- `EditHistory`, with applied operations, undo/redo position, and optional immutable pixel checkpoints.
+
+The edit-history checkpoint cache has a 256 MiB soft budget; original and current pixels do not count against it. Operation records are retained for the open session, while the oldest pixel checkpoints are evicted first. The UI exposes only the range that can actually be restored without guessing or silently recomputing an unavailable state. Closing the document destroys this history.
+
+`InputSet` contains ordered decoded inputs, source names, selected/focused item, and a monotonically increasing set version. Batch, collage, and GIF jobs consume immutable snapshots of this state. Batch output retains input index, success/failure partition, original source stem, final dimensions, encoded size, and collision outcome.
+
+Every preview, processing, AI, and export job carries the relevant document or input-set version. An outcome for an older version cannot replace a newer preview, current result, selection, or task status.
+
+### Batch Pipeline and Export Model
+
+`BatchPipeline` is an ordered list whose initial supported step types are `Resize` and `Watermark`. Resize includes proportional dimensions, percentage or longest-side modes, and an optional do-not-enlarge rule. Watermark retains text/image source, opacity, placement, and spacing. Output format plus PNG compression or JPEG/WebP quality belong to `ExportPlan`, after all steps.
+
+`CollisionPolicy` contains `PreserveBoth` (default), `Skip`, and `Replace`. Preserve-both resolves the complete destination set before writing and adds stable suffixes until every path is unique against both existing files and other items in the task. Replace is legal only after an explicit user choice.
+
+Each output is encoded to a uniquely named temporary file in the destination directory, flushed, closed, and decoded or structurally validated before publication. New destinations use an atomic rename where available. Replace uses the platform's atomic replacement primitive where available; if the platform cannot provide it, the app must preserve the previous destination or report that safe replacement is unavailable. Temporary artifacts are never reported as successful outputs.
+
+Single-image `ExportPlan` presents the current document preview, format, dimensions, format-specific settings, estimated file size, filename, and destination in one flow. One-time choices do not mutate defaults unless the user explicitly saves them as defaults. Export defaults remain non-secret configuration.
 
 ### Configuration Model
 
@@ -264,7 +325,7 @@ It intentionally contains no API key or prompt text. `ConfigStore` writes throug
 
 ### History and Credentials
 
-Generation history is non-secret TOML data and can be cleared in Settings. Provider credentials use `keyring` and are stored only by Windows Credential Manager, macOS Keychain, or Linux Secret Service; secret wrappers are redacted, zeroized on drop, and never serialized or logged.
+Current-document `EditHistory` is bounded session state and is never serialized. Generation history is separate non-secret TOML data and can be cleared in Settings. Provider credentials use `keyring` and are stored only by Windows Credential Manager, macOS Keychain, or Linux Secret Service; secret wrappers are redacted, zeroized on drop, and never serialized or logged.
 
 ## Error Handling
 
@@ -287,15 +348,22 @@ Generation history is non-secret TOML data and can be cleared in Settings. Provi
 1. An individual batch item failure is recorded with its source name and does not stop remaining items.
 2. A failed `WorkspaceJob` clears the busy state and leaves the workspace usable for the next command.
 3. Missing config silently uses defaults; unreadable or invalid config uses defaults and displays a reset warning.
-4. Save failures preserve the in-memory result so the user can choose another destination.
+4. Export failures preserve the in-memory result and dirty state so the user can choose another destination.
 5. Invalid numeric or empty text input is rejected before a background job is spawned.
 6. AI/provider/credential failures map into localized semantic categories without exposing provider bodies or credentials.
+7. Stale preview, processing, or AI outcomes are discarded by version and cannot overwrite a newer current document, input set, selection, or task status.
+8. A failed apply action preserves the prior applied result and its edit-history position.
+9. Cancelling a batch stops before the next item; completed outputs remain valid and unstarted items are reported as cancelled rather than failed.
+10. A multi-file name collision follows the chosen collision policy; no existing file is replaced under the default preserve-both policy.
+11. Closing or replacing a current document with unexported applied changes requires export, discard, or cancel; no default choice destroys the changes.
 
 ## Testing Strategy
 
 ### Automated Baseline
 
 The 2026-07-19 workspace baseline executes 80 tests: `impressy-ai` provider/security/transport contracts, `impressy-presets` embedded-template coverage, the complete v1 core property suite, and app state/orchestration tests including AI masks, exact business dimensions, config secret exclusion, platform local cropping, and poster composition.
+
+That baseline predates ADR-0006. The 2026-09-06 implementation adds automated coverage for document/input-set version identity, cross-document instance identity, transient-preview commit rules, undo/redo round trips and memory budgeting, proportional resizing, batch pipeline ordering, collision resolution, temporary-file publication, AI reference snapshot identity, stale-outcome rejection, cross-tool preview decisions, and stale AI task settlement. The workspace now passes 132 tests, including property tests for arbitrary edit histories and per-input relative batch resizing plus explicit pipeline-order verification, along with `cargo check` and zero-warning clippy; desktop, packaging, cross-platform, and real-provider acceptance remain open.
 
 Property-based testing is required for pure transformations and invariants. Example-based unit tests are preferred for state transitions, platform-independent orchestration, validation, and known regressions. UI pixels, interaction feel, native dialogs, clipboard interoperability, signing, and timing are desktop acceptance concerns.
 
@@ -338,7 +406,7 @@ CI may add `--workspace` / `--all-targets`, but v1 MUST NOT enable `webview` or 
 
 ### Property Reflection
 
-After analyzing the 442 acceptance criteria, I identified properties suitable for property-based testing in the core image processing engine. The following reflection eliminates redundancy:
+After analyzing the 517 acceptance criteria, I identified properties suitable for property-based testing in the core engine and deterministic application state. The following reflection eliminates redundancy:
 
 **Redundancy Analysis:**
 1. **EXIF Cleaning Properties**: Requirements 2.7-2.8, 11.7-11.10, and 60.5-60.6 all specify EXIF GPS/device removal. These can be combined into a single comprehensive property.
@@ -533,6 +601,30 @@ The DPI/capture property is no longer part of the current scope (ADR-0003).
 
 **Validates: Requirements 60.7**
 
+### Property 31: Preview and Execution Use the Same Version
+
+*For any* current-document or input-set version V, an accepted preview or processing outcome SHALL carry V and SHALL be rejected if the owning state has advanced to any version other than V.
+
+**Validates: Requirements 5.9, 5.10, 8.14, 61.2, 61.3**
+
+### Property 32: Undo and Redo Restore Applied States
+
+*For any* sequence of applied operations whose history entries remain available, undoing N entries and redoing the same N entries SHALL restore the same pixels, dimensions, document version position, and dirty/export state as before the undo sequence.
+
+**Validates: Requirements 61.7–61.13**
+
+### Property 33: Preserve-Both Collision Resolution Is Unique and Non-Destructive
+
+*For any* set of candidate output names and existing destination names, preserve-both resolution SHALL produce paths that are unique within the task, distinct from every existing path under platform filename comparison rules, and contained by the selected output directory.
+
+**Validates: Requirements 41.10, 41.11, 41.14**
+
+### Property 34: Batch Pipeline Preserves Displayed Step Order
+
+*For any* valid ordered list of resize and watermark steps, every successful batch item SHALL be processed by each enabled step exactly once in displayed order before output encoding.
+
+**Validates: Requirements 8.11, 8.12, 8.13**
+
 ## Implementation Approach
 
 The original sprint list described a greenfield build. The codebase has moved past that stage, so the execution plan is now organized by verification state rather than by hypothetical implementation order.
@@ -590,6 +682,32 @@ Exit criterion: execute [`v2-ai-acceptance.md`](../testing/v2-ai-acceptance.md) 
 
 v2 MUST NOT weaken the v1 guarantees: every 本地功能 remains usable without network connectivity, API keys, provider initialization, or telemetry.
 
+### [v2 release gate] Stage E — Unified Document and Workflow Stabilization: Implemented, acceptance open
+
+ADR-0006 and Requirements 5, 6, 8, 15, 34, 36, 37, 39, 41, 42, 47, and 61 define the required stabilization. Implement in dependency order:
+
+1. Introduce `CurrentDocument` and `InputSet` version identity; make preview, local processing, AI snapshots, and status updates reject stale outcomes.
+2. Add transient preview, explicit apply, bounded session undo/redo, original restore, dirty/export state, and close/replace guards.
+3. Correct crop/resize semantics with source dimensions, aspect-ratio lock, percentage/longest-side modes, and non-enlarge behavior.
+4. Build the unified export flow and safe multi-file publication with preserve-both as default.
+5. Replace mutually exclusive batch modes with the ordered resize/watermark pipeline, result list, cancellation, failed-item retry, and parameter-only presets.
+6. Recompose the workspace so the canvas remains primary, active parameters scroll independently, and the current primary action remains visible.
+7. Bind AI disclosure, reference preview, region selection, and request payload to one immutable current-document snapshot; add result comparison and handoff to local processing.
+8. Add real GIF playback preview and keyboard/accessibility paths for the core workflow.
+
+Exit criterion: automated properties and app-state tests for Stage E pass; the UX task scripts below pass in Chinese and English on the Windows desktop candidate; required cross-platform CI/package evidence is refreshed for the same source commit; real-provider tests continue to satisfy every **保持不变项**.
+
+Normative desktop task scripts:
+
+- Open a 1920×1080 image, resize it to width 960 with proportional height 540, and export JPEG without opening Settings.
+- Apply rotation, crop, and beautification; undo two operations, redo them, and prove preview, current result, and exported pixels agree.
+- Process 100 images through longest-side resize, watermark, and JPEG output; cancel between items, preserve completed files, and retry only failures.
+- Repeat slicing and batch export into the same directory without changing or destroying outputs from the first run under the default policy.
+- Use a rotated current document for AI region editing and prove through fake transport that displayed reference pixels, transmitted pixels, and mask coordinates agree before any funded-provider run.
+- Complete open, proportional resize, undo, redo, and export by keyboard with visible focus; inspect the same controls with the platform screen reader.
+
+Navigation favorites/recent items, task-synonym search, default collapsing of long AI groups, and purely visual styling refinements are follow-up enhancements. They may proceed after Stage E and do not block its exit criterion.
+
 ## Maintenance and Evolution
 
 ### Dependency and Version Strategy
@@ -617,14 +735,14 @@ v2 MUST NOT weaken the v1 guarantees: every 本地功能 remains usable without 
 - **Shrinking**: enabled.
 - **Replay**: committed `*.proptest-regressions` cases and explicit seeds when diagnosing CI-only failures.
 
-The baseline implements Properties 1–15 and 17–30. Property 16 was removed with screen capture; Properties 29–30 are covered by credential/config and HTTPS transport tests.
+The 2026-07-19 baseline implements Properties 1–15 and 17–30. Property 16 was removed with screen capture; Properties 29–30 are covered by credential/config and HTTPS transport tests. The 2026-09-06 implementation adds passing coverage for Properties 31–34. Desktop and cross-platform evidence is tracked separately from these automated properties.
 
 ### Verification Layers
 
 | Layer | Purpose | Current mechanism |
 | --- | --- | --- |
 | Pure behavior | Pixel, count, order, round-trip, idempotence, and error invariants | `impressy-core` unit and property tests |
-| Headless app state | Parameters, config, job outcomes, naming containment, and crop math | `impressy-app` unit tests |
+| Headless app state | Document/input-set versions, transient apply, undo/redo, pipeline ordering, collision resolution, parameters, config, job outcomes, and crop math | `impressy-app` unit and property tests |
 | Cross-platform build | API use, cfg paths, linking, package structure | GitHub Actions on three operating systems |
 | Desktop behavior | Rendering, interaction, dialogs, clipboard, drag/drop, file manager, performance | Four-environment desktop acceptance JSON |
 | Release trust | Signing, notarization, installation, uninstall, artifact size | release workflow plus real-machine checks |
@@ -635,6 +753,9 @@ The baseline implements Properties 1–15 and 17–30. Property 16 was removed w
 - optional screen capture only after a new ADR re-evaluates package size and platform dependencies;
 - AI providers beyond the three initially planned providers;
 - cloud sync or a plugin system.
+- navigation favorites and recently used tools;
+- task-synonym search and default collapsing of long AI navigation groups;
+- purely visual styling refinements that do not change workflow semantics.
 
 ---
 
@@ -643,10 +764,10 @@ The baseline implements Properties 1–15 and 17–30. Property 16 was removed w
 - **Feature Name**: impressy
 - **Spec Type**: Feature
 - **Workflow Type**: Requirements-First
-- **Document Version**: 1.3
-- **Total Requirements Covered**: 60
-- **Total Acceptance Criteria Addressed**: 442
-- **Correctness Properties Defined**: 29 active (27 v1 + 2 v2), plus removed Property 16 placeholder
-- **Automated Baseline**: 80 workspace tests on the 2026-07-19 local v2 implementation
-- **Last Updated**: 2026-07-19
-- **Status**: v1 and v2 image implementation complete; real-provider, desktop, package, and release acceptance open
+- **Document Version**: 1.4
+- **Total Requirements Covered**: 61
+- **Total Acceptance Criteria Addressed**: 517
+- **Correctness Properties Defined**: 33 active (31 v1/cross-cutting + 2 v2), plus removed Property 16 placeholder
+- **Automated Baseline**: 132 passing workspace tests on the 2026-09-06 local v2 implementation, including ADR-0006 Stage E and property coverage; `cargo check` and zero-warning clippy pass
+- **Last Updated**: 2026-09-06
+- **Status**: v1/v2 image features and Stage E UX stabilization implemented; real-provider, desktop, package, and release acceptance open

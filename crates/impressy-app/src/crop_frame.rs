@@ -136,11 +136,7 @@ impl Selection {
         }
     }
 
-<<<<<<< Updated upstream
-    /// 切换比例并重置为该比例下的居中矩形。自由比例默认全幅，便于整图裁剪。
-=======
-    /// 切换比例并重置为该比例下的居中矩形。重置后视为「未编辑」。
->>>>>>> Stashed changes
+    /// 切换比例并重置为该比例下的居中矩形。自由比例默认全幅，重置后视为「未编辑」。
     pub fn set_ratio(&mut self, ratio: Option<AspectRatio>, cx: &mut Context<Self>) {
         self.ratio = ratio;
         self.rect = match ratio {
@@ -153,9 +149,13 @@ impl Selection {
 
     /// 设为自由比例下的指定选区（AI 消除用较小居中框，而不是整图）。
     pub fn set_free_region(&mut self, rect: NormRect, cx: &mut Context<Self>) {
+        self.set_free_region_without_notify(rect);
+        cx.notify();
+    }
+
+    pub fn set_free_region_without_notify(&mut self, rect: NormRect) {
         self.ratio = None;
         self.rect = rect.clamp();
-        cx.notify();
     }
 
     /// 鼠标按下：命中把手或选区内部，记录拖拽起点。
@@ -184,6 +184,30 @@ impl Selection {
     /// 用户是否对选区做过显式交互。AI 局部消除据此要求先框选再生成。
     pub fn has_been_edited(&self) -> bool {
         self.edited
+    }
+
+    /// Keyboard-only adjustment. Arrow keys move the selection; Shift+Arrow resizes it from
+    /// the bottom-right corner while preserving a locked ratio.
+    pub fn keyboard_adjust(&mut self, dx: f32, dy: f32, resize: bool) {
+        const STEP: f32 = 0.01;
+        if resize {
+            let mut width = (self.rect.w + dx * STEP).clamp(MIN_EDGE, 1.0 - self.rect.x);
+            let mut height = (self.rect.h + dy * STEP).clamp(MIN_EDGE, 1.0 - self.rect.y);
+            if let Some(ratio) = self.ratio {
+                let ratio = ratio.value() as f32;
+                let delta = if dx.abs() >= dy.abs() { dx } else { dy } * STEP;
+                width = (self.rect.w + delta).clamp(MIN_EDGE, 1.0 - self.rect.x);
+                height = (width / ratio).clamp(MIN_EDGE, 1.0 - self.rect.y);
+                width = (height * ratio).clamp(MIN_EDGE, 1.0 - self.rect.x);
+            }
+            self.rect.w = width;
+            self.rect.h = height;
+        } else {
+            self.rect.x = (self.rect.x + dx * STEP).clamp(0.0, 1.0 - self.rect.w);
+            self.rect.y = (self.rect.y + dy * STEP).clamp(0.0, 1.0 - self.rect.h);
+        }
+        self.rect = self.rect.clamp();
+        self.edited = true;
     }
 
     /// 鼠标移动：按下时拖动把手，否则仅刷新光标下的把手预览（不改选区）。
@@ -494,5 +518,19 @@ mod tests {
         assert!(!selection.has_been_edited());
         selection.begin_drag(Grip::Move, (0.5, 0.5));
         assert!(selection.has_been_edited());
+    }
+
+    #[test]
+    fn keyboard_move_and_resize_stay_bounded_and_keep_locked_ratio() {
+        let ratio = AspectRatio::PORTRAIT_4_5;
+        let mut selection = Selection::new(Some(ratio));
+        selection.keyboard_adjust(-1.0, -1.0, false);
+        selection.keyboard_adjust(-1.0, 0.0, true);
+
+        assert!(selection.has_been_edited());
+        assert!(selection.rect.x >= 0.0 && selection.rect.y >= 0.0);
+        assert!(selection.rect.x + selection.rect.w <= 1.0);
+        assert!(selection.rect.y + selection.rect.h <= 1.0);
+        assert!((selection.rect.w / selection.rect.h - ratio.value() as f32).abs() < 0.000_01);
     }
 }

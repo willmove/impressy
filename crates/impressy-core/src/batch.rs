@@ -47,6 +47,57 @@ pub enum BatchOp {
     },
 }
 
+/// One ordered pixel-processing step in a batch pipeline (Requirement 8.11–8.13).
+#[derive(Debug, Clone)]
+pub enum BatchStep {
+    /// Resize to the displayed dimensions. When `prevent_enlarge` is enabled, inputs that
+    /// already fit inside the target bounds pass through unchanged.
+    Resize {
+        /// Per-input dimension rule.
+        mode: BatchResizeMode,
+        /// Resampling filter.
+        filter: ResizeFilter,
+        /// Keep an input unchanged when it already fits inside both target dimensions.
+        prevent_enlarge: bool,
+    },
+    /// Apply an image watermark after every preceding step.
+    Watermark {
+        /// Watermark pixels, including alpha.
+        overlay: RgbaImage,
+        /// Additional opacity multiplier in the inclusive range 0–1.
+        opacity: f32,
+        /// Watermark placement rule.
+        position: watermark::Position,
+    },
+}
+
+/// Dimension rule resolved independently for every input image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchResizeMode {
+    /// Use exact dimensions, optionally fitting each image inside the box without distortion.
+    Pixels {
+        /// Maximum or exact output width.
+        width: u32,
+        /// Maximum or exact output height.
+        height: u32,
+        /// Fit inside the width/height box while preserving the input ratio.
+        preserve_aspect: bool,
+    },
+    /// Scale both dimensions by an integer percentage.
+    Percentage(u32),
+    /// Scale proportionally so the longest side equals the supplied pixel count.
+    LongestSide(u32),
+}
+
+/// Ordered processing steps plus the independent output encoding settings.
+#[derive(Debug, Clone)]
+pub struct BatchPipeline {
+    /// Pixel-processing steps in execution order.
+    pub steps: Vec<BatchStep>,
+    /// Encoding settings applied once after the final processing step.
+    pub output: EncodeSettings,
+}
+
 /// 单项处理产物。
 #[derive(Debug, Clone)]
 pub struct BatchOutput {
@@ -54,6 +105,10 @@ pub struct BatchOutput {
     pub bytes: Vec<u8>,
     /// 实际输出的格式。
     pub format: OutputFormat,
+    /// Final pixel width after every processing step.
+    pub width: u32,
+    /// Final pixel height after every processing step.
+    pub height: u32,
 }
 
 /// 失败项（Requirement 8.7）。
@@ -98,6 +153,100 @@ pub fn process(images: &[RgbaImage], op: &BatchOp) -> BatchResult {
     result
 }
 
+/// Process every input through all enabled steps in display order, then encode once using the
+/// selected output settings. A failure remains isolated to its input item.
+pub fn process_pipeline(images: &[RgbaImage], pipeline: &BatchPipeline) -> BatchResult {
+    let mut result = BatchResult::default();
+    for (index, input) in images.iter().enumerate() {
+        match apply_pipeline_one(input, pipeline) {
+            Ok(output) => result.successes.push((index, output)),
+            Err(error) => result.failures.push(BatchFailure { index, error }),
+        }
+    }
+    result
+}
+
+fn apply_pipeline_one(input: &RgbaImage, pipeline: &BatchPipeline) -> Result<BatchOutput> {
+    let mut image = input.clone();
+    for step in &pipeline.steps {
+        image = match step {
+            BatchStep::Resize {
+                mode,
+                filter,
+                prevent_enlarge,
+            } => {
+                let (width, height) = resolve_resize_dimensions(&image, *mode)?;
+                if *prevent_enlarge && width >= image.width() && height >= image.height() {
+                    image
+                } else {
+                    transform::resize(&image, width, height, *filter)?
+                }
+            }
+            BatchStep::Watermark {
+                overlay,
+                opacity,
+                position,
+            } => watermark::apply(&image, overlay, *opacity, *position)?,
+        };
+    }
+
+    let bytes = format::encode(&image, pipeline.output)?;
+    Ok(BatchOutput {
+        bytes,
+        format: pipeline.output.format(),
+        width: image.width(),
+        height: image.height(),
+    })
+}
+
+fn resolve_resize_dimensions(image: &RgbaImage, mode: BatchResizeMode) -> Result<(u32, u32)> {
+    let source_width = image.width();
+    let source_height = image.height();
+    let scaled = |value: u32, numerator: u32, denominator: u32| {
+        ((u64::from(value) * u64::from(numerator) + u64::from(denominator) / 2)
+            / u64::from(denominator.max(1)))
+        .clamp(1, u64::from(u32::MAX)) as u32
+    };
+    let dimensions = match mode {
+        BatchResizeMode::Pixels {
+            width,
+            height,
+            preserve_aspect: false,
+        } => (width, height),
+        BatchResizeMode::Pixels {
+            width,
+            height,
+            preserve_aspect: true,
+        } => {
+            if width == 0 || height == 0 {
+                (width, height)
+            } else if u64::from(width) * u64::from(source_height)
+                <= u64::from(height) * u64::from(source_width)
+            {
+                (width, scaled(width, source_height, source_width))
+            } else {
+                (scaled(height, source_width, source_height), height)
+            }
+        }
+        BatchResizeMode::Percentage(percent) => (
+            scaled(source_width, percent, 100),
+            scaled(source_height, percent, 100),
+        ),
+        BatchResizeMode::LongestSide(longest) if source_width >= source_height => {
+            (longest, scaled(longest, source_height, source_width))
+        }
+        BatchResizeMode::LongestSide(longest) => {
+            (scaled(longest, source_width, source_height), longest)
+        }
+    };
+    if dimensions.0 == 0 || dimensions.1 == 0 {
+        return Err(CoreError::InvalidArgument(
+            "batch resize dimensions must be non-zero".into(),
+        ));
+    }
+    Ok(dimensions)
+}
+
 /// 对单张图应用操作。
 fn apply_one(img: &RgbaImage, op: &BatchOp) -> Result<BatchOutput> {
     match op {
@@ -106,6 +255,8 @@ fn apply_one(img: &RgbaImage, op: &BatchOp) -> Result<BatchOutput> {
             Ok(BatchOutput {
                 bytes,
                 format: *format,
+                width: img.width(),
+                height: img.height(),
             })
         }
         BatchOp::Resize {
@@ -123,6 +274,8 @@ fn apply_one(img: &RgbaImage, op: &BatchOp) -> Result<BatchOutput> {
             Ok(BatchOutput {
                 bytes,
                 format: OutputFormat::Png,
+                width: resized.width(),
+                height: resized.height(),
             })
         }
         BatchOp::Watermark {
@@ -140,6 +293,8 @@ fn apply_one(img: &RgbaImage, op: &BatchOp) -> Result<BatchOutput> {
             Ok(BatchOutput {
                 bytes,
                 format: OutputFormat::Png,
+                width: marked.width(),
+                height: marked.height(),
             })
         }
     }
