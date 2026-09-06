@@ -426,6 +426,9 @@ pub struct AppShell {
     numbers: NumberFields,
     estimate_state: EstimateState,
     estimate_generation: Arc<AtomicU64>,
+    /// AI 生成代际：每次发起生成自增。完成/保存回调据此丢弃过期代际的结果，
+    /// 防止跨功能页结果污染与 history 记录张冠李戴。
+    ai_generation: Arc<AtomicU64>,
     /// 上一帧窗口客户区尺寸（逻辑像素）。渲染时更新，供预览画布随窗口伸缩计算可用空间。
     viewport_width: f32,
     viewport_height: f32,
@@ -611,6 +614,7 @@ impl AppShell {
             numbers,
             estimate_state: EstimateState::Unavailable,
             estimate_generation: Arc::new(AtomicU64::new(0)),
+            ai_generation: Arc::new(AtomicU64::new(0)),
             // 初始沿用窗口请求尺寸；首帧渲染即被真实客户区尺寸覆盖。
             viewport_width: 1280.0,
             viewport_height: 800.0,
@@ -850,6 +854,7 @@ impl AppShell {
     }
 
     fn open_feature(&mut self, feature: Feature, cx: &mut Context<Self>) {
+        let changed = self.open != Some(feature);
         self.open = Some(feature);
         self.settings_open = false;
         self.active = section_for_feature(feature);
@@ -862,6 +867,18 @@ impl AppShell {
             self.crop_selection.update(cx, |selection, selection_cx| {
                 selection.set_free_region(NormRect::centered_fraction(0.32), selection_cx);
             });
+        }
+        if changed {
+            // 切换功能页时清理上一页的选中态与状态文案：结果按 `results_feature`
+            // 只在所属页面展示；进行中的生成保留 Generating（按钮保持禁用），
+            // 由完成回调决定结果的归宿。
+            self.ai_state.selected_results.clear();
+            if self.ai_state.results_feature == Some(feature) && !self.ai_state.results.is_empty()
+            {
+                self.ai_state.status = AiStatus::Ready(self.ai_state.results.len());
+            } else if !matches!(self.ai_state.status, AiStatus::Generating) {
+                self.ai_state.status = AiStatus::Idle;
+            }
         }
         cx.notify();
     }
@@ -3222,15 +3239,32 @@ impl AppShell {
                 cx.notify();
                 return;
             }
-            Some(self.crop_selection.read(cx).rect)
+            let (rect, edited) = {
+                let selection = self.crop_selection.read(cx);
+                (selection.rect, selection.has_been_edited())
+            };
+            // 默认选区覆盖整张图：不框选直接生成会把整图当作「待移除区域」发给
+            // Provider。要求先显式框选，避免误烧额度与错误输出。
+            if rect == NormRect::FULL && !edited {
+                self.ai_state.status = AiStatus::Error(AiErrorKind::RegionNotSelected);
+                cx.notify();
+                return;
+            }
+            Some(rect)
         } else {
             None
         };
         let registry = self.provider_registry.clone();
         let credentials = Arc::clone(&self.credential_store);
+        // 代际令牌：完成回调只有在「仍在发起功能页且无更新的生成」时才应用结果。
+        let generation = self
+            .ai_generation
+            .fetch_add(1, Ordering::Relaxed)
+            .wrapping_add(1);
         self.ai_state.status = AiStatus::Generating;
         self.ai_state.results.clear();
         self.ai_state.selected_results.clear();
+        self.ai_state.results_feature = None;
 
         let task = cx.background_executor().spawn(async move {
             run_ai_task(AiTaskRequest {
@@ -3251,8 +3285,9 @@ impl AppShell {
             let _ = this.update(cx, |this, cx| {
                 match outcome {
                     AiTaskOutcome::Finished(results) => {
+                        // Provider 调用已完成并消耗额度：无论用户是否还在该功能页，
+                        // 历史记录都如实落盘（不含提示词与密钥）。
                         let count = results.len();
-                        this.ai_state.set_results(results);
                         this.config.generation_history.push(
                             impressy_core::config::GenerationHistoryRecord {
                                 created_at_unix_ms: unix_time_ms(),
@@ -3263,9 +3298,27 @@ impl AppShell {
                             },
                         );
                         this.persist_config(false);
+                        if this.open == Some(feature)
+                            && this.ai_generation.load(Ordering::Relaxed) == generation
+                        {
+                            this.ai_state.set_results(feature, results);
+                        } else {
+                            // 用户已离开发起页：结果不跨页展示，状态归位。
+                            this.ai_state.status = AiStatus::Idle;
+                        }
                     }
                     AiTaskOutcome::Failed(error) => {
-                        this.ai_state.status = AiStatus::Error(error);
+                        if this.open == Some(feature)
+                            && this.ai_generation.load(Ordering::Relaxed) == generation
+                        {
+                            this.ai_state.status = AiStatus::Error(error);
+                        } else {
+                            log::error!(
+                                "AI generation for {} finished with {error:?} after navigating away",
+                                feature.id()
+                            );
+                            this.ai_state.status = AiStatus::Idle;
+                        }
                     }
                 }
                 cx.notify();
@@ -3281,6 +3334,30 @@ impl AppShell {
             cx.notify();
             return;
         }
+        // 快照与代际在点击时捕获：目录对话框期间状态不得被后续操作改写——
+        // 保存内容、历史记录下标、状态文案都以点击时刻为准。
+        let generation = self.ai_generation.load(Ordering::Relaxed);
+        // 点击时刻，最近一条历史记录必属于当前结果集（新生成只有在完成后才会
+        // 替换结果）。用固定下标而非 last_mut，避免保存期间新生成完成导致
+        // saved_paths 写进错误的记录。
+        let history_index = self.config.generation_history.len().checked_sub(1);
+        let selected = self
+            .ai_state
+            .selected_results
+            .iter()
+            .filter_map(|index| self.ai_state.results.get(*index))
+            .map(|result| result.generated.clone())
+            .collect::<Vec<_>>();
+        let poster = (feature == Feature::Poster).then(|| {
+            (
+                [
+                    self.poster_title.read(cx).value().to_string(),
+                    self.poster_subtitle.read(cx).value().to_string(),
+                    self.poster_corner_label.read(cx).value().to_string(),
+                ],
+                self.poster_layout.read(cx).layers(),
+            )
+        });
         let paths_receiver = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
@@ -3290,29 +3367,12 @@ impl AppShell {
         cx.spawn(async move |this, cx| {
             let result =
                 first_path_prompt_result(classify_path_prompt_result(paths_receiver.await));
-            let _ = this.update(cx, |this, cx| {
+            let _ = this.update(cx, |_, cx| {
                 let PathPromptResult::Selected(directory) = result else {
-                    this.ai_state.status = AiStatus::Idle;
+                    // 取消目录选择：结果与状态保持原样，可再次点击保存。
                     cx.notify();
                     return;
                 };
-                let selected = this
-                    .ai_state
-                    .selected_results
-                    .iter()
-                    .filter_map(|index| this.ai_state.results.get(*index))
-                    .map(|result| result.generated.clone())
-                    .collect::<Vec<_>>();
-                let poster = (feature == Feature::Poster).then(|| {
-                    (
-                        [
-                            this.poster_title.read(cx).value().to_string(),
-                            this.poster_subtitle.read(cx).value().to_string(),
-                            this.poster_corner_label.read(cx).value().to_string(),
-                        ],
-                        this.poster_layout.read(cx).layers(),
-                    )
-                });
                 let task = cx.background_executor().spawn(async move {
                     let paths = if let Some((texts, layout)) = poster {
                         write_poster_results(&directory, &selected, &texts, layout)
@@ -3327,15 +3387,24 @@ impl AppShell {
                         match outcome {
                             Ok((directory, paths)) => {
                                 this.config.last_output_dir = Some(directory);
-                                if let Some(record) = this.config.generation_history.last_mut() {
+                                if let Some(index) = history_index
+                                    && let Some(record) =
+                                        this.config.generation_history.get_mut(index)
+                                {
                                     record.saved_paths = paths.clone();
                                 }
                                 this.persist_config(false);
-                                this.ai_state.status = AiStatus::Saved(paths.len());
+                                // 保存期间若已发起新生成，代际已变：只更新历史记录，
+                                // 不再用旧保存结果覆盖新状态文案。
+                                if this.ai_generation.load(Ordering::Relaxed) == generation {
+                                    this.ai_state.status = AiStatus::Saved(paths.len());
+                                }
                             }
                             Err(error) => {
                                 log::error!("AI result save failed: {error}");
-                                this.ai_state.status = AiStatus::Error(AiErrorKind::Io);
+                                if this.ai_generation.load(Ordering::Relaxed) == generation {
+                                    this.ai_state.status = AiStatus::Error(AiErrorKind::Io);
+                                }
                             }
                         }
                         cx.notify();
@@ -3357,7 +3426,7 @@ impl AppShell {
         }
     }
 
-    fn poster_canvas(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn poster_canvas(&self, show_background: bool, cx: &mut Context<Self>) -> impl IntoElement {
         const PREVIEW_WIDTH: f32 = 270.0;
         const PREVIEW_HEIGHT: f32 = 480.0;
         let theme = cx.theme();
@@ -3448,8 +3517,9 @@ impl AppShell {
                     .border_1()
                     .border_color(theme.border)
                     .bg(black())
-                    .when_some(self.ai_state.results.first(), |this, result| {
-                        this.child(img(result.preview.clone()).size_full())
+                    .when(show_background, |this| match self.ai_state.results.first() {
+                        Some(result) => this.child(img(result.preview.clone()).size_full()),
+                        None => this,
                     })
                     .child(
                         div()
@@ -3586,8 +3656,11 @@ impl AppShell {
             && AiEditPreset::ALL[self.ai_state.edit_preset_index] == AiEditPreset::Removal;
         let region_supported = !region_edit || capabilities.region_edit;
         let reference = self.ai_reference_panel(region_edit, cx);
-        let poster =
-            (feature == Feature::Poster).then(|| self.poster_canvas(cx).into_any_element());
+        // 结果只属于其生成时的功能页：海报背景、结果网格与保存入口都以此为门，
+        // 防止别的工具的结果串到当前页面。
+        let results_belong_here = self.ai_state.results_feature == Some(feature);
+        let poster = (feature == Feature::Poster)
+            .then(|| self.poster_canvas(results_belong_here, cx).into_any_element());
         let tier_buttons = spec
             .tiers
             .iter()
@@ -3684,7 +3757,7 @@ impl AppShell {
             })
             .collect::<Vec<_>>();
 
-        let has_results = !results.is_empty();
+        let has_results = results_belong_here && !results.is_empty();
         let has_reference = reference.is_some();
         let has_poster = poster.is_some();
         h_flex()

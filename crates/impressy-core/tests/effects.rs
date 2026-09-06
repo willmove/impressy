@@ -6,7 +6,7 @@ use common::arb_image;
 use image::{Rgba, RgbaImage};
 use proptest::prelude::*;
 use impressy_core::animation::{self, GifParams, Playback};
-use impressy_core::beautify::{self, Background, BeautifyParams};
+use impressy_core::beautify::{self, Background, BeautifyParams, Border};
 use impressy_core::watermark::{self, Position};
 use std::io::Cursor;
 
@@ -79,4 +79,40 @@ proptest! {
         let out = watermark::apply(&img, &mark, 0.8, Position::BottomRight { margin: 1 }).expect("wm");
         prop_assert_eq!(out.dimensions(), img.dimensions());
     }
+}
+
+// 描边宽度超过内容半边长时被钳制，内容像素不被描边色整体覆盖
+// （Requirement 57：极端参数返回合理结果而非错误输出）。
+#[test]
+fn border_wider_than_half_the_content_is_clamped() {
+    let content = Rgba([10, 20, 30, 255]);
+    let border = Rgba([200, 0, 0, 255]);
+    let img = RgbaImage::from_pixel(8, 8, content);
+    let params = BeautifyParams {
+        corner_radius: 0,
+        inner_padding: 0,
+        background: Background::Solid(Rgba([255, 255, 255, 255])),
+        border: Some(Border { width: 32, color: border }),
+        shadow: None,
+    };
+    let out = beautify::beautify(&img, &params).expect("beautify");
+    // 钳制后描边宽 3：边缘像素是描边色，中心内容像素仍是原图颜色。
+    assert_eq!(out.get_pixel(0, 0), &border);
+    assert_eq!(out.get_pixel(4, 4), &content);
+}
+
+// 1px 内容无法容纳描边：描边被跳过，内容保持不变。
+#[test]
+fn border_on_single_pixel_content_is_skipped() {
+    let content = Rgba([10, 20, 30, 255]);
+    let img = RgbaImage::from_pixel(1, 1, content);
+    let params = BeautifyParams {
+        corner_radius: 0,
+        inner_padding: 0,
+        background: Background::Solid(Rgba([255, 255, 255, 255])),
+        border: Some(Border { width: 8, color: Rgba([200, 0, 0, 255]) }),
+        shadow: None,
+    };
+    let out = beautify::beautify(&img, &params).expect("beautify");
+    assert_eq!(out.get_pixel(0, 0), &content);
 }

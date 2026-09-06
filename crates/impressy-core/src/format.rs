@@ -178,8 +178,27 @@ pub fn decode(bytes: &[u8]) -> Result<RgbaImage> {
     Ok(img.to_rgba8())
 }
 
+/// WebP 解码像素上限，与 image crate 的默认 512MiB 分配上限对齐（RGBA 4 字节/像素）。
+pub const MAX_DECODE_PIXELS: u64 = 512 * 1024 * 1024 / 4;
+
 /// 用 libwebp 解码 WebP。
+///
+/// libwebp 的 `WebPDecodeRGBA/RGB` 不受 image crate `Limits::max_alloc` 约束，
+/// 因此解码前先用 [`webp::BitstreamFeatures`]（`WebPGetFeatures`，只解析位流头、
+/// 不分配像素）校验声明尺寸，超出 [`MAX_DECODE_PIXELS`] 直接拒绝（Requirement 57）。
 fn decode_webp(bytes: &[u8]) -> Result<RgbaImage> {
+    let features = webp::BitstreamFeatures::new(bytes).ok_or_else(|| CoreError::Webp {
+        operation: "解码",
+        detail: "无法解析 WebP 位流头".to_string(),
+    })?;
+    let (width, height) = (features.width(), features.height());
+    if u64::from(width) * u64::from(height) > MAX_DECODE_PIXELS {
+        return Err(CoreError::ImageTooLarge {
+            width,
+            height,
+            max_pixels: MAX_DECODE_PIXELS,
+        });
+    }
     let img = webp::Decoder::new(bytes)
         .decode()
         .ok_or_else(|| CoreError::Webp {

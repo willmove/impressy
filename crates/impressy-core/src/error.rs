@@ -37,6 +37,21 @@ pub enum CoreError {
         detail: String,
     },
 
+    /// 图像尺寸超过解码上限，在分配内存之前拒绝。
+    ///
+    /// WebP 解码走 libwebp，绕过 image crate 的分配上限拦截；恶意或异常文件
+    /// 声明的超大画布会让进程一次性分配巨量内存（OOM abort），因此必须先按
+    /// 位流头中的尺寸做预检（Requirement 57 防御）。
+    #[error("图像尺寸 {width}×{height} 超过解码上限 {max_pixels} 像素")]
+    ImageTooLarge {
+        /// 位流头声明的宽度。
+        width: u32,
+        /// 位流头声明的高度。
+        height: u32,
+        /// 允许的最大像素数。
+        max_pixels: u64,
+    },
+
     /// 磁盘空间不足。Requirement 57.5。
     #[error("磁盘空间不足，无法写入 {path}")]
     InsufficientDiskSpace {

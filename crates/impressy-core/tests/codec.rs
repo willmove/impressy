@@ -53,3 +53,29 @@ fn invalid_bytes_return_error_without_crash() {
     let result = format::decode(b"definitely not an image");
     assert!(result.is_err(), "garbage bytes must error, not panic");
 }
+
+// 声明超大画布的 WebP 必须在分配内存前被拒绝（Requirement 57 防御：
+// libwebp 解码绕过 image crate 的分配上限，恶意文件可触发 OOM）。
+//
+// libwebp 的 WebPGetFeatures 对 VP8X 画布自带 2^26 像素上限，但 VP8L 的
+// 14bit 尺寸（最大 16384×16384 = 2^28 像素）没有面积检查——正是本预检
+// 需要挡住的路径。
+#[test]
+fn oversized_webp_canvas_is_rejected_before_decoding() {
+    // 手工构造最小 VP8L 头（5 字节载荷：签名 0x2F + 14bit 宽高各 16384）。
+    // WebPGetFeatures 只解析头、不解码载荷，因此 5 字节即可通过解析。
+    let mut bytes = Vec::new();
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&17u32.to_le_bytes()); // 文件剩余部分长度
+    bytes.extend_from_slice(b"WEBP");
+    bytes.extend_from_slice(b"VP8L");
+    bytes.extend_from_slice(&5u32.to_le_bytes()); // chunk payload 长度
+    bytes.push(0x2F); // VP8L 签名
+    bytes.extend_from_slice(&0x0FFF_FFFFu32.to_le_bytes()); // 宽-1/高-1 各 14 bit
+
+    let result = format::decode(&bytes);
+    assert!(
+        matches!(result, Err(impressy_core::CoreError::ImageTooLarge { .. })),
+        "oversized WebP canvas must be rejected before pixel allocation, got: {result:?}"
+    );
+}

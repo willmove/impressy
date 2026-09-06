@@ -111,6 +111,11 @@ pub struct Selection {
     /// 锁定的宽高比；`None` 为自由比例。
     pub ratio: Option<AspectRatio>,
     drag: Option<Drag>,
+    /// 用户是否对选区做过显式交互（拖拽 / 缩放）。
+    ///
+    /// 与「默认全幅选区」区分：AI 局部消除只有在显式框选后才允许发送，
+    /// 避免把整张图误当作「待移除区域」（见 `AppShell::start_ai_generation`）。
+    edited: bool,
     /// 上一次绘制得到的元素边界，命中测试据此把光标换算到归一化空间。
     bounds: Option<Bounds<Pixels>>,
 }
@@ -126,17 +131,23 @@ impl Selection {
             rect,
             ratio,
             drag: None,
+            edited: false,
             bounds: None,
         }
     }
 
+<<<<<<< Updated upstream
     /// 切换比例并重置为该比例下的居中矩形。自由比例默认全幅，便于整图裁剪。
+=======
+    /// 切换比例并重置为该比例下的居中矩形。重置后视为「未编辑」。
+>>>>>>> Stashed changes
     pub fn set_ratio(&mut self, ratio: Option<AspectRatio>, cx: &mut Context<Self>) {
         self.ratio = ratio;
         self.rect = match ratio {
             Some(r) => NormRect::centered(r),
             None => NormRect::FULL,
         };
+        self.edited = false;
         cx.notify();
     }
 
@@ -156,12 +167,23 @@ impl Selection {
         let Some(grip) = self.grip_at(pos, b) else {
             return;
         };
+        self.begin_drag(grip, anchor);
+        cx.notify();
+    }
+
+    /// 记录一次拖拽起点并标记选区「已编辑」。独立于 GPUI 事件，便于 headless 测试。
+    fn begin_drag(&mut self, grip: Grip, anchor: (f32, f32)) {
         self.drag = Some(Drag {
             grip,
             origin: self.rect,
             anchor,
         });
-        cx.notify();
+        self.edited = true;
+    }
+
+    /// 用户是否对选区做过显式交互。AI 局部消除据此要求先框选再生成。
+    pub fn has_been_edited(&self) -> bool {
+        self.edited
     }
 
     /// 鼠标移动：按下时拖动把手，否则仅刷新光标下的把手预览（不改选区）。
@@ -464,5 +486,13 @@ mod tests {
             (crop.x, crop.y, crop.width, crop.height),
             (100, 160, 800, 360)
         );
+    }
+
+    #[test]
+    fn explicit_drag_marks_the_selection_as_edited() {
+        let mut selection = Selection::new(None);
+        assert!(!selection.has_been_edited());
+        selection.begin_drag(Grip::Move, (0.5, 0.5));
+        assert!(selection.has_been_edited());
     }
 }

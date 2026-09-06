@@ -1154,6 +1154,9 @@ ai:
     invalid_request:
       en: Complete the required input and selection before generating.
       zh-CN: 请补全生成所需的输入和选项。
+    region_not_selected:
+      en: Draw a selection frame on the reference image to mark the region to remove.
+      zh-CN: 请先在参考图上框选需要消除的区域。
     provider:
       en: The provider returned an invalid or unavailable response.
       zh-CN: 服务商返回了无效响应或暂时不可用。

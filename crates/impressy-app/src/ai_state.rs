@@ -20,6 +20,7 @@ pub(crate) enum AiErrorKind {
     ImageTooLarge,
     Unsupported,
     InvalidRequest,
+    RegionNotSelected,
     Provider,
     Credential,
     Io,
@@ -37,6 +38,7 @@ impl AiErrorKind {
             Self::ImageTooLarge => "ai.error.image_too_large",
             Self::Unsupported => "ai.error.unsupported",
             Self::InvalidRequest => "ai.error.invalid_request",
+            Self::RegionNotSelected => "ai.error.region_not_selected",
             Self::Provider => "ai.error.provider",
             Self::Credential => "ai.error.credential",
             Self::Io => "ai.error.io",
@@ -104,6 +106,9 @@ pub(crate) struct AiUiState {
     pub(crate) article_style: usize,
     pub(crate) compare_original: bool,
     pub(crate) results: Vec<RenderedAiImage>,
+    /// 当前结果由哪个功能页生成。结果只在所属页面展示（跨页切换不串结果），
+    /// 保存与海报背景预览也以此为门。
+    pub(crate) results_feature: Option<Feature>,
     pub(crate) status: AiStatus,
 }
 
@@ -134,6 +139,7 @@ impl AiUiState {
             article_style: 0,
             compare_original: false,
             results: Vec::new(),
+            results_feature: None,
             status: AiStatus::Idle,
         }
     }
@@ -197,9 +203,10 @@ impl AiUiState {
         }
     }
 
-    pub(crate) fn set_results(&mut self, results: Vec<RenderedAiImage>) {
+    pub(crate) fn set_results(&mut self, feature: Feature, results: Vec<RenderedAiImage>) {
         self.selected_results = (0..results.len()).collect();
         self.status = AiStatus::Ready(results.len());
+        self.results_feature = Some(feature);
         self.results = results;
     }
 }

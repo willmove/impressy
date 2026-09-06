@@ -115,10 +115,19 @@ pub fn beautify(img: &RgbaImage, params: &BeautifyParams) -> Result<RgbaImage> {
     crate::collage::overlay_exact(&mut canvas, &content, pad, pad);
 
     // 5. 描边
-    if let Some(b) = params.border
-        && b.width > 0
-    {
-        draw_border(&mut canvas, pad, pad, iw, ih, radius, b);
+    //
+    // 描边宽度钳制到内容至少保留 1px：`draw_border` 的内矩形尺寸为
+    // `iw - 2*bw`，若 `2*bw >= iw`（或 ih），内矩形退化为非正区域，
+    // `inside_rounded` 恒为 false，整张内容会被描边色覆盖（Requirement 57 防御）。
+    if let Some(b) = params.border {
+        let max_border_width = iw.min(ih).saturating_sub(1) / 2;
+        let border = Border {
+            width: b.width.min(max_border_width),
+            ..b
+        };
+        if border.width > 0 {
+            draw_border(&mut canvas, pad, pad, iw, ih, radius, border);
+        }
     }
 
     Ok(canvas)
