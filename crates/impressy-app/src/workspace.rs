@@ -149,6 +149,8 @@ pub(crate) struct Workspace {
     result_bytes: Option<Arc<EncodedResult>>,
     preview: Option<Arc<RenderImage>>,
     preview_dimensions: Option<(u32, u32)>,
+    thumbs: Vec<Arc<RenderImage>>,
+    focus_index: usize,
     status: UiMessage,
     info: InfoMessage,
     busy: bool,
@@ -200,6 +202,110 @@ impl Workspace {
 
     pub fn has_image(&self) -> bool {
         self.current_dimensions().is_some()
+    }
+
+    pub fn image_count(&self) -> usize {
+        self.images.len()
+    }
+
+    pub fn focus_index(&self) -> usize {
+        self.focus_index
+    }
+
+    pub fn source_name(&self, index: usize) -> Option<&str> {
+        self.source_names.get(index).map(String::as_str)
+    }
+
+    pub fn thumb(&self, index: usize) -> Option<Arc<RenderImage>> {
+        self.thumbs.get(index).cloned()
+    }
+
+    pub fn set_focus(&mut self, index: usize) {
+        if index >= self.images.len() {
+            return;
+        }
+        self.focus_index = index;
+        if self.result_image.is_none() && self.result_bytes.is_none() {
+            self.preview_source_at(index);
+        }
+    }
+
+    /// 删除一张输入图。来源变更后丢掉当前结果，避免拼图/GIF 仍显示过期合成。
+    pub fn remove_image(&mut self, index: usize) -> bool {
+        if self.busy || index >= self.images.len() {
+            return false;
+        }
+        let old_focus = self.focus_index;
+        let images = Arc::make_mut(&mut self.images);
+        images.remove(index);
+        let names = Arc::make_mut(&mut self.source_names);
+        if index < names.len() {
+            names.remove(index);
+        }
+        if index < self.thumbs.len() {
+            self.thumbs.remove(index);
+        }
+        self.source_bytes = None;
+        self.result_image = None;
+        self.result_bytes = None;
+        if self.images.is_empty() {
+            self.focus_index = 0;
+            self.preview = None;
+            self.preview_dimensions = None;
+            self.info = InfoMessage::None;
+            self.status = UiMessage::NeedMultipleImages;
+            return true;
+        }
+        self.focus_index = if index < old_focus {
+            old_focus - 1
+        } else {
+            old_focus.min(self.images.len() - 1)
+        };
+        self.preview_source_at(self.focus_index);
+        self.status = UiMessage::LoadedMultiple {
+            successes: self.images.len(),
+            failures: 0,
+        };
+        true
+    }
+
+    /// 把 `from` 移到 `to`（用于图条左右排序）。
+    pub fn move_image(&mut self, from: usize, to: usize) -> bool {
+        if self.busy || from == to || from >= self.images.len() || to >= self.images.len() {
+            return false;
+        }
+        let images = Arc::make_mut(&mut self.images);
+        let image = images.remove(from);
+        images.insert(to, image);
+        let names = Arc::make_mut(&mut self.source_names);
+        if from < names.len() && to <= names.len() {
+            let name = names.remove(from);
+            names.insert(to.min(names.len()), name);
+        }
+        if from < self.thumbs.len() && to <= self.thumbs.len() {
+            let thumb = self.thumbs.remove(from);
+            self.thumbs.insert(to.min(self.thumbs.len()), thumb);
+        }
+        self.source_bytes = None;
+        self.result_image = None;
+        self.result_bytes = None;
+        self.focus_index = to;
+        self.preview_source_at(to);
+        true
+    }
+
+    fn preview_source_at(&mut self, index: usize) {
+        if let Some(image) = self.images.get(index) {
+            self.preview = Some(to_render_image(image));
+            self.preview_dimensions = Some(image.dimensions());
+            if let Some(name) = self.source_names.get(index) {
+                self.info = InfoMessage::Image {
+                    name: name.clone(),
+                    width: image.width(),
+                    height: image.height(),
+                };
+            }
+        }
     }
 
     pub fn image_for_estimate(&self) -> Option<ImageSource> {
@@ -464,9 +570,16 @@ impl Workspace {
                 images,
                 source_names,
                 source_bytes,
+                thumbs,
                 info,
                 status,
             } => {
+                self.thumbs = if thumbs.is_empty() {
+                    images.iter().map(to_thumb).collect()
+                } else {
+                    thumbs
+                };
+                self.focus_index = 0;
                 if let Some(first) = images.first() {
                     self.preview = Some(to_render_image(first));
                     self.preview_dimensions = Some(first.dimensions());
@@ -689,16 +802,20 @@ impl WorkspaceJob {
         match self {
             Self::LoadPaths { paths, single } => load_paths(paths, single),
             Self::LoadClipboard { bytes } => match decode_bytes(&bytes) {
-                Ok(image) => WorkspaceOutcome::Loaded {
-                    info: InfoMessage::ClipboardImage {
-                        width: image.width(),
-                        height: image.height(),
-                    },
-                    images: vec![image],
-                    source_names: vec!["clipboard".to_string()],
-                    source_bytes: Some(bytes),
-                    status: UiMessage::ImagePasted,
-                },
+                Ok(image) => {
+                    let thumbs = vec![to_thumb(&image)];
+                    WorkspaceOutcome::Loaded {
+                        info: InfoMessage::ClipboardImage {
+                            width: image.width(),
+                            height: image.height(),
+                        },
+                        images: vec![image],
+                        source_names: vec!["clipboard".to_string()],
+                        source_bytes: Some(bytes),
+                        thumbs,
+                        status: UiMessage::ImagePasted,
+                    }
+                }
                 Err((kind, detail)) => WorkspaceOutcome::Failed { kind, detail },
             },
             Self::Save { source, path } => {
@@ -924,6 +1041,7 @@ pub(crate) enum WorkspaceOutcome {
         images: Vec<RgbaImage>,
         source_names: Vec<String>,
         source_bytes: Option<Vec<u8>>,
+        thumbs: Vec<Arc<RenderImage>>,
         info: InfoMessage,
         status: UiMessage,
     },
@@ -1088,10 +1206,12 @@ fn load_paths(paths: Vec<PathBuf>, single: bool) -> WorkspaceOutcome {
         InfoMessage::None
     };
     let successes = images.len();
+    let thumbs = images.iter().map(to_thumb).collect();
     WorkspaceOutcome::Loaded {
         images,
         source_names,
         source_bytes: if single { first_bytes } else { None },
+        thumbs,
         info,
         status: if single {
             UiMessage::LoadedImage
@@ -1170,6 +1290,21 @@ pub(crate) fn to_render_image(img: &RgbaImage) -> Arc<RenderImage> {
         pixel.0.swap(0, 2);
     }
     Arc::new(RenderImage::new(vec![Frame::new(bgra)]))
+}
+
+fn to_thumb(img: &RgbaImage) -> Arc<RenderImage> {
+    const MAX: u32 = 72;
+    let (width, height) = img.dimensions();
+    let long_edge = width.max(height).max(1);
+    if long_edge <= MAX {
+        return to_render_image(img);
+    }
+    let next_width = ((u64::from(width) * u64::from(MAX)) / u64::from(long_edge)).max(1) as u32;
+    let next_height = ((u64::from(height) * u64::from(MAX)) / u64::from(long_edge)).max(1) as u32;
+    match transform::resize(img, next_width, next_height, ResizeFilter::Bilinear) {
+        Ok(small) => to_render_image(&small),
+        Err(_) => to_render_image(img),
+    }
 }
 
 #[cfg(test)]
@@ -1343,6 +1478,21 @@ mod tests {
             source_names: Arc::new((0..count).map(|index| format!("image-{index}")).collect()),
             ..Workspace::default()
         }
+    }
+
+    #[test]
+    fn removing_and_reordering_images_preserves_names_and_focus() {
+        let mut workspace = workspace_with_images(3);
+        assert!(workspace.move_image(2, 0));
+        assert_eq!(workspace.source_name(0), Some("image-2"));
+        assert_eq!(workspace.source_name(1), Some("image-0"));
+        assert_eq!(workspace.focus_index(), 0);
+
+        assert!(workspace.remove_image(1));
+        assert_eq!(workspace.image_count(), 2);
+        assert_eq!(workspace.source_name(0), Some("image-2"));
+        assert_eq!(workspace.source_name(1), Some("image-1"));
+        assert!(!workspace.is_busy());
     }
 
     #[test]

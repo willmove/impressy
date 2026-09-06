@@ -159,6 +159,19 @@ workspace:
   ready:
     en: Ready for an image
     zh-CN: 等待导入图片
+  strip:
+    title:
+      en: Loaded images
+      zh-CN: 已导入图片
+    move_left:
+      en: Move left
+      zh-CN: 左移
+    move_right:
+      en: Move right
+      zh-CN: 右移
+    remove:
+      en: Remove
+      zh-CN: 删除
 status:
   zoom:
     en: 100%
@@ -244,6 +257,12 @@ action:
   rotate90:
     en: Rotate 90°
     zh-CN: 旋转 90°
+  rotate180:
+    en: Rotate 180°
+    zh-CN: 旋转 180°
+  rotate270:
+    en: Rotate 90° CCW
+    zh-CN: 逆时针 90°
   crop_square:
     en: Crop 1:1
     zh-CN: 裁剪 1:1
@@ -486,13 +505,16 @@ option:
   ping_pong:
     en: Ping-pong
     zh-CN: 乒乓
+  free_ratio:
+    en: Free
+    zh-CN: 自由比例
 help:
   generic:
     en: Adjust this option for the current operation.
     zh-CN: 调整当前操作的该项参数。
   aspect_ratio:
-    en: Locks the crop frame to one of the five supported aspect ratios.
-    zh-CN: 将裁剪框锁定为五种受支持比例之一。
+    en: Locks the crop frame to a preset, or choose Free to drag any rectangle.
+    zh-CN: 将裁剪框锁定为预设比例，或选择自由比例后任意拖拽。
   output_width:
     en: Sets the output width in pixels without changing the source file.
     zh-CN: 设置输出宽度（像素），不会修改源文件。
@@ -1027,9 +1049,46 @@ ai:
     count:
       en: Count
       zh-CN: 数量
+    provider:
+      en: Provider
+      zh-CN: 服务商
+    ratio:
+      en: Aspect ratio
+      zh-CN: 画面比例
+    quality:
+      en: Quality
+      zh-CN: 质量
+    edit_preset:
+      en: Edit scene
+      zh-CN: 改图场景
     custom_color:
       en: Custom color
       zh-CN: 自定义颜色
+  axis:
+    size:
+      en: Size
+      zh-CN: 尺寸
+    background:
+      en: Background
+      zh-CN: 底色
+    attire:
+      en: Attire
+      zh-CN: 着装
+    model:
+      en: Model
+      zh-CN: 模特
+    scene:
+      en: Scene
+      zh-CN: 场景
+    platform:
+      en: Platform
+      zh-CN: 平台
+    style:
+      en: Style
+      zh-CN: 风格
+    usage:
+      en: Usage
+      zh-CN: 用途
   capability:
     references:
       en: Max references
@@ -1232,6 +1291,63 @@ ai:
     visa-white-suit:
       en: Visa · white · suit
       zh-CN: 签证照 · 白底 · 正装
+    one-inch:
+      en: One-inch
+      zh-CN: 一寸
+    two-inch:
+      en: Two-inch
+      zh-CN: 二寸
+    visa:
+      en: Visa
+      zh-CN: 签证照
+    blue:
+      en: Blue
+      zh-CN: 蓝底
+    red:
+      en: Red
+      zh-CN: 红底
+    white:
+      en: White
+      zh-CN: 白底
+    suit:
+      en: Suit
+      zh-CN: 正装
+    female-suit:
+      en: Women's suit
+      zh-CN: 女士正装
+    one-inch-blue-female-suit:
+      en: One-inch · blue · women's suit
+      zh-CN: 一寸 · 蓝底 · 女士正装
+    one-inch-red-female-suit:
+      en: One-inch · red · women's suit
+      zh-CN: 一寸 · 红底 · 女士正装
+    one-inch-white-female-suit:
+      en: One-inch · white · women's suit
+      zh-CN: 一寸 · 白底 · 女士正装
+    two-inch-blue-female-suit:
+      en: Two-inch · blue · women's suit
+      zh-CN: 二寸 · 蓝底 · 女士正装
+    two-inch-red-female-suit:
+      en: Two-inch · red · women's suit
+      zh-CN: 二寸 · 红底 · 女士正装
+    two-inch-white-female-suit:
+      en: Two-inch · white · women's suit
+      zh-CN: 二寸 · 白底 · 女士正装
+    visa-blue-suit:
+      en: Visa · blue · suit
+      zh-CN: 签证照 · 蓝底 · 正装
+    visa-blue-female-suit:
+      en: Visa · blue · women's suit
+      zh-CN: 签证照 · 蓝底 · 女士正装
+    visa-red-suit:
+      en: Visa · red · suit
+      zh-CN: 签证照 · 红底 · 正装
+    visa-red-female-suit:
+      en: Visa · red · women's suit
+      zh-CN: 签证照 · 红底 · 女士正装
+    visa-white-female-suit:
+      en: Visa · white · women's suit
+      zh-CN: 签证照 · 白底 · 女士正装
     japanese-anime:
       en: Japanese anime
       zh-CN: 日漫风
@@ -1325,6 +1441,24 @@ ai:
     asian-male-studio:
       en: Asian male · studio
       zh-CN: 亚洲男模特 · 摄影棚
+    asian-female:
+      en: Asian female
+      zh-CN: 亚洲女模特
+    asian-male:
+      en: Asian male
+      zh-CN: 亚洲男模特
+    cafe:
+      en: Cafe
+      zh-CN: 咖啡馆
+    studio:
+      en: Studio
+      zh-CN: 摄影棚
+    asian-female-studio:
+      en: Asian female · studio
+      zh-CN: 亚洲女模特 · 摄影棚
+    asian-male-cafe:
+      en: Asian male · cafe
+      zh-CN: 亚洲男模特 · 咖啡馆
     burgundy:
       en: Burgundy
       zh-CN: 酒红
@@ -1362,23 +1496,68 @@ ai:
       en: Douyin · 1080×1920
       zh-CN: 抖音竖版 · 1080×1920
     wechat-bold:
-      en: WeChat Official Account
-      zh-CN: 微信公众号
+      en: WeChat · bold
+      zh-CN: 微信 · 醒目
     xiaohongshu-bold:
+      en: Xiaohongshu · bold
+      zh-CN: 小红书 · 醒目
+    bilibili-bold:
+      en: Bilibili · bold
+      zh-CN: 哔哩哔哩 · 醒目
+    douyin-bold:
+      en: Douyin · bold
+      zh-CN: 抖音 · 醒目
+    wechat:
+      en: WeChat
+      zh-CN: 微信
+    xiaohongshu:
       en: Xiaohongshu
       zh-CN: 小红书
-    bilibili-bold:
+    bilibili:
       en: Bilibili
       zh-CN: 哔哩哔哩
-    douyin-bold:
+    douyin:
       en: Douyin
       zh-CN: 抖音
+    bold:
+      en: Bold
+      zh-CN: 醒目
+    editorial:
+      en: Editorial
+      zh-CN: 编辑风
+    wechat-editorial:
+      en: WeChat · editorial
+      zh-CN: 微信 · 编辑风
+    xiaohongshu-editorial:
+      en: Xiaohongshu · editorial
+      zh-CN: 小红书 · 编辑风
+    bilibili-editorial:
+      en: Bilibili · editorial
+      zh-CN: 哔哩哔哩 · 编辑风
+    douyin-editorial:
+      en: Douyin · editorial
+      zh-CN: 抖音 · 编辑风
     ppt-business-gradient:
+      en: PPT · business gradient
+      zh-CN: PPT · 商务渐变
+    editorial-flat:
+      en: Editorial · flat
+      zh-CN: 编辑配图 · 扁平
+    ppt:
+      en: PPT
+      zh-CN: PPT
+    business-gradient:
       en: Business gradient
       zh-CN: 商务渐变
-    editorial-flat:
-      en: Editorial flat
-      zh-CN: 编辑扁平风
+    flat:
+      en: Flat
+      zh-CN: 扁平
+    ppt-flat:
+      en: PPT · flat
+      zh-CN: PPT · 扁平
+    editorial-business-gradient:
+      en: Editorial · business gradient
+      zh-CN: 编辑配图 · 商务渐变
     delivery-standard:
       en: Delivery standard
       zh-CN: 外卖标准图

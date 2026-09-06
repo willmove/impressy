@@ -139,7 +139,7 @@ impl Feature {
                 default_ratio: AspectRatio::Square,
             },
             Self::IdPhoto => AiFeatureSpec {
-                tiers: ID_TIERS,
+                tiers: &[],
                 max_selected: 1,
                 needs_image: true,
                 default_ratio: AspectRatio::PortraitThreeFour,
@@ -163,7 +163,7 @@ impl Feature {
                 default_ratio: AspectRatio::PortraitThreeFour,
             },
             Self::ModelTryOn => AiFeatureSpec {
-                tiers: TRY_ON_TIERS,
+                tiers: &[],
                 max_selected: 1,
                 needs_image: true,
                 default_ratio: AspectRatio::PortraitThreeFour,
@@ -187,13 +187,13 @@ impl Feature {
                 default_ratio: AspectRatio::Square,
             },
             Self::CoverFactory => AiFeatureSpec {
-                tiers: COVER_TIERS,
+                tiers: &[],
                 max_selected: 1,
                 needs_image: false,
                 default_ratio: AspectRatio::LandscapeSixteenNine,
             },
             Self::ArticleIllustration => AiFeatureSpec {
-                tiers: ARTICLE_TIERS,
+                tiers: &[],
                 max_selected: 1,
                 needs_image: false,
                 default_ratio: AspectRatio::LandscapeSixteenNine,

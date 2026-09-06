@@ -18,7 +18,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::color_picker::{ColorPicker, ColorPickerEvent, ColorPickerState};
-use gpui_component::input::{Input, InputEvent, InputState};
+use gpui_component::input::{Input, InputEvent, InputState, NumberInput, NumberInputEvent, StepAction};
 use gpui_component::select::{Select, SelectEvent, SelectState};
 use gpui_component::slider::{Slider, SliderEvent, SliderState};
 use gpui_component::spinner::Spinner;
@@ -33,15 +33,23 @@ use impressy_ai::{
     SystemCredentialStore,
 };
 use impressy_core::config::{AppConfig, Language};
+use impressy_core::animation::Playback;
 use impressy_core::format::{self, EncodeSettings, OutputFormat, PngCompression, Quality};
-use impressy_core::transform::Rotation;
+use impressy_core::qr::ErrorCorrection;
+use impressy_core::transform::{AspectRatio, Rotation};
 use impressy_presets::{AiEditPreset, IndustryTool};
 use rust_i18n::t;
 
-use crate::ai_state::{AiErrorKind, AiStatus, AiUiState, RenderedAiImage};
+use crate::ai_state::{
+    AiErrorKind, AiStatus, AiUiState, ARTICLE_STYLES, ARTICLE_USAGES, COVER_PLATFORMS, COVER_STYLES,
+    ID_ATTIRES, ID_BACKGROUNDS, ID_SIZES, RenderedAiImage, TRY_ON_MODELS, TRY_ON_SCENES,
+};
 use crate::config_store::ConfigStore;
 use crate::crop_frame::{NormRect, Selection, selection_overlay};
-use crate::feature_params::{BatchMode, FeatureParams, ParamAction, ParamEffect, WatermarkSource};
+use crate::feature_params::{
+    BatchMode, BeautifyBackground, CollageMode, FREE_RATIO_INDEX, FeatureParams, ParamAction,
+    ParamEffect, WatermarkPlacement, WatermarkSource,
+};
 #[cfg(not(target_os = "macos"))]
 use crate::menus::MenuBar;
 use crate::poster_canvas::{
@@ -112,6 +120,223 @@ enum PathPromptResult<T> {
     Selected(T),
     Cancelled,
     Failed(PathPromptFailure),
+}
+
+#[derive(Clone, Copy)]
+enum NumericField {
+    EditWidth,
+    EditHeight,
+    CollageColumns,
+    CollageSpacing,
+    BatchWidth,
+    BatchHeight,
+    BatchOpacity,
+    SliceRows,
+    SliceColumns,
+    QrSize,
+    BeautifyRadius,
+    BeautifyPadding,
+    BeautifyBorder,
+    GifDelay,
+    GifWidth,
+    GifHeight,
+}
+
+impl NumericField {
+    const ALL: [Self; 16] = [
+        Self::EditWidth,
+        Self::EditHeight,
+        Self::CollageColumns,
+        Self::CollageSpacing,
+        Self::BatchWidth,
+        Self::BatchHeight,
+        Self::BatchOpacity,
+        Self::SliceRows,
+        Self::SliceColumns,
+        Self::QrSize,
+        Self::BeautifyRadius,
+        Self::BeautifyPadding,
+        Self::BeautifyBorder,
+        Self::GifDelay,
+        Self::GifWidth,
+        Self::GifHeight,
+    ];
+
+    fn step(self) -> u32 {
+        match self {
+            Self::EditWidth
+            | Self::EditHeight
+            | Self::BatchWidth
+            | Self::BatchHeight
+            | Self::GifWidth
+            | Self::GifHeight => 10,
+            Self::QrSize => 64,
+            Self::CollageSpacing | Self::BeautifyRadius => 4,
+            Self::BeautifyPadding => 8,
+            Self::GifDelay => 50,
+            Self::BatchOpacity => 5,
+            Self::CollageColumns
+            | Self::SliceRows
+            | Self::SliceColumns
+            | Self::BeautifyBorder => 1,
+        }
+    }
+
+    fn current(self, params: &FeatureParams) -> u32 {
+        match self {
+            Self::EditWidth => params.edit.width,
+            Self::EditHeight => params.edit.height,
+            Self::CollageColumns => params.collage.columns,
+            Self::CollageSpacing => params.collage.spacing,
+            Self::BatchWidth => params.batch.width,
+            Self::BatchHeight => params.batch.height,
+            Self::BatchOpacity => u32::from(params.batch.watermark_opacity_percent),
+            Self::SliceRows => params.slice.rows,
+            Self::SliceColumns => params.slice.columns,
+            Self::QrSize => params.qr.size,
+            Self::BeautifyRadius => params.beautify.radius,
+            Self::BeautifyPadding => params.beautify.padding,
+            Self::BeautifyBorder => params.beautify.border_width,
+            Self::GifDelay => params.gif.delay_ms,
+            Self::GifWidth => params.gif.width,
+            Self::GifHeight => params.gif.height,
+        }
+    }
+
+    fn action(self, value: u32) -> ParamAction {
+        match self {
+            Self::EditWidth => ParamAction::SetEditWidth(value),
+            Self::EditHeight => ParamAction::SetEditHeight(value),
+            Self::CollageColumns => ParamAction::SetCollageColumns(value),
+            Self::CollageSpacing => ParamAction::SetCollageSpacing(value),
+            Self::BatchWidth => ParamAction::SetBatchWidth(value),
+            Self::BatchHeight => ParamAction::SetBatchHeight(value),
+            Self::BatchOpacity => ParamAction::SetBatchOpacity(value as u8),
+            Self::SliceRows => ParamAction::SetSliceRows(value),
+            Self::SliceColumns => ParamAction::SetSliceColumns(value),
+            Self::QrSize => ParamAction::SetQrSize(value),
+            Self::BeautifyRadius => ParamAction::SetBeautifyRadius(value),
+            Self::BeautifyPadding => ParamAction::SetBeautifyPadding(value),
+            Self::BeautifyBorder => ParamAction::SetBeautifyBorder(value),
+            Self::GifDelay => ParamAction::SetGifDelay(value),
+            Self::GifWidth => ParamAction::SetGifWidth(value),
+            Self::GifHeight => ParamAction::SetGifHeight(value),
+        }
+    }
+}
+
+struct NumberFields {
+    edit_width: Entity<InputState>,
+    edit_height: Entity<InputState>,
+    collage_columns: Entity<InputState>,
+    collage_spacing: Entity<InputState>,
+    batch_width: Entity<InputState>,
+    batch_height: Entity<InputState>,
+    batch_opacity: Entity<InputState>,
+    slice_rows: Entity<InputState>,
+    slice_columns: Entity<InputState>,
+    qr_size: Entity<InputState>,
+    beautify_radius: Entity<InputState>,
+    beautify_padding: Entity<InputState>,
+    beautify_border: Entity<InputState>,
+    gif_delay: Entity<InputState>,
+    gif_width: Entity<InputState>,
+    gif_height: Entity<InputState>,
+}
+
+impl NumberFields {
+    fn new(params: &FeatureParams, window: &mut Window, cx: &mut Context<AppShell>) -> Self {
+        Self {
+            edit_width: number_input(params.edit.width, window, cx),
+            edit_height: number_input(params.edit.height, window, cx),
+            collage_columns: number_input(params.collage.columns, window, cx),
+            collage_spacing: number_input(params.collage.spacing, window, cx),
+            batch_width: number_input(params.batch.width, window, cx),
+            batch_height: number_input(params.batch.height, window, cx),
+            batch_opacity: number_input(u32::from(params.batch.watermark_opacity_percent), window, cx),
+            slice_rows: number_input(params.slice.rows, window, cx),
+            slice_columns: number_input(params.slice.columns, window, cx),
+            qr_size: number_input(params.qr.size, window, cx),
+            beautify_radius: number_input(params.beautify.radius, window, cx),
+            beautify_padding: number_input(params.beautify.padding, window, cx),
+            beautify_border: number_input(params.beautify.border_width, window, cx),
+            gif_delay: number_input(params.gif.delay_ms, window, cx),
+            gif_width: number_input(params.gif.width, window, cx),
+            gif_height: number_input(params.gif.height, window, cx),
+        }
+    }
+
+    fn get(&self, field: NumericField) -> &Entity<InputState> {
+        match field {
+            NumericField::EditWidth => &self.edit_width,
+            NumericField::EditHeight => &self.edit_height,
+            NumericField::CollageColumns => &self.collage_columns,
+            NumericField::CollageSpacing => &self.collage_spacing,
+            NumericField::BatchWidth => &self.batch_width,
+            NumericField::BatchHeight => &self.batch_height,
+            NumericField::BatchOpacity => &self.batch_opacity,
+            NumericField::SliceRows => &self.slice_rows,
+            NumericField::SliceColumns => &self.slice_columns,
+            NumericField::QrSize => &self.qr_size,
+            NumericField::BeautifyRadius => &self.beautify_radius,
+            NumericField::BeautifyPadding => &self.beautify_padding,
+            NumericField::BeautifyBorder => &self.beautify_border,
+            NumericField::GifDelay => &self.gif_delay,
+            NumericField::GifWidth => &self.gif_width,
+            NumericField::GifHeight => &self.gif_height,
+        }
+    }
+}
+
+fn number_input(value: u32, window: &mut Window, cx: &mut Context<AppShell>) -> Entity<InputState> {
+    cx.new(|cx| InputState::new(window, cx).default_value(value.to_string()))
+}
+
+/// GPUI 0.2.2 的 `flex_wrap` 换行后经常不计入父级高度，后面的控件会叠在按钮上。
+/// 这里改成固定每行列数的 `h_flex` 行，高度由行数决定。
+fn chip_flow(
+    chips: impl IntoIterator<Item = AnyElement>,
+    per_row: usize,
+    stretch: bool,
+) -> AnyElement {
+    let chips: Vec<AnyElement> = chips.into_iter().collect();
+    if chips.is_empty() {
+        return div().into_any_element();
+    }
+    let per_row = per_row.max(1);
+    let mut rows = Vec::new();
+    let mut row = Vec::new();
+    for chip in chips {
+        let cell = if stretch {
+            div().flex_1().child(chip).into_any_element()
+        } else {
+            chip
+        };
+        row.push(cell);
+        if row.len() == per_row {
+            rows.push(
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .children(std::mem::take(&mut row))
+                    .into_any_element(),
+            );
+        }
+    }
+    if !row.is_empty() {
+        rows.push(
+            h_flex()
+                .w_full()
+                .gap_2()
+                .children(row)
+                .into_any_element(),
+        );
+    }
+    v_flex()
+        .w_full()
+        .gap_2()
+        .children(rows)
+        .into_any_element()
 }
 
 fn classify_path_prompt_result<T, PlatformError, ChannelError>(
@@ -198,6 +423,7 @@ pub struct AppShell {
     qr_foreground: Entity<ColorPickerState>,
     qr_background: Entity<ColorPickerState>,
     ai_custom_color: Entity<ColorPickerState>,
+    numbers: NumberFields,
     estimate_state: EstimateState,
     estimate_generation: Arc<AtomicU64>,
     /// 上一帧窗口客户区尺寸（逻辑像素）。渲染时更新，供预览画布随窗口伸缩计算可用空间。
@@ -224,7 +450,7 @@ impl AppShell {
             workspace.set_status(UiMessage::ConfigReset);
         }
         let params = FeatureParams::default();
-        let crop_selection = cx.new(|_| Selection::new(Some(params.edit.ratio())));
+        let crop_selection = cx.new(|_| Selection::new(params.edit.ratio()));
         #[cfg(not(target_os = "macos"))]
         let menu_bar = cx.new(MenuBar::new);
         let poster_layout = cx.new(|_| PosterLayout::default());
@@ -285,8 +511,9 @@ impl AppShell {
         let qr_background = cx.new(|cx| ColorPickerState::new(window, cx).default_value(white()));
         let ai_custom_color =
             cx.new(|cx| ColorPickerState::new(window, cx).default_value(cx.theme().blue));
+        let numbers = NumberFields::new(&params, window, cx);
 
-        let _subscriptions = vec![
+        let mut _subscriptions = vec![
             cx.subscribe_in(&nav_search, window, {
                 move |_, _, event: &InputEvent, _, cx| {
                     if matches!(event, InputEvent::Change) {
@@ -337,6 +564,19 @@ impl AppShell {
                 }
             }),
         ];
+        for field in NumericField::ALL {
+            let entity = numbers.get(field).clone();
+            _subscriptions.push(cx.subscribe_in(&entity, window, {
+                move |this, state, event: &InputEvent, window, cx| {
+                    this.on_numeric_input(field, state, event, window, cx);
+                }
+            }));
+            _subscriptions.push(cx.subscribe_in(&entity, window, {
+                move |this, state, event: &NumberInputEvent, window, cx| {
+                    this.on_numeric_step(field, state, event, window, cx);
+                }
+            }));
+        }
         Self {
             active: Section::BasicImage,
             open: None,
@@ -368,6 +608,7 @@ impl AppShell {
             qr_foreground,
             qr_background,
             ai_custom_color,
+            numbers,
             estimate_state: EstimateState::Unavailable,
             estimate_generation: Arc::new(AtomicU64::new(0)),
             // 初始沿用窗口请求尺寸；首帧渲染即被真实客户区尺寸覆盖。
@@ -619,7 +860,7 @@ impl AppShell {
         }
         if feature == Feature::ImageEdit {
             self.crop_selection.update(cx, |selection, selection_cx| {
-                selection.set_ratio(None, selection_cx);
+                selection.set_free_region(NormRect::centered_fraction(0.32), selection_cx);
             });
         }
         cx.notify();
@@ -641,9 +882,14 @@ impl AppShell {
             .size_full()
             .p_6()
             .on_drop(cx.listener(|this, paths: &ExternalPaths, _, cx| {
-                this.open = Some(Feature::Edit);
+                let paths = paths.paths().to_vec();
+                let supported = paths
+                    .iter()
+                    .filter(|path| is_supported_image_path(path))
+                    .count();
+                this.open = Some(initial_paths_feature(supported));
                 this.active = Section::BasicImage;
-                this.handle_drop(paths.paths().to_vec(), cx);
+                this.handle_drop(paths, cx);
             }))
             .child(
                 v_flex()
@@ -1352,7 +1598,7 @@ impl AppShell {
             ParamEffect::CropRatioChanged => {
                 let ratio = self.params.edit.ratio();
                 self.crop_selection.update(cx, |selection, selection_cx| {
-                    selection.set_ratio(Some(ratio), selection_cx);
+                    selection.set_ratio(ratio, selection_cx);
                 });
             }
             ParamEffect::BeautifyPreview
@@ -1436,6 +1682,52 @@ impl AppShell {
         self.start_workspace_command(WorkspaceCommand::Batch(request), cx);
     }
 
+    fn on_numeric_input(
+        &mut self,
+        field: NumericField,
+        state: &Entity<InputState>,
+        event: &InputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            InputEvent::Change => {
+                if let Ok(value) = state.read(cx).value().parse::<u32>() {
+                    self.adjust_param(field.action(value), cx);
+                }
+            }
+            InputEvent::Blur | InputEvent::PressEnter { .. } => {
+                let value = field.current(&self.params);
+                state.update(cx, |input, input_cx| {
+                    input.set_value(value.to_string(), window, input_cx);
+                });
+                cx.notify();
+            }
+            InputEvent::Focus => {}
+        }
+    }
+
+    fn on_numeric_step(
+        &mut self,
+        field: NumericField,
+        state: &Entity<InputState>,
+        event: &NumberInputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let NumberInputEvent::Step(step) = event;
+        let current = field.current(&self.params);
+        let next = match step {
+            StepAction::Increment => current.saturating_add(field.step()),
+            StepAction::Decrement => current.saturating_sub(field.step()),
+        };
+        self.adjust_param(field.action(next), cx);
+        let value = field.current(&self.params);
+        state.update(cx, |input, input_cx| {
+            input.set_value(value.to_string(), window, input_cx);
+        });
+    }
+
     fn handle_drop(&mut self, paths: Vec<std::path::PathBuf>, cx: &mut Context<Self>) {
         let multiple = matches!(
             self.open,
@@ -1448,66 +1740,72 @@ impl AppShell {
         }
     }
 
-    fn cycle_control(
+    fn param_chip(
         &self,
-        label_key: &str,
-        value: SharedString,
-        button_id: &'static str,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        selected: bool,
         action: ParamAction,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let help = tr(parameter_help_key(label_key));
-        h_flex()
-            .justify_between()
-            .gap_3()
-            .child(div().text_sm().child(tr(label_key)))
-            .child(
-                Button::new(button_id)
-                    .outline()
-                    .label(value)
-                    .tooltip(help)
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.adjust_param(action, cx);
-                    })),
-            )
+        Button::new(id.into())
+            .small()
+            .w_full()
+            .label(label.into())
+            .when(selected, |button| button.primary())
+            .when(!selected, |button| button.outline())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.adjust_param(action, cx);
+            }))
             .into_any_element()
     }
 
-    fn step_control(
+    fn chip_row(
         &self,
         label_key: &str,
-        value: SharedString,
-        ids: (&'static str, &'static str),
-        actions: (ParamAction, ParamAction),
-        cx: &mut Context<Self>,
+        chips: impl IntoIterator<Item = AnyElement>,
+    ) -> AnyElement {
+        let help = tr(parameter_help_key(label_key));
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(
+                div()
+                    .id(SharedString::from(format!("{label_key}-label")))
+                    .text_sm()
+                    .tooltip(move |window, cx| Tooltip::new(help.clone()).build(window, cx))
+                    .child(tr(label_key)),
+            )
+            .child(chip_flow(chips, 2, true))
+            .into_any_element()
+    }
+
+    fn number_control(
+        &self,
+        label_key: &str,
+        field: &Entity<InputState>,
+        suffix: &'static str,
     ) -> AnyElement {
         let help = tr(parameter_help_key(label_key));
         h_flex()
+            .w_full()
             .justify_between()
             .gap_3()
             .child(div().text_sm().child(tr(label_key)))
             .child(
                 h_flex()
-                    .gap_2()
+                    .w(px(148.0))
+                    .gap_1()
                     .child(
-                        Button::new(ids.0)
-                            .outline()
-                            .icon(IconName::Minus)
-                            .tooltip(help.clone())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.adjust_param(actions.0, cx);
-                            })),
+                        div()
+                            .id(SharedString::from(format!("{label_key}-number")))
+                            .flex_1()
+                            .tooltip(move |window, cx| Tooltip::new(help.clone()).build(window, cx))
+                            .child(NumberInput::new(field).small()),
                     )
-                    .child(div().min_w(px(72.0)).text_center().child(value))
-                    .child(
-                        Button::new(ids.1)
-                            .outline()
-                            .icon(IconName::Plus)
-                            .tooltip(help)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.adjust_param(actions.1, cx);
-                            })),
-                    ),
+                    .when(!suffix.is_empty(), |this| {
+                        this.child(div().text_xs().child(suffix))
+                    }),
             )
             .into_any_element()
     }
@@ -1543,79 +1841,98 @@ impl AppShell {
         let mut controls = Vec::new();
         match feature {
             Feature::Edit => {
-                controls.push(self.cycle_control(
-                    "parameter.aspect_ratio",
-                    self.params.edit.ratio().to_string().into(),
-                    "param-edit-ratio",
-                    ParamAction::EditRatioNext,
+                let selected = self.params.edit.ratio_index;
+                let mut ratio_chips = AspectRatio::PRESETS
+                    .iter()
+                    .enumerate()
+                    .map(|(index, ratio)| {
+                        self.param_chip(
+                            format!("chip-edit-ratio-{index}"),
+                            ratio.to_string(),
+                            selected == index,
+                            ParamAction::SetEditRatio(index),
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                ratio_chips.push(self.param_chip(
+                    "chip-edit-ratio-free",
+                    tr("option.free_ratio"),
+                    selected == FREE_RATIO_INDEX,
+                    ParamAction::SetEditRatio(FREE_RATIO_INDEX),
                     cx,
                 ));
-                controls.push(self.step_control(
+                controls.push(self.chip_row("parameter.aspect_ratio", ratio_chips));
+                controls.push(self.number_control(
                     "parameter.output_width",
-                    format!("{} px", self.params.edit.width).into(),
-                    ("param-edit-width-down", "param-edit-width-up"),
-                    (ParamAction::EditWidth(-1), ParamAction::EditWidth(1)),
-                    cx,
+                    &self.numbers.edit_width,
+                    "px",
                 ));
-                controls.push(self.step_control(
+                controls.push(self.number_control(
                     "parameter.output_height",
-                    format!("{} px", self.params.edit.height).into(),
-                    ("param-edit-height-down", "param-edit-height-up"),
-                    (ParamAction::EditHeight(-1), ParamAction::EditHeight(1)),
-                    cx,
+                    &self.numbers.edit_height,
+                    "px",
                 ));
             }
             Feature::Collage => {
-                controls.push(self.cycle_control(
+                let mode = self.params.collage.mode;
+                controls.push(self.chip_row(
                     "parameter.layout",
-                    tr(self.params.collage.mode.label_key()),
-                    "param-collage-layout",
-                    ParamAction::CollageLayoutNext,
-                    cx,
+                    [
+                        (CollageMode::Vertical, "chip-collage-vertical"),
+                        (CollageMode::Horizontal, "chip-collage-horizontal"),
+                        (CollageMode::Grid, "chip-collage-grid"),
+                    ]
+                    .into_iter()
+                    .map(|(candidate, id)| {
+                        self.param_chip(
+                            id,
+                            tr(candidate.label_key()),
+                            mode == candidate,
+                            ParamAction::SetCollageMode(candidate),
+                            cx,
+                        )
+                    }),
                 ));
-                controls.push(self.step_control(
-                    "parameter.columns",
-                    self.params.collage.columns.to_string().into(),
-                    ("param-collage-columns-down", "param-collage-columns-up"),
-                    (
-                        ParamAction::CollageColumns(-1),
-                        ParamAction::CollageColumns(1),
-                    ),
-                    cx,
-                ));
-                controls.push(self.step_control(
+                if mode == CollageMode::Grid {
+                    controls.push(self.number_control(
+                        "parameter.columns",
+                        &self.numbers.collage_columns,
+                        "",
+                    ));
+                }
+                controls.push(self.number_control(
                     "parameter.spacing",
-                    format!("{} px", self.params.collage.spacing).into(),
-                    ("param-collage-spacing-down", "param-collage-spacing-up"),
-                    (
-                        ParamAction::CollageSpacing(-1),
-                        ParamAction::CollageSpacing(1),
-                    ),
-                    cx,
+                    &self.numbers.collage_spacing,
+                    "px",
                 ));
-                controls.push(self.cycle_control(
+                let background = self.params.collage.background_index;
+                controls.push(self.chip_row(
                     "parameter.background",
-                    tr(self.params.collage.background_label_key()),
-                    "param-collage-background",
-                    ParamAction::CollageBackgroundNext,
-                    cx,
+                    (0..4).map(|index| {
+                        let label = match index {
+                            0 => "option.white",
+                            1 => "option.black",
+                            2 => "option.gray",
+                            _ => "option.transparent",
+                        };
+                        self.param_chip(
+                            format!("chip-collage-bg-{index}"),
+                            tr(label),
+                            background == index,
+                            ParamAction::SetCollageBackground(index),
+                            cx,
+                        )
+                    }),
                 ));
             }
             Feature::Batch => self.batch_controls(&mut controls, cx),
             Feature::Slice => {
-                controls.push(self.step_control(
-                    "parameter.rows",
-                    self.params.slice.rows.to_string().into(),
-                    ("param-slice-rows-down", "param-slice-rows-up"),
-                    (ParamAction::SliceRows(-1), ParamAction::SliceRows(1)),
-                    cx,
-                ));
-                controls.push(self.step_control(
+                controls.push(self.number_control("parameter.rows", &self.numbers.slice_rows, ""));
+                controls.push(self.number_control(
                     "parameter.columns",
-                    self.params.slice.columns.to_string().into(),
-                    ("param-slice-columns-down", "param-slice-columns-up"),
-                    (ParamAction::SliceColumns(-1), ParamAction::SliceColumns(1)),
-                    cx,
+                    &self.numbers.slice_columns,
+                    "",
                 ));
             }
             Feature::QrCode => {
@@ -1626,19 +1943,35 @@ impl AppShell {
                         .child(Input::new(&self.qr_input).cleanable(true))
                         .into_any_element(),
                 );
-                controls.push(self.step_control(
+                controls.push(self.number_control(
                     "parameter.qr_size",
-                    format!("{} px", self.params.qr.size).into(),
-                    ("param-qr-size-down", "param-qr-size-up"),
-                    (ParamAction::QrSize(-1), ParamAction::QrSize(1)),
-                    cx,
+                    &self.numbers.qr_size,
+                    "px",
                 ));
-                controls.push(self.cycle_control(
+                let correction = self.params.qr.correction;
+                controls.push(self.chip_row(
                     "parameter.correction",
-                    tr(self.params.qr.correction_label_key()),
-                    "param-qr-correction",
-                    ParamAction::QrCorrectionNext,
-                    cx,
+                    [
+                        ErrorCorrection::Low,
+                        ErrorCorrection::Medium,
+                        ErrorCorrection::Quartile,
+                        ErrorCorrection::High,
+                    ]
+                    .into_iter()
+                    .map(|candidate| {
+                        self.param_chip(
+                            format!("chip-qr-correction-{candidate:?}"),
+                            tr(match candidate {
+                                ErrorCorrection::Low => "option.correction_low",
+                                ErrorCorrection::Medium => "option.correction_medium",
+                                ErrorCorrection::Quartile => "option.correction_quartile",
+                                ErrorCorrection::High => "option.correction_high",
+                            }),
+                            correction == candidate,
+                            ParamAction::SetQrCorrection(candidate),
+                            cx,
+                        )
+                    }),
                 ));
                 let foreground_help = tr("help.qr_foreground");
                 let background_help = tr("help.qr_background");
@@ -1706,29 +2039,62 @@ impl AppShell {
 
     fn batch_controls(&self, controls: &mut Vec<AnyElement>, cx: &mut Context<Self>) {
         let params = self.params.batch;
-        controls.push(self.cycle_control(
+        controls.push(self.chip_row(
             "parameter.mode",
-            tr(params.mode.label_key()),
-            "param-batch-mode",
-            ParamAction::BatchModeNext,
-            cx,
+            [
+                BatchMode::Convert,
+                BatchMode::Compress,
+                BatchMode::Resize,
+                BatchMode::Watermark,
+            ]
+            .into_iter()
+            .map(|candidate| {
+                self.param_chip(
+                    format!("chip-batch-mode-{candidate:?}"),
+                    tr(candidate.label_key()),
+                    params.mode == candidate,
+                    ParamAction::SetBatchMode(candidate),
+                    cx,
+                )
+            }),
         ));
         match params.mode {
             BatchMode::Convert | BatchMode::Compress => {
-                controls.push(self.cycle_control(
+                let formats = if params.mode == BatchMode::Compress {
+                    vec![OutputFormat::Jpeg, OutputFormat::Webp]
+                } else {
+                    vec![OutputFormat::Png, OutputFormat::Jpeg, OutputFormat::Webp]
+                };
+                controls.push(self.chip_row(
                     "parameter.format",
-                    params.format.to_string().into(),
-                    "param-batch-format",
-                    ParamAction::BatchFormatNext,
-                    cx,
+                    formats.into_iter().map(|output_format| {
+                        self.param_chip(
+                            format!("chip-batch-format-{output_format}"),
+                            output_format.to_string(),
+                            params.format == output_format,
+                            ParamAction::SetBatchFormat(output_format),
+                            cx,
+                        )
+                    }),
                 ));
                 if params.format == OutputFormat::Png {
-                    controls.push(self.cycle_control(
+                    controls.push(self.chip_row(
                         "parameter.png_compression",
-                        tr(png_compression_label_key(params.png_compression)),
-                        "param-batch-png-compression",
-                        ParamAction::BatchPngCompressionNext,
-                        cx,
+                        [
+                            PngCompression::Fast,
+                            PngCompression::Default,
+                            PngCompression::Best,
+                        ]
+                        .into_iter()
+                        .map(|candidate| {
+                            self.param_chip(
+                                format!("chip-batch-png-{candidate:?}"),
+                                tr(png_compression_label_key(candidate)),
+                                params.png_compression == candidate,
+                                ParamAction::SetBatchPngCompression(candidate),
+                                cx,
+                            )
+                        }),
                     ));
                 } else {
                     controls.push(self.slider_control(
@@ -1740,28 +2106,31 @@ impl AppShell {
                 }
             }
             BatchMode::Resize => {
-                controls.push(self.step_control(
+                controls.push(self.number_control(
                     "parameter.output_width",
-                    format!("{} px", params.width).into(),
-                    ("param-batch-width-down", "param-batch-width-up"),
-                    (ParamAction::BatchWidth(-1), ParamAction::BatchWidth(1)),
-                    cx,
+                    &self.numbers.batch_width,
+                    "px",
                 ));
-                controls.push(self.step_control(
+                controls.push(self.number_control(
                     "parameter.output_height",
-                    format!("{} px", params.height).into(),
-                    ("param-batch-height-down", "param-batch-height-up"),
-                    (ParamAction::BatchHeight(-1), ParamAction::BatchHeight(1)),
-                    cx,
+                    &self.numbers.batch_height,
+                    "px",
                 ));
             }
             BatchMode::Watermark => {
-                controls.push(self.cycle_control(
+                controls.push(self.chip_row(
                     "parameter.watermark_source",
-                    tr(params.watermark_source.label_key()),
-                    "param-batch-watermark-source",
-                    ParamAction::BatchWatermarkSourceNext,
-                    cx,
+                    [WatermarkSource::Text, WatermarkSource::Image]
+                        .into_iter()
+                        .map(|candidate| {
+                            self.param_chip(
+                                format!("chip-batch-wm-{candidate:?}"),
+                                tr(candidate.label_key()),
+                                params.watermark_source == candidate,
+                                ParamAction::SetBatchWatermarkSource(candidate),
+                                cx,
+                            )
+                        }),
                 ));
                 if params.watermark_source == WatermarkSource::Text {
                     controls.push(
@@ -1772,19 +2141,24 @@ impl AppShell {
                             .into_any_element(),
                     );
                 }
-                controls.push(self.step_control(
+                controls.push(self.number_control(
                     "parameter.opacity",
-                    format!("{}%", params.watermark_opacity_percent).into(),
-                    ("param-batch-opacity-down", "param-batch-opacity-up"),
-                    (ParamAction::BatchOpacity(-5), ParamAction::BatchOpacity(5)),
-                    cx,
+                    &self.numbers.batch_opacity,
+                    "%",
                 ));
-                controls.push(self.cycle_control(
+                controls.push(self.chip_row(
                     "parameter.position",
-                    tr(params.watermark_placement.label_key()),
-                    "param-batch-position",
-                    ParamAction::BatchPositionNext,
-                    cx,
+                    [WatermarkPlacement::BottomRight, WatermarkPlacement::Tiled]
+                        .into_iter()
+                        .map(|candidate| {
+                            self.param_chip(
+                                format!("chip-batch-pos-{candidate:?}"),
+                                tr(candidate.label_key()),
+                                params.watermark_placement == candidate,
+                                ParamAction::SetBatchPosition(candidate),
+                                cx,
+                            )
+                        }),
                 ));
             }
         }
@@ -1792,98 +2166,109 @@ impl AppShell {
 
     fn beautify_controls(&self, controls: &mut Vec<AnyElement>, cx: &mut Context<Self>) {
         let params = self.params.beautify;
-        controls.push(self.step_control(
+        controls.push(self.number_control(
             "parameter.corner_radius",
-            format!("{} px", params.radius).into(),
-            ("param-beautify-radius-down", "param-beautify-radius-up"),
-            (
-                ParamAction::BeautifyRadius(-1),
-                ParamAction::BeautifyRadius(1),
-            ),
-            cx,
+            &self.numbers.beautify_radius,
+            "px",
         ));
-        controls.push(self.step_control(
+        controls.push(self.number_control(
             "parameter.padding",
-            format!("{} px", params.padding).into(),
-            ("param-beautify-padding-down", "param-beautify-padding-up"),
-            (
-                ParamAction::BeautifyPadding(-1),
-                ParamAction::BeautifyPadding(1),
-            ),
-            cx,
+            &self.numbers.beautify_padding,
+            "px",
         ));
-        controls.push(self.cycle_control(
+        controls.push(self.chip_row(
             "parameter.background",
-            tr(params.background.label_key()),
-            "param-beautify-background",
-            ParamAction::BeautifyBackgroundNext,
-            cx,
-        ));
-        controls.push(self.step_control(
-            "parameter.border",
-            format!("{} px", params.border_width).into(),
-            ("param-beautify-border-down", "param-beautify-border-up"),
-            (
-                ParamAction::BeautifyBorder(-1),
-                ParamAction::BeautifyBorder(1),
-            ),
-            cx,
-        ));
-        controls.push(self.cycle_control(
-            "parameter.shadow",
-            tr(if params.shadow {
-                "option.enabled"
-            } else {
-                "option.disabled"
+            [
+                BeautifyBackground::Gradient,
+                BeautifyBackground::Solid,
+                BeautifyBackground::Transparent,
+            ]
+            .into_iter()
+            .map(|candidate| {
+                self.param_chip(
+                    format!("chip-beautify-bg-{candidate:?}"),
+                    tr(candidate.label_key()),
+                    params.background == candidate,
+                    ParamAction::SetBeautifyBackground(candidate),
+                    cx,
+                )
             }),
-            "param-beautify-shadow",
-            ParamAction::BeautifyShadowToggle,
-            cx,
+        ));
+        controls.push(self.number_control(
+            "parameter.border",
+            &self.numbers.beautify_border,
+            "px",
+        ));
+        controls.push(self.chip_row(
+            "parameter.shadow",
+            [true, false].into_iter().map(|enabled| {
+                self.param_chip(
+                    format!("chip-beautify-shadow-{enabled}"),
+                    tr(if enabled {
+                        "option.enabled"
+                    } else {
+                        "option.disabled"
+                    }),
+                    params.shadow == enabled,
+                    ParamAction::SetBeautifyShadow(enabled),
+                    cx,
+                )
+            }),
         ));
     }
 
     fn gif_controls(&self, controls: &mut Vec<AnyElement>, cx: &mut Context<Self>) {
         let params = self.params.gif;
-        controls.push(self.step_control(
+        controls.push(self.number_control(
             "parameter.frame_delay",
-            format!("{} ms", params.delay_ms).into(),
-            ("param-gif-delay-down", "param-gif-delay-up"),
-            (ParamAction::GifDelay(-1), ParamAction::GifDelay(1)),
-            cx,
+            &self.numbers.gif_delay,
+            "ms",
         ));
-        controls.push(self.cycle_control(
+        controls.push(self.chip_row(
             "parameter.size_mode",
-            tr(if params.custom_size {
-                "option.custom_size"
-            } else {
-                "option.original_size"
+            [false, true].into_iter().map(|custom| {
+                self.param_chip(
+                    format!("chip-gif-size-{custom}"),
+                    tr(if custom {
+                        "option.custom_size"
+                    } else {
+                        "option.original_size"
+                    }),
+                    params.custom_size == custom,
+                    ParamAction::SetGifCustomSize(custom),
+                    cx,
+                )
             }),
-            "param-gif-size-mode",
-            ParamAction::GifSizeModeToggle,
-            cx,
         ));
         if params.custom_size {
-            controls.push(self.step_control(
+            controls.push(self.number_control(
                 "parameter.output_width",
-                format!("{} px", params.width).into(),
-                ("param-gif-width-down", "param-gif-width-up"),
-                (ParamAction::GifWidth(-1), ParamAction::GifWidth(1)),
-                cx,
+                &self.numbers.gif_width,
+                "px",
             ));
-            controls.push(self.step_control(
+            controls.push(self.number_control(
                 "parameter.output_height",
-                format!("{} px", params.height).into(),
-                ("param-gif-height-down", "param-gif-height-up"),
-                (ParamAction::GifHeight(-1), ParamAction::GifHeight(1)),
-                cx,
+                &self.numbers.gif_height,
+                "px",
             ));
         }
-        controls.push(self.cycle_control(
+        controls.push(self.chip_row(
             "parameter.playback",
-            tr(params.playback_label_key()),
-            "param-gif-playback",
-            ParamAction::GifPlaybackNext,
-            cx,
+            [Playback::Forward, Playback::Reverse, Playback::PingPong]
+                .into_iter()
+                .map(|candidate| {
+                    self.param_chip(
+                        format!("chip-gif-playback-{candidate:?}"),
+                        tr(match candidate {
+                            Playback::Forward => "option.forward",
+                            Playback::Reverse => "option.reverse",
+                            Playback::PingPong => "option.ping_pong",
+                        }),
+                        params.playback == candidate,
+                        ParamAction::SetGifPlayback(candidate),
+                        cx,
+                    )
+                }),
         ));
     }
 
@@ -1909,6 +2294,18 @@ impl AppShell {
                     "act-rotate",
                     "action.rotate90",
                     WorkspaceCommand::Transform(TransformOperation::Rotate(Rotation::Cw90)),
+                    false,
+                );
+                command!(
+                    "act-rotate-180",
+                    "action.rotate180",
+                    WorkspaceCommand::Transform(TransformOperation::Rotate(Rotation::Cw180)),
+                    false,
+                );
+                command!(
+                    "act-rotate-270",
+                    "action.rotate270",
+                    WorkspaceCommand::Transform(TransformOperation::Rotate(Rotation::Cw270)),
                     false,
                 );
                 buttons.push(
@@ -2179,6 +2576,112 @@ impl AppShell {
         Some(preview.into_any_element())
     }
 
+    fn image_strip(&self, feature: Feature, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if !matches!(feature, Feature::Collage | Feature::Batch | Feature::Gif) {
+            return None;
+        }
+        let count = self.workspace.image_count();
+        if count == 0 {
+            return None;
+        }
+        let busy = self.workspace.is_busy();
+        let focus = self.workspace.focus_index();
+        let border = cx.theme().border;
+        let primary = cx.theme().primary;
+        let items = (0..count).map(|index| {
+            let selected = index == focus;
+            let name = self
+                .workspace
+                .source_name(index)
+                .unwrap_or("—")
+                .to_string();
+            let short_name = if name.chars().count() > 14 {
+                format!("{}…", name.chars().take(12).collect::<String>())
+            } else {
+                name
+            };
+            let thumb = self.workspace.thumb(index);
+            v_flex()
+                .id(SharedString::from(format!("strip-item-{index}")))
+                .w(px(96.0))
+                .gap_1()
+                .p_1()
+                .rounded_md()
+                .border_1()
+                .border_color(if selected { primary } else { border })
+                .when_some(thumb, |this, thumb| {
+                    this.child(
+                        img(thumb)
+                            .w(px(88.0))
+                            .h(px(64.0)),
+                    )
+                })
+                .child(
+                    div()
+                        .text_xs()
+                        .truncate()
+                        .child(SharedString::from(short_name)),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.workspace.set_focus(index);
+                    cx.notify();
+                }))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Button::new(SharedString::from(format!("strip-left-{index}")))
+                                .outline()
+                                .small()
+                                .icon(IconName::ArrowLeft)
+                                .tooltip(tr("workspace.strip.move_left"))
+                                .disabled(busy || index == 0)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.workspace.move_image(index, index.saturating_sub(1));
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("strip-right-{index}")))
+                                .outline()
+                                .small()
+                                .icon(IconName::ChevronRight)
+                                .tooltip(tr("workspace.strip.move_right"))
+                                .disabled(busy || index + 1 >= count)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.workspace.move_image(index, index + 1);
+                                    cx.notify();
+                                })),
+                        )
+                        .child(
+                            Button::new(SharedString::from(format!("strip-remove-{index}")))
+                                .outline()
+                                .small()
+                                .icon(IconName::Delete)
+                                .tooltip(tr("workspace.strip.remove"))
+                                .disabled(busy)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.workspace.remove_image(index);
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .into_any_element()
+        });
+        Some(
+            v_flex()
+                .gap_2()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(tr("workspace.strip.title")),
+                )
+                .child(chip_flow(items, 5, false))
+                .into_any_element(),
+        )
+    }
+
     fn workspace_canvas(&self, feature: Feature, cx: &mut Context<Self>) -> AnyElement {
         let border = cx.theme().border;
         let background = cx.theme().background;
@@ -2261,6 +2764,7 @@ impl AppShell {
                         )
                     }),
             )
+            .when_some(self.image_strip(feature, cx), |this, strip| this.child(strip))
             .child(
                 h_flex()
                     .min_h(px(24.0))
@@ -2340,43 +2844,199 @@ impl AppShell {
 
     fn cycle_ai_provider(&mut self, cx: &mut Context<Self>) {
         self.ai_state.cycle_provider();
-        if let Some(capabilities) = self.provider_registry.capabilities(self.ai_state.provider) {
+        self.set_ai_provider(self.ai_state.provider, cx);
+    }
+
+    fn set_ai_provider(&mut self, provider: ProviderId, cx: &mut Context<Self>) {
+        self.ai_state.provider = provider;
+        if let Some(capabilities) = self.provider_registry.capabilities(provider) {
             self.ai_state.apply_capabilities(capabilities);
         }
-        self.config.default_provider = self.ai_state.provider.as_str().to_string();
+        self.config.default_provider = provider.as_str().to_string();
         self.persist_config(false);
         cx.notify();
     }
 
-    fn cycle_ai_ratio(&mut self, cx: &mut Context<Self>) {
-        if let Some(capabilities) = self.provider_registry.capabilities(self.ai_state.provider) {
-            self.ai_state.cycle_ratio(capabilities);
+    fn select_edit_preset(&mut self, index: usize, cx: &mut Context<Self>) {
+        self.ai_state.set_edit_preset(index);
+        if AiEditPreset::ALL.get(self.ai_state.edit_preset_index) == Some(&AiEditPreset::Removal)
+            && self.crop_selection.read(cx).rect == NormRect::FULL
+        {
+            self.crop_selection.update(cx, |selection, selection_cx| {
+                selection.set_free_region(NormRect::centered_fraction(0.32), selection_cx);
+            });
         }
         cx.notify();
     }
 
-    fn cycle_ai_count(&mut self, cx: &mut Context<Self>) {
-        let maximum = self
-            .provider_registry
-            .capabilities(self.ai_state.provider)
-            .map_or(1, |capabilities| capabilities.max_generation_count);
-        self.ai_state.count = if self.ai_state.count >= maximum {
-            1
-        } else {
-            self.ai_state.count + 1
-        };
-        cx.notify();
+    fn labeled_ai_chips(
+        &self,
+        label_key: &'static str,
+        chips: impl IntoIterator<Item = AnyElement>,
+    ) -> AnyElement {
+        v_flex()
+            .w_full()
+            .gap_1()
+            .child(div().text_sm().child(tr(label_key)))
+            .child(chip_flow(chips, 2, true))
+            .into_any_element()
     }
 
-    fn cycle_ai_quality(&mut self, cx: &mut Context<Self>) {
-        self.ai_state.cycle_quality();
-        cx.notify();
+    fn selectable_ai_chip(
+        &self,
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        selected: bool,
+        disabled: bool,
+        cx: &mut Context<Self>,
+        on_click: impl Fn(&mut Self, &mut Context<Self>) + 'static,
+    ) -> AnyElement {
+        Button::new(id.into())
+            .small()
+            .w_full()
+            .label(label.into())
+            .when(selected, |button| button.primary())
+            .when(!selected, |button| button.outline())
+            .disabled(disabled)
+            .on_click(cx.listener(move |this, _, _, cx| on_click(this, cx)))
+            .into_any_element()
     }
 
-    fn cycle_edit_preset(&mut self, cx: &mut Context<Self>) {
-        self.ai_state.edit_preset_index =
-            (self.ai_state.edit_preset_index + 1) % AiEditPreset::ALL.len();
-        cx.notify();
+    fn industry_axis_rows(
+        &self,
+        feature: Feature,
+        busy: bool,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        match feature {
+            Feature::IdPhoto => vec![
+                self.axis_index_row(
+                    AxisRow {
+                        label_key: "ai.axis.size",
+                        id_prefix: "ai-id-size",
+                        items: ID_SIZES,
+                        selected: self.ai_state.id_size,
+                        set_index: |state, index| state.id_size = index,
+                    },
+                    busy,
+                    cx,
+                ),
+                self.axis_index_row(
+                    AxisRow {
+                        label_key: "ai.axis.background",
+                        id_prefix: "ai-id-bg",
+                        items: ID_BACKGROUNDS,
+                        selected: self.ai_state.id_background,
+                        set_index: |state, index| state.id_background = index,
+                    },
+                    busy,
+                    cx,
+                ),
+                self.axis_index_row(
+                    AxisRow {
+                        label_key: "ai.axis.attire",
+                        id_prefix: "ai-id-attire",
+                        items: ID_ATTIRES,
+                        selected: self.ai_state.id_attire,
+                        set_index: |state, index| state.id_attire = index,
+                    },
+                    busy,
+                    cx,
+                ),
+            ],
+            Feature::ModelTryOn => vec![
+                self.axis_index_row(
+                    AxisRow {
+                        label_key: "ai.axis.model",
+                        id_prefix: "ai-tryon-model",
+                        items: TRY_ON_MODELS,
+                        selected: self.ai_state.try_on_model,
+                        set_index: |state, index| state.try_on_model = index,
+                    },
+                    busy,
+                    cx,
+                ),
+                self.axis_index_row(
+                    AxisRow {
+                        label_key: "ai.axis.scene",
+                        id_prefix: "ai-tryon-scene",
+                        items: TRY_ON_SCENES,
+                        selected: self.ai_state.try_on_scene,
+                        set_index: |state, index| state.try_on_scene = index,
+                    },
+                    busy,
+                    cx,
+                ),
+            ],
+            Feature::CoverFactory => vec![
+                self.axis_index_row(
+                    AxisRow {
+                        label_key: "ai.axis.platform",
+                        id_prefix: "ai-cover-platform",
+                        items: COVER_PLATFORMS,
+                        selected: self.ai_state.cover_platform,
+                        set_index: |state, index| state.cover_platform = index,
+                    },
+                    busy,
+                    cx,
+                ),
+                self.axis_index_row(
+                    AxisRow {
+                        label_key: "ai.axis.style",
+                        id_prefix: "ai-cover-style",
+                        items: COVER_STYLES,
+                        selected: self.ai_state.cover_style,
+                        set_index: |state, index| state.cover_style = index,
+                    },
+                    busy,
+                    cx,
+                ),
+            ],
+            Feature::ArticleIllustration => vec![
+                self.axis_index_row(
+                    AxisRow {
+                        label_key: "ai.axis.usage",
+                        id_prefix: "ai-article-usage",
+                        items: ARTICLE_USAGES,
+                        selected: self.ai_state.article_usage,
+                        set_index: |state, index| state.article_usage = index,
+                    },
+                    busy,
+                    cx,
+                ),
+                self.axis_index_row(
+                    AxisRow {
+                        label_key: "ai.axis.style",
+                        id_prefix: "ai-article-style",
+                        items: ARTICLE_STYLES,
+                        selected: self.ai_state.article_style,
+                        set_index: |state, index| state.article_style = index,
+                    },
+                    busy,
+                    cx,
+                ),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    fn axis_index_row(&self, row: AxisRow, busy: bool, cx: &mut Context<Self>) -> AnyElement {
+        self.labeled_ai_chips(
+            row.label_key,
+            row.items.iter().enumerate().map(|(index, id)| {
+                self.selectable_ai_chip(
+                    format!("{}-{index}", row.id_prefix),
+                    tr(&format!("ai.tier.{id}")),
+                    row.selected == index,
+                    busy,
+                    cx,
+                    move |this, cx| {
+                        (row.set_index)(&mut this.ai_state, index);
+                        cx.notify();
+                    },
+                )
+            }),
+        )
     }
 
     fn api_key_input(&self, provider: ProviderId) -> &Entity<InputState> {
@@ -2473,6 +3133,12 @@ impl AppShell {
                 }
             }
             let spec = feature.ai_spec().ok_or(AiErrorKind::Unsupported)?;
+            if let Some(tier) = self.ai_state.composed_tier(feature) {
+                return Ok(vec![AiPromptTask {
+                    tier_id: tier.clone(),
+                    prompt: impressy_presets::render_industry_prompt(tool, &tier, &instruction),
+                }]);
+            }
             return Ok(self
                 .ai_state
                 .selected_tiers
@@ -2929,6 +3595,8 @@ impl AppShell {
             .map(|(index, tier)| {
                 let selected = self.ai_state.selected_tiers.contains(&index);
                 Button::new(SharedString::from(format!("ai-tier-{index}")))
+                    .small()
+                    .w_full()
                     .label(tr(&format!("ai.tier.{tier}")))
                     .when(selected, |button| button.primary())
                     .when(!selected, |button| button.outline())
@@ -3115,7 +3783,7 @@ impl AppShell {
                         },
                     )
                     .when(has_results, |this| {
-                        this.child(h_flex().flex_wrap().gap_3().children(results))
+                        this.child(chip_flow(results, 2, false))
                     }),
             )
             .child(
@@ -3134,7 +3802,9 @@ impl AppShell {
                             .font_weight(gpui::FontWeight::SEMIBOLD)
                             .child(tr("workspace.parameters")),
                     )
-                    .child(Input::new(&self.ai_prompt).cleanable(true))
+                    .when(shows_free_prompt(feature), |this| {
+                        this.child(Input::new(&self.ai_prompt).cleanable(true))
+                    })
                     .when(feature == Feature::Poster, |this| {
                         this.child(Input::new(&self.poster_title).cleanable(true))
                             .child(Input::new(&self.poster_subtitle).cleanable(true))
@@ -3144,70 +3814,94 @@ impl AppShell {
                         this.child(Input::new(&self.poster_title).cleanable(true))
                     })
                     .when(feature == Feature::ImageEdit, |this| {
-                        this.child(
-                            Button::new("ai-edit-preset")
-                                .outline()
-                                .label(tr(&format!(
-                                    "ai.edit.{}",
-                                    AiEditPreset::ALL[self.ai_state.edit_preset_index].id()
-                                )))
-                                .on_click(cx.listener(|this, _, _, cx| {
-                                    this.cycle_edit_preset(cx);
-                                })),
-                        )
+                        this.child(self.labeled_ai_chips(
+                            "ai.parameter.edit_preset",
+                            AiEditPreset::ALL.iter().enumerate().map(|(index, preset)| {
+                                self.selectable_ai_chip(
+                                    format!("ai-edit-{index}"),
+                                    tr(&format!("ai.edit.{}", preset.id())),
+                                    self.ai_state.edit_preset_index == index,
+                                    busy,
+                                    cx,
+                                    move |this, cx| this.select_edit_preset(index, cx),
+                                )
+                            }),
+                        ))
                     })
-                    .child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                Button::new("ai-provider")
-                                    .outline()
-                                    .label(tr(provider_label_key(self.ai_state.provider)))
-                                    .disabled(busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cycle_ai_provider(cx);
-                                    })),
+                    .child(self.labeled_ai_chips(
+                        "ai.parameter.provider",
+                        ProviderId::ALL.into_iter().map(|provider| {
+                            self.selectable_ai_chip(
+                                format!("ai-provider-{}", provider.as_str()),
+                                tr(provider_label_key(provider)),
+                                self.ai_state.provider == provider,
+                                busy,
+                                cx,
+                                move |this, cx| this.set_ai_provider(provider, cx),
                             )
-                            .child(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        Button::new("ai-ratio")
-                                            .outline()
-                                            .label(self.ai_state.aspect_ratio.to_string())
-                                            .disabled(busy)
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.cycle_ai_ratio(cx);
-                                            })),
+                        }),
+                    ))
+                    .when(!hides_ai_ratio(feature), |this| {
+                        this.child(self.labeled_ai_chips(
+                            "ai.parameter.ratio",
+                            capabilities.supported_aspect_ratios.iter().copied().map(
+                                |ratio| {
+                                    self.selectable_ai_chip(
+                                        format!("ai-ratio-{ratio}"),
+                                        ratio.to_string(),
+                                        self.ai_state.aspect_ratio == ratio,
+                                        busy,
+                                        cx,
+                                        move |this, cx| {
+                                            this.ai_state.aspect_ratio = ratio;
+                                            cx.notify();
+                                        },
                                     )
-                                    .child(
-                                        Button::new("ai-count")
-                                            .outline()
-                                            .label(format!(
-                                                "{}: {}",
-                                                t!("ai.parameter.count"),
-                                                self.ai_state.count
-                                            ))
-                                            .disabled(
-                                                busy || capabilities.max_generation_count == 1,
-                                            )
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.cycle_ai_count(cx);
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                Button::new("ai-quality")
-                                    .outline()
-                                    .label(tr(quality_label_key(self.ai_state.quality)))
-                                    .disabled(busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.cycle_ai_quality(cx);
-                                    })),
+                                },
                             ),
-                    )
+                        ))
+                    })
+                    .child(self.labeled_ai_chips(
+                        "ai.parameter.count",
+                        (1..=capabilities.max_generation_count).map(|count| {
+                            self.selectable_ai_chip(
+                                format!("ai-count-{count}"),
+                                count.to_string(),
+                                self.ai_state.count == count,
+                                busy || capabilities.max_generation_count == 1,
+                                cx,
+                                move |this, cx| {
+                                    this.ai_state.count = count;
+                                    cx.notify();
+                                },
+                            )
+                        }),
+                    ))
+                    .child(self.labeled_ai_chips(
+                        "ai.parameter.quality",
+                        [
+                            GenerationQuality::Low,
+                            GenerationQuality::Medium,
+                            GenerationQuality::High,
+                        ]
+                        .into_iter()
+                        .map(|quality| {
+                            self.selectable_ai_chip(
+                                format!("ai-quality-{quality:?}"),
+                                tr(quality_label_key(quality)),
+                                self.ai_state.quality == quality,
+                                busy,
+                                cx,
+                                move |this, cx| {
+                                    this.ai_state.quality = quality;
+                                    cx.notify();
+                                },
+                            )
+                        }),
+                    ))
+                    .children(self.industry_axis_rows(feature, busy, cx))
                     .when(!tier_buttons.is_empty(), |this| {
-                        this.child(h_flex().flex_wrap().gap_2().children(tier_buttons))
+                        this.child(chip_flow(tier_buttons, 2, true))
                     })
                     .when(
                         feature == Feature::ProductRecolor
@@ -3694,6 +4388,30 @@ impl AppShell {
     }
 }
 
+fn shows_free_prompt(feature: Feature) -> bool {
+    matches!(
+        feature,
+        Feature::TextToImage
+            | Feature::ImageEdit
+            | Feature::CoverFactory
+            | Feature::ArticleIllustration
+            | Feature::Poster
+            | Feature::PromotionalPoster
+    )
+}
+
+fn hides_ai_ratio(feature: Feature) -> bool {
+    matches!(
+        feature,
+        Feature::Poster
+            | Feature::IdPhoto
+            | Feature::AvatarStudio
+            | Feature::MemeGenerator
+            | Feature::PromotionalPoster
+            | Feature::PlatformAdaptation
+    )
+}
+
 fn section_for_feature(feature: Feature) -> Section {
     match feature {
         Feature::Edit
@@ -3717,6 +4435,14 @@ struct NavigationGroup {
     label_key: &'static str,
     icon: IconName,
     features: &'static [Feature],
+}
+
+struct AxisRow {
+    label_key: &'static str,
+    id_prefix: &'static str,
+    items: &'static [&'static str],
+    selected: usize,
+    set_index: fn(&mut AiUiState, usize),
 }
 
 fn navigation_groups() -> [NavigationGroup; 5] {

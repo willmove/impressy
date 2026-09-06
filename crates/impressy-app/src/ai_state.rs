@@ -7,6 +7,7 @@ use impressy_ai::{
 };
 
 use crate::section::Feature;
+use impressy_presets::AiEditPreset;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AiErrorKind {
@@ -92,6 +93,15 @@ pub(crate) struct AiUiState {
     pub(crate) selected_tiers: BTreeSet<usize>,
     pub(crate) selected_results: BTreeSet<usize>,
     pub(crate) edit_preset_index: usize,
+    pub(crate) id_size: usize,
+    pub(crate) id_background: usize,
+    pub(crate) id_attire: usize,
+    pub(crate) try_on_model: usize,
+    pub(crate) try_on_scene: usize,
+    pub(crate) cover_platform: usize,
+    pub(crate) cover_style: usize,
+    pub(crate) article_usage: usize,
+    pub(crate) article_style: usize,
     pub(crate) compare_original: bool,
     pub(crate) results: Vec<RenderedAiImage>,
     pub(crate) status: AiStatus,
@@ -113,6 +123,15 @@ impl AiUiState {
             selected_tiers: BTreeSet::from([0]),
             selected_results: BTreeSet::new(),
             edit_preset_index: 0,
+            id_size: 0,
+            id_background: 0,
+            id_attire: 0,
+            try_on_model: 0,
+            try_on_scene: 0,
+            cover_platform: 0,
+            cover_style: 0,
+            article_usage: 0,
+            article_style: 0,
             compare_original: false,
             results: Vec::new(),
             status: AiStatus::Idle,
@@ -137,23 +156,6 @@ impl AiUiState {
         };
     }
 
-    pub(crate) fn cycle_ratio(&mut self, capabilities: ProviderCapabilities) {
-        let ratios = capabilities.supported_aspect_ratios;
-        let index = ratios
-            .iter()
-            .position(|ratio| *ratio == self.aspect_ratio)
-            .unwrap_or(0);
-        self.aspect_ratio = ratios[(index + 1) % ratios.len()];
-    }
-
-    pub(crate) fn cycle_quality(&mut self) {
-        self.quality = match self.quality {
-            GenerationQuality::Low => GenerationQuality::Medium,
-            GenerationQuality::Medium => GenerationQuality::High,
-            GenerationQuality::High => GenerationQuality::Low,
-        };
-    }
-
     pub(crate) fn toggle_tier(&mut self, feature: Feature, index: usize) {
         let maximum = feature.ai_spec().map_or(1, |spec| spec.max_selected);
         if self.selected_tiers.contains(&index) {
@@ -162,6 +164,30 @@ impl AiUiState {
             }
         } else if self.selected_tiers.len() < maximum {
             self.selected_tiers.insert(index);
+        }
+    }
+
+    pub(crate) fn set_edit_preset(&mut self, index: usize) {
+        if index < AiEditPreset::ALL.len() {
+            self.edit_preset_index = index;
+        }
+    }
+
+    pub(crate) fn composed_tier(&self, feature: Feature) -> Option<String> {
+        match feature {
+            Feature::IdPhoto => Some(compose_id_photo_tier(
+                self.id_size,
+                self.id_background,
+                self.id_attire,
+            )),
+            Feature::ModelTryOn => Some(compose_try_on_tier(self.try_on_model, self.try_on_scene)),
+            Feature::CoverFactory => {
+                Some(compose_cover_tier(self.cover_platform, self.cover_style))
+            }
+            Feature::ArticleIllustration => {
+                Some(compose_article_tier(self.article_usage, self.article_style))
+            }
+            _ => None,
         }
     }
 
@@ -187,15 +213,9 @@ pub(crate) struct AiFeatureSpec {
 }
 
 pub(crate) const RESTORE_TIERS: &[&str] = &["repair", "colorize", "clarity"];
-pub(crate) const ID_TIERS: &[&str] = &[
-    "one-inch-blue-suit",
-    "one-inch-red-suit",
-    "one-inch-white-suit",
-    "two-inch-blue-suit",
-    "two-inch-red-suit",
-    "two-inch-white-suit",
-    "visa-white-suit",
-];
+pub(crate) const ID_SIZES: &[&str] = &["one-inch", "two-inch", "visa"];
+pub(crate) const ID_BACKGROUNDS: &[&str] = &["blue", "red", "white"];
+pub(crate) const ID_ATTIRES: &[&str] = &["suit", "female-suit"];
 pub(crate) const AVATAR_TIERS: &[&str] = &[
     "japanese-anime",
     "cyberpunk",
@@ -231,7 +251,8 @@ pub(crate) const PORTRAIT_TIERS: &[&str] = &[
     "retro",
     "fashion",
 ];
-pub(crate) const TRY_ON_TIERS: &[&str] = &["asian-female-cafe", "asian-male-studio"];
+pub(crate) const TRY_ON_MODELS: &[&str] = &["asian-female", "asian-male"];
+pub(crate) const TRY_ON_SCENES: &[&str] = &["cafe", "studio"];
 pub(crate) const COLOR_TIERS: &[&str] = &["burgundy", "navy", "haze-blue", "custom"];
 pub(crate) const PROMO_TIERS: &[&str] = &[
     "limited-time-discount",
@@ -245,13 +266,10 @@ pub(crate) const PLATFORM_TIERS: &[&str] = &[
     "wechat-cover-900x383",
     "douyin-1080x1920",
 ];
-pub(crate) const COVER_TIERS: &[&str] = &[
-    "wechat-bold",
-    "xiaohongshu-bold",
-    "bilibili-bold",
-    "douyin-bold",
-];
-pub(crate) const ARTICLE_TIERS: &[&str] = &["ppt-business-gradient", "editorial-flat"];
+pub(crate) const COVER_PLATFORMS: &[&str] = &["wechat", "xiaohongshu", "bilibili", "douyin"];
+pub(crate) const COVER_STYLES: &[&str] = &["bold", "editorial"];
+pub(crate) const ARTICLE_USAGES: &[&str] = &["ppt", "editorial"];
+pub(crate) const ARTICLE_STYLES: &[&str] = &["business-gradient", "flat"];
 pub(crate) const FOOD_TIERS: &[&str] = &["delivery-standard", "menu-premium"];
 pub(crate) const INTERIOR_TIERS: &[&str] = &[
     "scandinavian",
@@ -259,6 +277,39 @@ pub(crate) const INTERIOR_TIERS: &[&str] = &[
     "light-luxury",
     "warm-minimal",
 ];
+
+pub(crate) fn compose_id_photo_tier(size: usize, background: usize, attire: usize) -> String {
+    format!(
+        "{}-{}-{}",
+        pick(ID_SIZES, size),
+        pick(ID_BACKGROUNDS, background),
+        pick(ID_ATTIRES, attire)
+    )
+}
+
+pub(crate) fn compose_try_on_tier(model: usize, scene: usize) -> String {
+    format!("{}-{}", pick(TRY_ON_MODELS, model), pick(TRY_ON_SCENES, scene))
+}
+
+pub(crate) fn compose_cover_tier(platform: usize, style: usize) -> String {
+    format!(
+        "{}-{}",
+        pick(COVER_PLATFORMS, platform),
+        pick(COVER_STYLES, style)
+    )
+}
+
+pub(crate) fn compose_article_tier(usage: usize, style: usize) -> String {
+    format!(
+        "{}-{}",
+        pick(ARTICLE_USAGES, usage),
+        pick(ARTICLE_STYLES, style)
+    )
+}
+
+fn pick<'a>(items: &[&'a str], index: usize) -> &'a str {
+    items.get(index).copied().unwrap_or(items[0])
+}
 
 #[cfg(test)]
 mod tests {
@@ -282,6 +333,21 @@ mod tests {
         });
         assert_eq!(state.count, 1);
         assert_eq!(state.aspect_ratio, AspectRatio::Square);
+    }
+
+    #[test]
+    fn composed_industry_tiers_join_independent_axes() {
+        assert_eq!(
+            compose_id_photo_tier(0, 0, 0),
+            "one-inch-blue-suit"
+        );
+        assert_eq!(
+            compose_id_photo_tier(2, 2, 1),
+            "visa-white-female-suit"
+        );
+        assert_eq!(compose_try_on_tier(0, 1), "asian-female-studio");
+        assert_eq!(compose_cover_tier(0, 1), "wechat-editorial");
+        assert_eq!(compose_article_tier(0, 1), "ppt-flat");
     }
 
     #[test]

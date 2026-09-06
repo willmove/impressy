@@ -41,6 +41,17 @@ impl NormRect {
         h: 1.0,
     };
 
+    /// 居中正方形，边长为画布的 `fraction`（用于 AI 消除的默认选区，避免默认整图）。
+    pub fn centered_fraction(fraction: f32) -> Self {
+        let edge = fraction.clamp(MIN_EDGE, 1.0);
+        Self {
+            x: (1.0 - edge) / 2.0,
+            y: (1.0 - edge) / 2.0,
+            w: edge,
+            h: edge,
+        }
+    }
+
     /// 居中、给定比例下面积最大的归一化矩形（比例精确，非近似）。
     pub fn centered(ratio: AspectRatio) -> Self {
         let rv = ratio.value() as f32;
@@ -119,13 +130,20 @@ impl Selection {
         }
     }
 
-    /// 切换比例并重置为该比例下的居中矩形。
+    /// 切换比例并重置为该比例下的居中矩形。自由比例默认全幅，便于整图裁剪。
     pub fn set_ratio(&mut self, ratio: Option<AspectRatio>, cx: &mut Context<Self>) {
         self.ratio = ratio;
         self.rect = match ratio {
             Some(r) => NormRect::centered(r),
             None => NormRect::FULL,
         };
+        cx.notify();
+    }
+
+    /// 设为自由比例下的指定选区（AI 消除用较小居中框，而不是整图）。
+    pub fn set_free_region(&mut self, rect: NormRect, cx: &mut Context<Self>) {
+        self.ratio = None;
+        self.rect = rect.clamp();
         cx.notify();
     }
 
@@ -392,6 +410,16 @@ pub fn selection_overlay(state: Entity<Selection>) -> impl IntoElement {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn centered_fraction_is_a_small_inset_square() {
+        let rect = NormRect::centered_fraction(0.32);
+        assert!((rect.w - 0.32).abs() < f32::EPSILON);
+        assert!((rect.h - 0.32).abs() < f32::EPSILON);
+        assert!(rect.x > 0.3 && rect.y > 0.3);
+        assert!(rect.x + rect.w < 0.7 && rect.y + rect.h < 0.7);
+        assert_ne!(rect, NormRect::FULL);
+    }
 
     #[test]
     fn centered_presets_keep_the_exact_requested_ratio() {

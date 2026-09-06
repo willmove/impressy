@@ -13,37 +13,41 @@ use impressy_core::transform::AspectRatio;
 use std::num::NonZeroU32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub(crate) enum ParamAction {
-    EditRatioNext,
-    EditWidth(i32),
-    EditHeight(i32),
-    CollageLayoutNext,
-    CollageColumns(i32),
-    CollageSpacing(i32),
-    CollageBackgroundNext,
-    BatchModeNext,
-    BatchFormatNext,
-    BatchPngCompressionNext,
-    BatchWidth(i32),
-    BatchHeight(i32),
-    BatchWatermarkSourceNext,
-    BatchOpacity(i16),
-    BatchPositionNext,
-    SliceRows(i32),
-    SliceColumns(i32),
-    QrSize(i32),
-    QrCorrectionNext,
-    BeautifyRadius(i32),
-    BeautifyPadding(i32),
-    BeautifyBackgroundNext,
-    BeautifyBorder(i32),
-    BeautifyShadowToggle,
-    GifDelay(i32),
-    GifWidth(i32),
-    GifHeight(i32),
-    GifSizeModeToggle,
-    GifPlaybackNext,
+    SetEditRatio(usize),
+    SetEditWidth(u32),
+    SetEditHeight(u32),
+    SetCollageMode(CollageMode),
+    SetCollageColumns(u32),
+    SetCollageSpacing(u32),
+    SetCollageBackground(usize),
+    SetBatchMode(BatchMode),
+    SetBatchFormat(OutputFormat),
+    SetBatchPngCompression(PngCompression),
+    SetBatchWidth(u32),
+    SetBatchHeight(u32),
+    SetBatchWatermarkSource(WatermarkSource),
+    SetBatchOpacity(u8),
+    SetBatchPosition(WatermarkPlacement),
+    SetSliceRows(u32),
+    SetSliceColumns(u32),
+    SetQrSize(u32),
+    SetQrCorrection(ErrorCorrection),
+    SetBeautifyRadius(u32),
+    SetBeautifyPadding(u32),
+    SetBeautifyBackground(BeautifyBackground),
+    SetBeautifyBorder(u32),
+    SetBeautifyShadow(bool),
+    SetGifDelay(u32),
+    SetGifWidth(u32),
+    SetGifHeight(u32),
+    SetGifCustomSize(bool),
+    SetGifPlayback(Playback),
 }
+
+/// 裁剪比例选项：五种预设之后是自由比例。
+pub(crate) const FREE_RATIO_INDEX: usize = 5;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ParamEffect {
@@ -68,14 +72,6 @@ impl CollageMode {
             Self::Grid => "option.grid",
         }
     }
-
-    fn next(self) -> Self {
-        match self {
-            Self::Vertical => Self::Horizontal,
-            Self::Horizontal => Self::Grid,
-            Self::Grid => Self::Vertical,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -96,15 +92,6 @@ impl BatchMode {
             Self::Watermark => "option.watermark",
         }
     }
-
-    fn next(self) -> Self {
-        match self {
-            Self::Convert => Self::Compress,
-            Self::Compress => Self::Resize,
-            Self::Resize => Self::Watermark,
-            Self::Watermark => Self::Convert,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -119,13 +106,6 @@ impl WatermarkSource {
         match self {
             Self::Text => "option.text_watermark",
             Self::Image => "option.image_watermark",
-        }
-    }
-
-    fn next(self) -> Self {
-        match self {
-            Self::Text => Self::Image,
-            Self::Image => Self::Text,
         }
     }
 }
@@ -144,13 +124,6 @@ impl WatermarkPlacement {
             Self::Tiled => "option.tiled",
         }
     }
-
-    fn next(self) -> Self {
-        match self {
-            Self::BottomRight => Self::Tiled,
-            Self::Tiled => Self::BottomRight,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -167,14 +140,6 @@ impl BeautifyBackground {
             Self::Gradient => "option.gradient",
             Self::Solid => "option.solid",
             Self::Transparent => "option.transparent",
-        }
-    }
-
-    fn next(self) -> Self {
-        match self {
-            Self::Gradient => Self::Solid,
-            Self::Solid => Self::Transparent,
-            Self::Transparent => Self::Gradient,
         }
     }
 }
@@ -197,8 +162,8 @@ impl Default for EditParams {
 }
 
 impl EditParams {
-    pub fn ratio(self) -> AspectRatio {
-        AspectRatio::PRESETS[self.ratio_index]
+    pub fn ratio(self) -> Option<AspectRatio> {
+        AspectRatio::PRESETS.get(self.ratio_index).copied()
     }
 }
 
@@ -242,15 +207,6 @@ impl CollageParams {
         CollageOptions {
             spacing: self.spacing,
             background: COLORS[self.background_index],
-        }
-    }
-
-    pub fn background_label_key(self) -> &'static str {
-        match self.background_index {
-            0 => "option.white",
-            1 => "option.black",
-            2 => "option.gray",
-            _ => "option.transparent",
         }
     }
 }
@@ -349,15 +305,6 @@ impl QrParams {
             background: self.background,
         }
     }
-
-    pub fn correction_label_key(self) -> &'static str {
-        match self.correction {
-            ErrorCorrection::Low => "option.correction_low",
-            ErrorCorrection::Medium => "option.correction_medium",
-            ErrorCorrection::Quartile => "option.correction_quartile",
-            ErrorCorrection::High => "option.correction_high",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -438,14 +385,6 @@ impl GifUiParams {
             playback: self.playback,
         }
     }
-
-    pub fn playback_label_key(self) -> &'static str {
-        match self.playback {
-            Playback::Forward => "option.forward",
-            Playback::Reverse => "option.reverse",
-            Playback::PingPong => "option.ping_pong",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -462,154 +401,126 @@ pub(crate) struct FeatureParams {
 impl FeatureParams {
     pub fn apply(&mut self, action: ParamAction) -> ParamEffect {
         match action {
-            ParamAction::EditRatioNext => {
-                self.edit.ratio_index = (self.edit.ratio_index + 1) % AspectRatio::PRESETS.len();
+            ParamAction::SetEditRatio(index) => {
+                self.edit.ratio_index = index.min(FREE_RATIO_INDEX);
                 ParamEffect::CropRatioChanged
             }
-            ParamAction::EditWidth(delta) => {
-                self.edit.width = stepped(self.edit.width, delta, 64, 16, 16_384);
+            ParamAction::SetEditWidth(value) => {
+                self.edit.width = value.clamp(16, 16_384);
                 ParamEffect::None
             }
-            ParamAction::EditHeight(delta) => {
-                self.edit.height = stepped(self.edit.height, delta, 64, 16, 16_384);
+            ParamAction::SetEditHeight(value) => {
+                self.edit.height = value.clamp(16, 16_384);
                 ParamEffect::None
             }
-            ParamAction::CollageLayoutNext => {
-                self.collage.mode = self.collage.mode.next();
+            ParamAction::SetCollageMode(mode) => {
+                self.collage.mode = mode;
                 ParamEffect::None
             }
-            ParamAction::CollageColumns(delta) => {
-                self.collage.columns = stepped(self.collage.columns, delta, 1, 1, 20);
+            ParamAction::SetCollageColumns(value) => {
+                self.collage.columns = value.clamp(1, 20);
                 ParamEffect::None
             }
-            ParamAction::CollageSpacing(delta) => {
-                self.collage.spacing = stepped(self.collage.spacing, delta, 4, 0, 256);
+            ParamAction::SetCollageSpacing(value) => {
+                self.collage.spacing = value.clamp(0, 256);
                 ParamEffect::None
             }
-            ParamAction::CollageBackgroundNext => {
-                self.collage.background_index = (self.collage.background_index + 1) % 4;
+            ParamAction::SetCollageBackground(index) => {
+                self.collage.background_index = index.min(3);
                 ParamEffect::None
             }
-            ParamAction::BatchModeNext => {
-                self.batch.mode = self.batch.mode.next();
+            ParamAction::SetBatchMode(mode) => {
+                self.batch.mode = mode;
+                if mode == BatchMode::Compress && self.batch.format == OutputFormat::Png {
+                    self.batch.format = OutputFormat::Jpeg;
+                }
                 ParamEffect::None
             }
-            ParamAction::BatchFormatNext => {
-                self.batch.format = next_format(self.batch.format);
+            ParamAction::SetBatchFormat(format) => {
+                self.batch.format = format;
                 ParamEffect::None
             }
-            ParamAction::BatchPngCompressionNext => {
-                self.batch.png_compression = next_png_compression(self.batch.png_compression);
+            ParamAction::SetBatchPngCompression(compression) => {
+                self.batch.png_compression = compression;
                 ParamEffect::None
             }
-            ParamAction::BatchWidth(delta) => {
-                self.batch.width = stepped(self.batch.width, delta, 64, 16, 16_384);
+            ParamAction::SetBatchWidth(value) => {
+                self.batch.width = value.clamp(16, 16_384);
                 ParamEffect::None
             }
-            ParamAction::BatchHeight(delta) => {
-                self.batch.height = stepped(self.batch.height, delta, 64, 16, 16_384);
+            ParamAction::SetBatchHeight(value) => {
+                self.batch.height = value.clamp(16, 16_384);
                 ParamEffect::None
             }
-            ParamAction::BatchWatermarkSourceNext => {
-                self.batch.watermark_source = self.batch.watermark_source.next();
+            ParamAction::SetBatchWatermarkSource(source) => {
+                self.batch.watermark_source = source;
                 ParamEffect::None
             }
-            ParamAction::BatchOpacity(delta) => {
-                let next = (i16::from(self.batch.watermark_opacity_percent) + delta).clamp(5, 100);
-                self.batch.watermark_opacity_percent = next as u8;
+            ParamAction::SetBatchOpacity(value) => {
+                self.batch.watermark_opacity_percent = value.clamp(5, 100);
                 ParamEffect::None
             }
-            ParamAction::BatchPositionNext => {
-                self.batch.watermark_placement = self.batch.watermark_placement.next();
+            ParamAction::SetBatchPosition(placement) => {
+                self.batch.watermark_placement = placement;
                 ParamEffect::None
             }
-            ParamAction::SliceRows(delta) => {
-                self.slice.rows = stepped(self.slice.rows, delta, 1, 1, 100);
+            ParamAction::SetSliceRows(value) => {
+                self.slice.rows = value.clamp(1, 100);
                 ParamEffect::None
             }
-            ParamAction::SliceColumns(delta) => {
-                self.slice.columns = stepped(self.slice.columns, delta, 1, 1, 100);
+            ParamAction::SetSliceColumns(value) => {
+                self.slice.columns = value.clamp(1, 100);
                 ParamEffect::None
             }
-            ParamAction::QrSize(delta) => {
-                self.qr.size = stepped(self.qr.size, delta, 64, 128, 4096);
+            ParamAction::SetQrSize(value) => {
+                self.qr.size = value.clamp(128, 4096);
                 ParamEffect::None
             }
-            ParamAction::QrCorrectionNext => {
-                self.qr.correction = match self.qr.correction {
-                    ErrorCorrection::Low => ErrorCorrection::Medium,
-                    ErrorCorrection::Medium => ErrorCorrection::Quartile,
-                    ErrorCorrection::Quartile => ErrorCorrection::High,
-                    ErrorCorrection::High => ErrorCorrection::Low,
-                };
+            ParamAction::SetQrCorrection(correction) => {
+                self.qr.correction = correction;
                 ParamEffect::None
             }
-            ParamAction::BeautifyRadius(delta) => {
-                self.beautify.radius = stepped(self.beautify.radius, delta, 4, 0, 512);
+            ParamAction::SetBeautifyRadius(value) => {
+                self.beautify.radius = value.clamp(0, 512);
                 ParamEffect::BeautifyPreview
             }
-            ParamAction::BeautifyPadding(delta) => {
-                self.beautify.padding = stepped(self.beautify.padding, delta, 8, 0, 1024);
+            ParamAction::SetBeautifyPadding(value) => {
+                self.beautify.padding = value.clamp(0, 1024);
                 ParamEffect::BeautifyPreview
             }
-            ParamAction::BeautifyBackgroundNext => {
-                self.beautify.background = self.beautify.background.next();
+            ParamAction::SetBeautifyBackground(background) => {
+                self.beautify.background = background;
                 ParamEffect::BeautifyPreview
             }
-            ParamAction::BeautifyBorder(delta) => {
-                self.beautify.border_width = stepped(self.beautify.border_width, delta, 1, 0, 32);
+            ParamAction::SetBeautifyBorder(value) => {
+                self.beautify.border_width = value.clamp(0, 32);
                 ParamEffect::BeautifyPreview
             }
-            ParamAction::BeautifyShadowToggle => {
-                self.beautify.shadow = !self.beautify.shadow;
+            ParamAction::SetBeautifyShadow(enabled) => {
+                self.beautify.shadow = enabled;
                 ParamEffect::BeautifyPreview
             }
-            ParamAction::GifDelay(delta) => {
-                self.gif.delay_ms = stepped(self.gif.delay_ms, delta, 50, 100, 800);
+            ParamAction::SetGifDelay(value) => {
+                self.gif.delay_ms = value.clamp(100, 800);
                 ParamEffect::None
             }
-            ParamAction::GifWidth(delta) => {
-                self.gif.width = stepped(self.gif.width, delta, 64, 16, 65_535);
+            ParamAction::SetGifWidth(value) => {
+                self.gif.width = value.clamp(16, 65_535);
                 ParamEffect::None
             }
-            ParamAction::GifHeight(delta) => {
-                self.gif.height = stepped(self.gif.height, delta, 64, 16, 65_535);
+            ParamAction::SetGifHeight(value) => {
+                self.gif.height = value.clamp(16, 65_535);
                 ParamEffect::None
             }
-            ParamAction::GifSizeModeToggle => {
-                self.gif.custom_size = !self.gif.custom_size;
+            ParamAction::SetGifCustomSize(custom) => {
+                self.gif.custom_size = custom;
                 ParamEffect::None
             }
-            ParamAction::GifPlaybackNext => {
-                self.gif.playback = match self.gif.playback {
-                    Playback::Forward => Playback::Reverse,
-                    Playback::Reverse => Playback::PingPong,
-                    Playback::PingPong => Playback::Forward,
-                };
+            ParamAction::SetGifPlayback(playback) => {
+                self.gif.playback = playback;
                 ParamEffect::None
             }
         }
-    }
-}
-
-fn stepped(value: u32, direction: i32, step: u32, min: u32, max: u32) -> u32 {
-    let delta = i64::from(direction.signum()) * i64::from(step);
-    (i64::from(value) + delta).clamp(i64::from(min), i64::from(max)) as u32
-}
-
-fn next_format(format: OutputFormat) -> OutputFormat {
-    match format {
-        OutputFormat::Png => OutputFormat::Jpeg,
-        OutputFormat::Jpeg => OutputFormat::Webp,
-        OutputFormat::Webp => OutputFormat::Png,
-    }
-}
-
-fn next_png_compression(compression: PngCompression) -> PngCompression {
-    match compression {
-        PngCompression::Fast => PngCompression::Default,
-        PngCompression::Default => PngCompression::Best,
-        PngCompression::Best => PngCompression::Fast,
     }
 }
 
@@ -620,43 +531,45 @@ mod tests {
     #[test]
     fn numeric_controls_stay_inside_supported_ranges() {
         let mut params = FeatureParams::default();
-        for _ in 0..1_000 {
-            params.apply(ParamAction::GifDelay(-1));
-            params.apply(ParamAction::SliceRows(-1));
-            params.apply(ParamAction::BatchOpacity(-1));
-        }
+        params.apply(ParamAction::SetGifDelay(0));
+        params.apply(ParamAction::SetSliceRows(0));
+        params.apply(ParamAction::SetBatchOpacity(0));
         assert_eq!(params.gif.delay_ms, 100);
         assert_eq!(params.slice.rows, 1);
         assert_eq!(params.batch.watermark_opacity_percent, 5);
 
-        for _ in 0..1_000 {
-            params.apply(ParamAction::GifDelay(1));
-            params.apply(ParamAction::SliceRows(1));
-            params.apply(ParamAction::BatchOpacity(1));
-        }
+        params.apply(ParamAction::SetGifDelay(9_000));
+        params.apply(ParamAction::SetSliceRows(9_000));
+        params.apply(ParamAction::SetBatchOpacity(255));
         assert_eq!(params.gif.delay_ms, 800);
         assert_eq!(params.slice.rows, 100);
         assert_eq!(params.batch.watermark_opacity_percent, 100);
     }
 
     #[test]
-    fn all_mode_cycles_return_to_the_start() {
+    fn enum_and_ratio_choices_set_exactly() {
         let mut params = FeatureParams::default();
-        for _ in 0..4 {
-            params.apply(ParamAction::BatchModeNext);
-        }
-        assert_eq!(params.batch.mode, BatchMode::Convert);
-        for _ in 0..3 {
-            params.apply(ParamAction::CollageLayoutNext);
-            params.apply(ParamAction::GifPlaybackNext);
-        }
-        assert_eq!(params.collage.mode, CollageMode::Vertical);
-        assert_eq!(params.gif.playback, Playback::Forward);
+        params.apply(ParamAction::SetBatchMode(BatchMode::Watermark));
+        params.apply(ParamAction::SetCollageMode(CollageMode::Grid));
+        params.apply(ParamAction::SetGifPlayback(Playback::PingPong));
+        params.apply(ParamAction::SetBatchPngCompression(PngCompression::Best));
+        params.apply(ParamAction::SetEditRatio(FREE_RATIO_INDEX));
+        assert_eq!(params.batch.mode, BatchMode::Watermark);
+        assert_eq!(params.collage.mode, CollageMode::Grid);
+        assert_eq!(params.gif.playback, Playback::PingPong);
+        assert_eq!(params.batch.png_compression, PngCompression::Best);
+        assert_eq!(params.edit.ratio(), None);
 
-        for _ in 0..3 {
-            params.apply(ParamAction::BatchPngCompressionNext);
-        }
-        assert_eq!(params.batch.png_compression, PngCompression::Default);
+        params.apply(ParamAction::SetEditRatio(0));
+        assert_eq!(params.edit.ratio(), Some(AspectRatio::SQUARE));
+    }
+
+    #[test]
+    fn compress_mode_rejects_png_as_output() {
+        let mut params = FeatureParams::default();
+        params.apply(ParamAction::SetBatchFormat(OutputFormat::Png));
+        params.apply(ParamAction::SetBatchMode(BatchMode::Compress));
+        assert_eq!(params.batch.format, OutputFormat::Jpeg);
     }
 
     #[test]
